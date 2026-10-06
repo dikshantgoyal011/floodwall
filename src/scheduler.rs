@@ -265,6 +265,21 @@ impl Scheduler {
         Pass::default()
     }
 
+    /// Whether another agent's contradictory change to `intent`'s resource
+    /// is in flight right now. Even an intent a human released from hold
+    /// waits for such a change rather than running alongside it.
+    pub(crate) fn contradicts_in_flight(&self, intent: &Intent) -> bool {
+        self.claims
+            .get(intent.action.resource())
+            .is_some_and(|claims| {
+                claims.iter().any(|c| {
+                    c.done_at.is_none()
+                        && c.key.agent != intent.agent
+                        && c.action.contradicts(&intent.action)
+                })
+            })
+    }
+
     /// If starting `intent` at tick `now` would contradict another agent's
     /// open claim on the same resource, say which one and why.
     pub(crate) fn conflict(&self, intent: &Intent, now: u64) -> Option<String> {

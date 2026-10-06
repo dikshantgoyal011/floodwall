@@ -61,21 +61,24 @@
 
 pub mod admission;
 pub mod gate;
+pub mod hold;
 pub mod intent;
 pub mod ledger;
 pub mod policy;
 pub mod scheduler;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 pub use admission::{Admission, InvalidRateLimit, RateLimit, Rejected};
 pub use gate::{Gate, GateDecision};
+pub use hold::{Held, HoldConfig, HoldError};
 pub use intent::{Intent, IntentKey};
 pub use ledger::{Evidence, Ledger, Record};
 pub use policy::{Policy, Verdict};
 pub use scheduler::{InFlight, SchedulerConfig};
 
+use hold::Hold;
 use scheduler::{Readiness, Scheduler};
 
 /// The name the scheduler's conflict check (see
@@ -92,13 +95,21 @@ pub struct Decision {
     pub verdict: Verdict,
     /// Each policy's name and its individual verdict.
     pub breakdown: Vec<(String, Verdict)>,
+    /// Who released this intent from hold, if it was released. A released
+    /// intent's deferrals are waived: `verdict` is `Admit` unless something
+    /// in `breakdown` rejects it.
+    pub released_by: Option<String>,
 }
 
 /// Everything one [`Floodwall::tick`] did.
 #[derive(Debug, Default)]
 pub struct TickReport {
     /// Every intent ruled on in this tick, in the order they were ruled on.
+    /// A deferred intent is held: see [`Floodwall::held`].
     pub decisions: Vec<Decision>,
+    /// Held intents that expired in this tick: past their TTL, or evicted
+    /// from a full hold queue.
+    pub expired: Vec<Held>,
 }
 
 impl TickReport {
@@ -156,8 +167,12 @@ pub struct Floodwall {
     scheduler: Scheduler,
     gate: Gate,
     ledger: Ledger,
-    /// Every intent that is queued or in flight. An intent key can only be
-    /// live once, so a resubmitted duplicate is refused.
+    hold: Hold,
+    /// Intents released from hold and back in the queue, with who released
+    /// them. Their deferrals are waived when they are next ruled on.
+    released: HashMap<IntentKey, String>,
+    /// Every intent that is queued, in flight, or held. An intent key can
+    /// only be live once, so a resubmitted duplicate is refused.
     live: HashSet<IntentKey>,
     clock: u64,
 }
@@ -170,9 +185,23 @@ impl Floodwall {
             scheduler: Scheduler::new(SchedulerConfig::default()),
             gate,
             ledger: Ledger::new(),
+            hold: Hold::new(HoldConfig::default()),
+            released: HashMap::new(),
             live: HashSet::new(),
             clock: 0,
         }
+    }
+
+    /// Use `config` for the hold queue. A lower capacity or TTL takes
+    /// effect at the next [`Floodwall::tick`].
+    pub fn with_hold(mut self, config: HoldConfig) -> Self {
+        self.hold.set_config(config);
+        self
+    }
+
+    /// The hold queue configuration in use.
+    pub fn hold_config(&self) -> &HoldConfig {
+        self.hold.config()
     }
 
     /// Use `config` for scheduling. It applies from the next check on.
@@ -199,7 +228,7 @@ impl Floodwall {
     /// Offer an intent to the wall at logical time `now`.
     ///
     /// Refused with [`Rejected::Duplicate`] if an intent with the same
-    /// [`IntentKey`] is already queued or in flight, and otherwise with
+    /// [`IntentKey`] is already queued, in flight, or held, and otherwise with
     /// [`Rejected::Backpressure`] or [`Rejected::RateLimited`] by admission.
     /// A duplicate is caught first, so it does not use the agent's rate
     /// allowance.
@@ -214,13 +243,26 @@ impl Floodwall {
         Ok(())
     }
 
-    /// One scheduling pass at logical time `now`: walk the queue in
-    /// priority order, and rule on every intent that may start now. Each
-    /// decision is recorded in the ledger. Admitted intents are dispatched:
-    /// apply them, then call [`Floodwall::complete`].
+    /// One scheduling pass at logical time `now`: first expire held
+    /// intents past their TTL or over the hold's capacity, then walk the
+    /// queue in priority order and rule on every intent that may start now.
+    /// Everything is recorded in the ledger. Admitted intents are
+    /// dispatched: apply them, then call [`Floodwall::complete`]. Deferred
+    /// intents are held: see [`Floodwall::release`].
     pub fn tick(&mut self, now: u64) -> TickReport {
         let now = self.advance(now);
         let mut report = TickReport::default();
+        if let Some(ttl) = self.hold.config().ttl() {
+            for held in self.hold.expire_due(now) {
+                let reason = format!(
+                    "held since tick {} for {} ticks, reaching the hold TTL of {ttl}",
+                    held.since,
+                    now - held.since
+                );
+                self.expire_held(held, reason, &mut report);
+            }
+        }
+        self.trim_hold(&mut report);
         let mut pass = self.scheduler.begin(now);
         for position in self.admission.queued_keys() {
             if pass.is_closed() {
@@ -230,58 +272,147 @@ impl Floodwall {
                 .admission
                 .get(&position)
                 .expect("positions in the snapshot are only taken below");
-            match self.scheduler.readiness(intent, &pass) {
+            let mut readiness = self.scheduler.readiness(intent, &pass);
+            // A released intent's conflict deferral is waived, but it never
+            // runs alongside a contradictory change: it waits for it.
+            if readiness == Readiness::Ready
+                && self.released.contains_key(&intent.key())
+                && self.scheduler.contradicts_in_flight(intent)
+            {
+                readiness = Readiness::Blocked;
+            }
+            match readiness {
                 Readiness::Blocked => self.scheduler.wait(intent, &mut pass),
                 Readiness::Ready => {
                     let intent = self
                         .admission
                         .take(&position)
                         .expect("the position was just read");
-                    report.decisions.push(self.decide(intent, now));
+                    self.decide(intent, now, &mut report);
                 }
             }
         }
         report
     }
 
-    /// Rule on an intent that may start now, record the decision, and
-    /// dispatch it if admitted.
+    /// Rule on an intent that may start now, record the decision, and act
+    /// on it: dispatch it if admitted, hold it if deferred.
     ///
     /// The verdict is the gate's policies plus the scheduler's conflict
     /// check, combined deny-overrides; the conflict check appears in the
-    /// breakdown as [`CONFLICT_CHECK`].
-    fn decide(&mut self, intent: Intent, now: u64) -> Decision {
-        let GateDecision {
-            mut verdict,
-            mut breakdown,
-        } = self.gate.evaluate(&intent);
+    /// breakdown as [`CONFLICT_CHECK`]. For an intent a human released from
+    /// hold, deferrals are waived and only rejections count.
+    fn decide(&mut self, intent: Intent, now: u64, report: &mut TickReport) {
+        let key = intent.key();
+        let GateDecision { mut breakdown, .. } = self.gate.evaluate(&intent);
         let conflict = match self.scheduler.conflict(&intent, now) {
             Some(reason) => Verdict::Defer(reason),
             None => Verdict::Admit,
         };
-        verdict = verdict.harsher(conflict.clone());
         breakdown.push((CONFLICT_CHECK.to_string(), conflict));
+        let released_by = self.released.remove(&key);
+        let waive = released_by.is_some();
+        let verdict = breakdown
+            .iter()
+            .map(|(_, verdict)| verdict)
+            .filter(|verdict| !(waive && matches!(verdict, Verdict::Defer(_))))
+            .fold(Verdict::Admit, |acc, verdict| acc.harsher(verdict.clone()));
+        let reason = match &released_by {
+            None => verdict.reason().map(str::to_string),
+            Some(by) => Some(released_reason(by, &verdict, &breakdown)),
+        };
 
         let policies = breakdown
             .iter()
             .map(|(name, verdict)| (name.clone(), verdict.label().to_string()))
             .collect();
-        self.record(
-            &intent,
-            verdict.label(),
-            verdict.reason().map(str::to_string),
-            policies,
-        );
-        if verdict.is_admit() {
-            self.scheduler.start(intent.clone(), now);
-        } else {
-            self.live.remove(&intent.key());
+        self.record(&intent, verdict.label(), reason, policies);
+        match &verdict {
+            Verdict::Admit => self.scheduler.start(intent.clone(), now),
+            Verdict::Defer(why) => {
+                let evicted = self.hold.put(intent.clone(), why.clone(), now);
+                self.expire_evicted(evicted, report);
+            }
+            Verdict::Reject(_) => {
+                self.live.remove(&key);
+            }
         }
-        Decision {
+        report.decisions.push(Decision {
             intent,
             verdict,
             breakdown,
+            released_by,
+        });
+    }
+
+    /// Evict held intents over the hold's capacity, oldest first.
+    fn trim_hold(&mut self, report: &mut TickReport) {
+        let evicted = self.hold.trim();
+        self.expire_evicted(evicted, report);
+    }
+
+    fn expire_evicted(&mut self, evicted: Vec<Held>, report: &mut TickReport) {
+        let capacity = self.hold.config().capacity();
+        for held in evicted {
+            let reason = format!("evicted: the hold queue is full (capacity {capacity})");
+            self.expire_held(held, reason, report);
         }
+    }
+
+    /// Record a held intent's expiry and forget it.
+    fn expire_held(&mut self, held: Held, reason: String, report: &mut TickReport) {
+        self.live.remove(&held.intent.key());
+        self.record(&held.intent, "expired", Some(reason), Vec::new());
+        report.expired.push(held);
+    }
+
+    /// Send a held intent back to the queue at logical time `now`, on the
+    /// authority of `by` (recorded in the ledger). When it is next ruled
+    /// on, its deferrals are waived: it is admitted unless a policy rejects
+    /// it. It still waits its turn like any other intent, and does not use
+    /// its agent's rate limit.
+    ///
+    /// Fails with [`HoldError::NotHeld`] if the intent is not held, and with
+    /// [`HoldError::Backpressure`] if the queue is full, in which case it
+    /// stays held.
+    pub fn release(&mut self, key: &IntentKey, by: &str, now: u64) -> Result<(), HoldError> {
+        let now = self.advance(now);
+        if !self.hold.contains(key) {
+            return Err(HoldError::NotHeld(key.clone()));
+        }
+        if self.admission.is_full() {
+            return Err(HoldError::Backpressure(key.clone()));
+        }
+        let held = self.hold.take(key).expect("checked above");
+        let reason = format!(
+            "released by {by}; held since tick {} for: {}",
+            held.since, held.reason
+        );
+        self.record(&held.intent, "released", Some(reason), Vec::new());
+        self.admission
+            .requeue(held.intent, now)
+            .expect("checked the queue has room above");
+        self.released.insert(key.clone(), by.to_string());
+        Ok(())
+    }
+
+    /// Drop a held intent at logical time `now`, on the authority of `by`
+    /// (recorded in the ledger), and return it. Its key may then be
+    /// submitted again.
+    pub fn expire(&mut self, key: &IntentKey, by: &str, now: u64) -> Result<Held, HoldError> {
+        self.advance(now);
+        let held = self
+            .hold
+            .take(key)
+            .ok_or_else(|| HoldError::NotHeld(key.clone()))?;
+        self.live.remove(key);
+        self.record(
+            &held.intent,
+            "expired",
+            Some(format!("expired by {by}")),
+            Vec::new(),
+        );
+        Ok(held)
     }
 
     /// Report that applying an in-flight intent finished at logical time
@@ -338,6 +469,16 @@ impl Floodwall {
         self.scheduler.in_flight()
     }
 
+    /// The held (deferred) intents, oldest first.
+    pub fn held(&self) -> impl Iterator<Item = &Held> {
+        self.hold.iter()
+    }
+
+    /// Whether the intent `key` is held.
+    pub fn is_held(&self, key: &IntentKey) -> bool {
+        self.hold.contains(key)
+    }
+
     /// Whether the intent `key` is in flight.
     pub fn is_in_flight(&self, key: &IntentKey) -> bool {
         self.scheduler.is_in_flight(key)
@@ -346,6 +487,29 @@ impl Floodwall {
     /// The decision ledger.
     pub fn ledger(&self) -> &Ledger {
         &self.ledger
+    }
+}
+
+/// The ledger reason for a decision on a released intent: who released
+/// it, and which deferrals that overrode, or the rejection that still
+/// stood.
+fn released_reason(by: &str, verdict: &Verdict, breakdown: &[(String, Verdict)]) -> String {
+    match verdict {
+        Verdict::Reject(why) => format!("released by {by}, but still rejected: {why}"),
+        _ => {
+            let waived: Vec<&str> = breakdown
+                .iter()
+                .filter_map(|(_, v)| match v {
+                    Verdict::Defer(why) => Some(why.as_str()),
+                    _ => None,
+                })
+                .collect();
+            if waived.is_empty() {
+                format!("released by {by}")
+            } else {
+                format!("released by {by}, overriding: {}", waived.join("; "))
+            }
+        }
     }
 }
 
@@ -713,8 +877,14 @@ mod tests {
             record.evidence.policies.last(),
             Some(&(CONFLICT_CHECK.to_string(), "defer".to_string()))
         );
-        // After the window closes, b may try again.
-        p.submit(scale_by("b", 1, "web", 8), 12).unwrap();
+        // b#1 is held, so it cannot be resubmitted as is...
+        assert!(p.is_held(&IntentKey::new("b", 1)));
+        assert_eq!(
+            p.submit(scale_by("b", 1, "web", 8), 12),
+            Err(Rejected::Duplicate)
+        );
+        // ...but once the window has closed, a fresh intent goes through.
+        p.submit(scale_by("b", 2, "web", 8), 12).unwrap();
         assert_eq!(verdicts(&p.tick(12)), ["admit"]);
     }
 
@@ -820,6 +990,307 @@ mod tests {
         let report = p.tick(0);
         assert_eq!(verdicts(&report), ["admit", "defer", "admit"]);
         assert_eq!(p.in_flight().count(), 2);
+    }
+
+    /// "cache" is off the allowlist in `plane()`, so this is deferred.
+    fn off_list(id: u64) -> Intent {
+        scale(id, "cache")
+    }
+
+    #[test]
+    fn a_deferred_intent_is_held_not_dropped() {
+        let mut p = plane();
+        let key = off_list(1).key();
+        p.submit(off_list(1), 3).unwrap();
+        assert_eq!(verdicts(&p.tick(3)), ["defer"]);
+        let held: Vec<&Held> = p.held().collect();
+        assert_eq!(held.len(), 1);
+        assert_eq!(held[0].intent.key(), key);
+        assert_eq!(held[0].since, 3);
+        assert_eq!(held[0].reason, "resource 'cache' is not on the allowlist");
+        assert!(p.is_held(&key));
+        // Still live: the same key cannot be submitted again.
+        assert_eq!(p.submit(off_list(1), 4), Err(Rejected::Duplicate));
+        // Nothing else happens to it on its own.
+        assert!(p.tick(100).decisions.is_empty());
+        assert!(p.is_held(&key));
+    }
+
+    #[test]
+    fn release_waives_deferrals_and_records_who_released() {
+        let mut p = plane();
+        let key = off_list(1).key();
+        p.submit(off_list(1), 0).unwrap();
+        p.tick(0);
+        p.release(&key, "alice", 2).unwrap();
+        assert!(!p.is_held(&key));
+        assert_eq!(p.pending(), 1);
+        let released = p.ledger().records().last().unwrap();
+        assert_eq!(released.verdict, "released");
+        assert_eq!(
+            released.evidence.reason.as_deref(),
+            Some("released by alice; held since tick 0 for: resource 'cache' is not on the allowlist")
+        );
+
+        let report = p.tick(2);
+        let d = &report.decisions[0];
+        assert_eq!(d.verdict, Verdict::Admit);
+        assert_eq!(d.released_by.as_deref(), Some("alice"));
+        // The breakdown still shows what was overridden.
+        assert!(d
+            .breakdown
+            .iter()
+            .any(|(name, v)| name == "resource-allowlist" && matches!(v, Verdict::Defer(_))));
+        let record = p.ledger().records().last().unwrap();
+        assert_eq!(record.verdict, "admit");
+        assert_eq!(
+            record.evidence.reason.as_deref(),
+            Some("released by alice, overriding: resource 'cache' is not on the allowlist")
+        );
+        assert!(p.is_in_flight(&key));
+        // The waiver is spent: the next intent is judged normally.
+        p.complete(&key, Outcome::Succeeded, 3).unwrap();
+        p.submit(off_list(2), 3).unwrap();
+        assert_eq!(verdicts(&p.tick(3)), ["defer"]);
+    }
+
+    /// A policy whose answer changes while an intent is held.
+    struct Ban(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+    impl Policy for Ban {
+        fn name(&self) -> &str {
+            "ban"
+        }
+        fn evaluate(&self, _intent: &Intent) -> Verdict {
+            if self.0.load(std::sync::atomic::Ordering::Relaxed) {
+                Verdict::Reject("banned".into())
+            } else {
+                Verdict::Admit
+            }
+        }
+    }
+
+    #[test]
+    fn release_does_not_override_a_reject() {
+        let banned = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let gate = Gate::new()
+            .with(ResourceAllowlist::new(["web"]))
+            .with(Ban(banned.clone()));
+        let mut p = Floodwall::new(Admission::new(8, RateLimit::new(8.0, 1.0)), gate);
+        let key = off_list(1).key();
+        p.submit(off_list(1), 0).unwrap();
+        assert_eq!(verdicts(&p.tick(0)), ["defer"]);
+        // While it waits on hold, the policy tightens.
+        banned.store(true, std::sync::atomic::Ordering::Relaxed);
+        p.release(&key, "alice", 1).unwrap();
+        let report = p.tick(1);
+        assert_eq!(verdicts(&report), ["reject"]);
+        assert_eq!(report.decisions[0].released_by.as_deref(), Some("alice"));
+        assert_eq!(
+            p.ledger()
+                .records()
+                .last()
+                .unwrap()
+                .evidence
+                .reason
+                .as_deref(),
+            Some("released by alice, but still rejected: banned")
+        );
+        // Rejected is final: the key is free again.
+        assert!(!p.is_held(&key) && !p.is_in_flight(&key) && p.pending() == 0);
+        assert_eq!(p.submit(off_list(1), 2), Ok(()));
+    }
+
+    #[test]
+    fn a_released_change_waits_for_a_contradicting_change_still_in_flight() {
+        let mut p = plane().with_scheduler(SchedulerConfig::default().with_limit("web", 2));
+        p.submit(scale_by("a", 1, "web", 3), 0).unwrap();
+        p.submit(scale_by("b", 1, "web", 8), 0).unwrap();
+        assert_eq!(verdicts(&p.tick(0)), ["admit", "defer"]);
+        // A human sides with b while a's change is still being applied.
+        let b = IntentKey::new("b", 1);
+        p.release(&b, "alice", 1).unwrap();
+        // The limit would let b run now, but never alongside a.
+        assert!(p.tick(1).decisions.is_empty());
+        assert_eq!(p.pending(), 1);
+        p.complete(&IntentKey::new("a", 1), Outcome::Succeeded, 2)
+            .unwrap();
+        // a is done; its conflict window is waived for b.
+        let report = p.tick(2);
+        assert_eq!(verdicts(&report), ["admit"]);
+        assert_eq!(report.decisions[0].released_by.as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn a_released_change_still_waits_for_its_lane() {
+        let mut p = plane();
+        p.submit(scale(1, "cache"), 0).unwrap();
+        p.tick(0); // deferred
+        let mut busy = scale(2, "cache");
+        busy.agent = AgentId::new("other");
+        // Put something in flight on cache without the allowlist: release
+        // it too.
+        p.submit(busy, 0).unwrap();
+        p.tick(0); // deferred
+        p.release(&IntentKey::new("other", 2), "alice", 1).unwrap();
+        assert_eq!(verdicts(&p.tick(1)), ["admit"]);
+        p.release(&IntentKey::new("bot", 1), "alice", 2).unwrap();
+        // cache's lane is taken (limit 1), so the released change waits.
+        assert!(p.tick(2).decisions.is_empty());
+        p.complete(&IntentKey::new("other", 2), Outcome::Succeeded, 3)
+            .unwrap();
+        assert_eq!(verdicts(&p.tick(3)), ["admit"]);
+    }
+
+    #[test]
+    fn release_and_expire_only_act_on_held_intents() {
+        let mut p = plane();
+        let queued = scale(1, "web").key();
+        p.submit(scale(1, "web"), 0).unwrap();
+        let missing = IntentKey::new("ghost", 1);
+        for key in [&queued, &missing] {
+            assert_eq!(
+                p.release(key, "alice", 0),
+                Err(HoldError::NotHeld(key.clone()))
+            );
+            assert_eq!(
+                p.expire(key, "alice", 0),
+                Err(HoldError::NotHeld(key.clone()))
+            );
+        }
+        p.tick(0); // now in flight
+        assert_eq!(
+            p.release(&queued, "alice", 0),
+            Err(HoldError::NotHeld(queued.clone()))
+        );
+        // Nothing was recorded for the failed attempts.
+        assert_eq!(p.ledger().len(), 1);
+
+        p.submit(off_list(2), 0).unwrap();
+        p.tick(0);
+        let held = off_list(2).key();
+        p.release(&held, "alice", 1).unwrap();
+        // Already released: a second release finds nothing.
+        assert_eq!(
+            p.release(&held, "bob", 1),
+            Err(HoldError::NotHeld(held.clone()))
+        );
+    }
+
+    #[test]
+    fn release_into_a_full_queue_leaves_the_intent_held() {
+        let mut p = Floodwall::new(
+            Admission::new(1, RateLimit::new(8.0, 1.0)),
+            Gate::new().with(ResourceAllowlist::new(["web"])),
+        );
+        p.submit(off_list(1), 0).unwrap();
+        p.tick(0);
+        let key = off_list(1).key();
+        p.submit(scale(2, "web"), 0).unwrap(); // fills the queue (capacity 1)
+        let records = p.ledger().len();
+        assert_eq!(
+            p.release(&key, "alice", 1),
+            Err(HoldError::Backpressure(key.clone()))
+        );
+        assert!(p.is_held(&key));
+        assert_eq!(p.ledger().len(), records);
+        p.tick(1); // drains the queue
+        assert_eq!(p.release(&key, "alice", 2), Ok(()));
+    }
+
+    #[test]
+    fn a_human_can_expire_a_held_intent() {
+        let mut p = plane();
+        let key = off_list(1).key();
+        p.submit(off_list(1), 0).unwrap();
+        p.tick(0);
+        let held = p.expire(&key, "bob", 4).unwrap();
+        assert_eq!(held.intent.key(), key);
+        assert_eq!(held.reason, "resource 'cache' is not on the allowlist");
+        assert!(!p.is_held(&key));
+        let record = p.ledger().records().last().unwrap();
+        assert_eq!(record.verdict, "expired");
+        assert_eq!(record.evidence.reason.as_deref(), Some("expired by bob"));
+        // The key is free again.
+        assert_eq!(p.submit(off_list(1), 5), Ok(()));
+    }
+
+    #[test]
+    fn held_intents_expire_after_their_ttl() {
+        let mut p = plane().with_hold(HoldConfig::default().with_ttl(Some(5)));
+        assert_eq!(p.hold_config().ttl(), Some(5));
+        p.submit(off_list(1), 0).unwrap();
+        p.tick(0);
+        p.submit(off_list(2), 3).unwrap();
+        p.tick(3);
+        assert!(p.tick(4).expired.is_empty());
+        let report = p.tick(5);
+        assert_eq!(report.expired.len(), 1);
+        assert_eq!(report.expired[0].intent.id, 1);
+        let record = p.ledger().records().last().unwrap();
+        assert_eq!(record.verdict, "expired");
+        assert_eq!(
+            record.evidence.reason.as_deref(),
+            Some("held since tick 0 for 5 ticks, reaching the hold TTL of 5")
+        );
+        assert_eq!(p.submit(off_list(1), 5), Ok(()), "the key is free");
+        assert_eq!(p.tick(8).expired[0].intent.id, 2);
+    }
+
+    #[test]
+    fn a_full_hold_evicts_its_oldest_intent() {
+        let mut p = plane().with_hold(HoldConfig::default().with_capacity(1));
+        p.submit(off_list(1), 0).unwrap();
+        p.submit(off_list(2), 0).unwrap();
+        // cache's lane is free for both (each is deferred, never dispatched).
+        let report = p.tick(0);
+        assert_eq!(verdicts(&report), ["defer", "defer"]);
+        assert_eq!(report.expired.len(), 1);
+        assert_eq!(report.expired[0].intent.id, 1);
+        let labels: Vec<&str> = p
+            .ledger()
+            .records()
+            .iter()
+            .map(|r| r.verdict.as_str())
+            .collect();
+        assert_eq!(labels, ["defer", "defer", "expired"]);
+        assert_eq!(
+            p.ledger().records()[2].evidence.reason.as_deref(),
+            Some("evicted: the hold queue is full (capacity 1)")
+        );
+        assert_eq!(p.held().map(|h| h.intent.id).collect::<Vec<_>>(), [2]);
+    }
+
+    #[test]
+    fn a_zero_capacity_hold_expires_deferrals_at_once() {
+        let mut p = plane().with_hold(HoldConfig::default().with_capacity(0));
+        p.submit(off_list(1), 0).unwrap();
+        let report = p.tick(0);
+        assert_eq!(verdicts(&report), ["defer"]);
+        assert_eq!(report.expired.len(), 1);
+        assert_eq!(p.held().count(), 0);
+        assert_eq!(p.submit(off_list(1), 1), Ok(()));
+    }
+
+    #[test]
+    fn shrinking_the_hold_evicts_at_the_next_tick() {
+        let mut p = plane();
+        for id in 1..=3 {
+            p.submit(off_list(id), 0).unwrap();
+        }
+        p.tick(0);
+        assert_eq!(p.held().count(), 3);
+        let mut p = p.with_hold(HoldConfig::default().with_capacity(1));
+        let report = p.tick(1);
+        assert_eq!(
+            report
+                .expired
+                .iter()
+                .map(|h| h.intent.id)
+                .collect::<Vec<_>>(),
+            [1, 2]
+        );
+        assert_eq!(p.held().map(|h| h.intent.id).collect::<Vec<_>>(), [3]);
     }
 
     #[test]

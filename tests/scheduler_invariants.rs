@@ -1,17 +1,20 @@
 //! Randomized checks of the scheduler's guarantees, through the public API.
 //!
 //! Each seed builds a plane with a random configuration, floods it with
-//! random intents from several agents, ticks it, and completes in-flight
-//! work at random. After every step it checks the invariants the scheduler
-//! documents, against an independent model kept by this test.
+//! random intents from several agents, ticks it, completes in-flight work
+//! at random, and has a human release or expire held intents at random.
+//! After every step it checks the invariants the scheduler and hold queue
+//! document, against an independent model kept by this test.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use floodwall::intent::{Action, AgentId, BlastRadius, Intent, IntentKey, Priority};
-use floodwall::policy::{BlastNeedsPriority, NoGlobalDestroy, ResourceAllowlist};
+use floodwall::policy::{BlastNeedsPriority, NoGlobalDestroy, Policy, ResourceAllowlist};
 use floodwall::{
-    Admission, Floodwall, Gate, Outcome, RateLimit, Rejected, SchedulerConfig, Verdict,
-    CONFLICT_CHECK,
+    Admission, Floodwall, Gate, HoldConfig, HoldError, Outcome, RateLimit, Rejected,
+    SchedulerConfig, Verdict, CONFLICT_CHECK,
 };
 
 /// A tiny xorshift PRNG, so every seed is reproducible.
@@ -41,6 +44,25 @@ impl Rng {
 
     fn pick<'a, T>(&mut self, items: &'a [T]) -> &'a T {
         &items[self.below(items.len() as u64) as usize]
+    }
+}
+
+/// A policy that changes over time: while the flag is up, changes to the
+/// "queue" resource are banned. "queue" is also off the allowlist, so its
+/// intents are deferred and held, and may be rejected once released.
+struct QueueBan(Arc<AtomicBool>);
+
+impl Policy for QueueBan {
+    fn name(&self) -> &str {
+        "queue-ban"
+    }
+
+    fn evaluate(&self, intent: &Intent) -> Verdict {
+        if self.0.load(Ordering::Relaxed) && intent.action.resource() == "queue" {
+            Verdict::Reject("queue changes are banned".into())
+        } else {
+            Verdict::Admit
+        }
     }
 }
 
@@ -97,10 +119,17 @@ fn is_wide(i: &Intent) -> bool {
 #[derive(Default)]
 struct Model {
     claims: Vec<(IntentKey, Action, Option<u64>)>,
-    /// Intents that are queued or in flight.
+    /// Intents that are queued, in flight, or held.
     live: HashSet<IntentKey>,
+    /// Intents that are held.
+    held: HashSet<IntentKey>,
+    /// Intents released from hold and not yet ruled on again.
+    released: HashSet<IntentKey>,
+    /// Ledger records the plane should have written, by kind.
     decisions: usize,
     completions: usize,
+    releases: usize,
+    expiries: usize,
 }
 
 impl Model {
@@ -170,6 +199,15 @@ struct Coverage {
     /// More than one narrow intent in flight on one resource at once.
     shared_resource_moments: usize,
     failures_reported: usize,
+    deferred_and_held: usize,
+    released: usize,
+    /// A released intent admitted although something in its breakdown
+    /// deferred it.
+    deferrals_waived: usize,
+    released_but_rejected: usize,
+    expired_by_tick: usize,
+    expired_by_human: usize,
+    not_held_errors: usize,
 }
 
 /// Nothing behind a blocked intent in the queue took what it waits for.
@@ -205,14 +243,44 @@ fn check_no_overtaking(
     }
 }
 
+const QUEUE_CAPACITY: usize = 64;
+
+/// The plane's hold matches the model, and every live intent is in exactly
+/// one place: queued, in flight, or held.
+fn check_hold(plane: &Floodwall, model: &Model, seed: u64) {
+    let held: HashSet<IntentKey> = plane.held().map(|h| h.intent.key()).collect();
+    assert_eq!(held, model.held, "seed {seed}: hold differs from the model");
+    let queued: HashSet<IntentKey> = plane.queued().map(Intent::key).collect();
+    let flying: HashSet<IntentKey> = plane.in_flight().map(|f| f.intent.key()).collect();
+    assert_eq!(
+        queued.len() + flying.len() + held.len(),
+        model.live.len(),
+        "seed {seed}: an intent is in two places, or lost"
+    );
+    let all: HashSet<IntentKey> = queued.into_iter().chain(flying).chain(held).collect();
+    assert_eq!(
+        all, model.live,
+        "seed {seed}: live intents differ from the model"
+    );
+    let since: Vec<u64> = plane.held().map(|h| h.since).collect();
+    assert!(since.is_sorted(), "seed {seed}: hold is not oldest first");
+}
+
 fn run(seed: u64, cov: &mut Coverage) {
     let mut rng = Rng::new(seed);
+    let ban = Arc::new(AtomicBool::new(false));
     let gate = Gate::new()
         .with(NoGlobalDestroy)
         .with(BlastNeedsPriority)
-        .with(ResourceAllowlist::new(["web", "api", "cache", "db"]));
-    let admission = Admission::new(64, RateLimit::new(6.0, 2.0));
-    let mut plane = Floodwall::new(admission, gate).with_scheduler(random_config(&mut rng));
+        .with(ResourceAllowlist::new(["web", "api", "cache", "db"]))
+        .with(QueueBan(Arc::clone(&ban)));
+    let admission = Admission::new(QUEUE_CAPACITY, RateLimit::new(6.0, 2.0));
+    let hold = HoldConfig::default()
+        .with_capacity(*rng.pick(&[0, 2, 8, 1024]))
+        .with_ttl(*rng.pick(&[None, Some(3), Some(15)]));
+    let mut plane = Floodwall::new(admission, gate)
+        .with_scheduler(random_config(&mut rng))
+        .with_hold(hold);
     let window = plane.scheduler_config().conflict_window();
     let mut model = Model::default();
     let mut next_id: HashMap<&str, u64> = HashMap::new();
@@ -221,6 +289,9 @@ fn run(seed: u64, cov: &mut Coverage) {
     let mut now = 0;
     loop {
         let flooding = now < flood_ticks;
+        if rng.chance(10) {
+            ban.store(!ban.load(Ordering::Relaxed), Ordering::Relaxed);
+        }
         if flooding {
             for _ in 0..rng.below(6) {
                 let agent = *rng.pick(&AGENTS);
@@ -270,15 +341,51 @@ fn run(seed: u64, cov: &mut Coverage) {
                 (Verdict::Reject(_), _) => cov.rejected += 1,
                 _ => {}
             }
-            if d.verdict.is_admit() {
-                cov.admitted += 1;
-                model
-                    .claims
-                    .push((d.intent.key(), d.intent.action.clone(), None));
+            let key = d.intent.key();
+            if model.released.remove(&key) {
+                assert_eq!(d.released_by.as_deref(), Some("ops"), "seed {seed}");
+                assert!(
+                    !matches!(d.verdict, Verdict::Defer(_)),
+                    "seed {seed}: released {key} deferred again"
+                );
+                let had_defer = d
+                    .breakdown
+                    .iter()
+                    .any(|(_, v)| matches!(v, Verdict::Defer(_)));
+                match d.verdict {
+                    Verdict::Admit if had_defer => cov.deferrals_waived += 1,
+                    Verdict::Reject(_) => cov.released_but_rejected += 1,
+                    _ => {}
+                }
             } else {
-                model.live.remove(&d.intent.key());
+                assert_eq!(d.released_by, None, "seed {seed}");
+            }
+            match d.verdict {
+                Verdict::Admit => {
+                    cov.admitted += 1;
+                    model.claims.push((key, d.intent.action.clone(), None));
+                }
+                Verdict::Defer(_) => {
+                    cov.deferred_and_held += 1;
+                    assert!(model.held.insert(key), "seed {seed}: held twice");
+                }
+                Verdict::Reject(_) => {
+                    model.live.remove(&key);
+                }
             }
         }
+        // Expired at the start of the tick, or evicted by a deferral in it.
+        for held in &report.expired {
+            let key = held.intent.key();
+            cov.expired_by_tick += 1;
+            model.expiries += 1;
+            assert!(
+                model.held.remove(&key),
+                "seed {seed}: expired {key} was not held"
+            );
+            model.live.remove(&key);
+        }
+        check_hold(&plane, &model, seed);
         check_in_flight(&plane, seed, cov);
         // Maximal: a second pass at the same tick finds nothing new.
         assert!(
@@ -309,7 +416,52 @@ fn run(seed: u64, cov: &mut Coverage) {
         }
         check_in_flight(&plane, seed, cov);
 
-        if !flooding && plane.pending() == 0 && plane.in_flight().count() == 0 {
+        // A human works through the hold: some intents released, some
+        // expired. Once the flood is over, everything held is acted on.
+        let held: Vec<IntentKey> = plane.held().map(|h| h.intent.key()).collect();
+        for key in held {
+            let roll = rng.below(100);
+            if roll < 15 || (!flooding && roll < 60) {
+                match plane.release(&key, "ops", now) {
+                    Ok(()) => {
+                        cov.released += 1;
+                        model.releases += 1;
+                        model.held.remove(&key);
+                        model.released.insert(key);
+                    }
+                    Err(HoldError::Backpressure(k)) => {
+                        assert_eq!(k, key);
+                        assert_eq!(plane.pending(), QUEUE_CAPACITY, "seed {seed}");
+                    }
+                    Err(e) => panic!("seed {seed}: {e}"),
+                }
+            } else if roll < 25 || !flooding {
+                let dropped = plane.expire(&key, "ops", now).unwrap();
+                assert_eq!(dropped.intent.key(), key);
+                cov.expired_by_human += 1;
+                model.expiries += 1;
+                model.held.remove(&key);
+                model.live.remove(&key);
+            }
+        }
+        // Acting on something that is not held does nothing.
+        let stranger = IntentKey::new("nobody", now);
+        assert_eq!(
+            plane.release(&stranger, "ops", now),
+            Err(HoldError::NotHeld(stranger.clone()))
+        );
+        assert_eq!(
+            plane.expire(&stranger, "ops", now),
+            Err(HoldError::NotHeld(stranger))
+        );
+        cov.not_held_errors += 2;
+        check_hold(&plane, &model, seed);
+
+        if !flooding
+            && plane.pending() == 0
+            && plane.in_flight().count() == 0
+            && plane.held().count() == 0
+        {
             break;
         }
         // Liveness: once the flood stops, the queue (at most 64) drains.
@@ -321,10 +473,14 @@ fn run(seed: u64, cov: &mut Coverage) {
     }
 
     assert!(model.live.is_empty(), "seed {seed}: intents left live");
+    assert!(
+        model.released.is_empty(),
+        "seed {seed}: a release never landed"
+    );
     assert_eq!(
         plane.ledger().len(),
-        model.decisions + model.completions,
-        "seed {seed}: one record per decision and per completion"
+        model.decisions + model.completions + model.releases + model.expiries,
+        "seed {seed}: one record per decision, completion, release and expiry"
     );
     assert!(plane.ledger().verify(), "seed {seed}: ledger chain broken");
 }
@@ -346,4 +502,10 @@ fn scheduler_invariants_hold_across_random_floods() {
     assert!(cov.overtaking_checks > 1_000, "{cov:?}");
     assert!(cov.shared_resource_moments > 100, "{cov:?}");
     assert!(cov.failures_reported > 100, "{cov:?}");
+    assert!(cov.deferred_and_held > 1_000, "{cov:?}");
+    assert!(cov.released > 500, "{cov:?}");
+    assert!(cov.deferrals_waived > 100, "{cov:?}");
+    assert!(cov.released_but_rejected > 0, "{cov:?}");
+    assert!(cov.expired_by_tick > 100, "{cov:?}");
+    assert!(cov.expired_by_human > 100, "{cov:?}");
 }

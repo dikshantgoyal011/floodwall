@@ -272,6 +272,19 @@ impl Admission {
         Ok(())
     }
 
+    /// Put an intent that already passed admission back in the queue, e.g.
+    /// one released from hold. It goes to the back of its priority class
+    /// and does not touch the agent's rate limit, but is still refused with
+    /// [`Rejected::Backpressure`] when the queue is full.
+    pub(crate) fn requeue(&mut self, intent: Intent, now: u64) -> Result<(), Rejected> {
+        self.advance(now);
+        if self.is_full() {
+            return Err(Rejected::Backpressure);
+        }
+        self.enqueue(intent);
+        Ok(())
+    }
+
     /// Put an intent at the back of its priority class.
     fn enqueue(&mut self, intent: Intent) {
         let key = QueueKey {
@@ -599,6 +612,24 @@ mod tests {
         a.submit(intent_for("x", 3, Priority::Normal), 0).unwrap();
         assert_eq!(a.waiting().map(|i| i.id).collect::<Vec<_>>(), [1, 2, 3]);
         assert_eq!(a.dequeue().unwrap().id, 1);
+    }
+
+    #[test]
+    fn requeue_skips_the_rate_limit_but_not_capacity() {
+        let mut a = Admission::new(2, RateLimit::new(1.0, 0.0));
+        a.submit(intent_for("x", 0, Priority::Normal), 0).unwrap();
+        // x's only token is spent, but a requeue does not need one.
+        assert_eq!(a.requeue(intent_for("x", 1, Priority::Normal), 0), Ok(()));
+        assert_eq!(
+            a.requeue(intent_for("x", 2, Priority::Normal), 0),
+            Err(Rejected::Backpressure)
+        );
+        // It joined the back of its class.
+        assert_eq!(a.waiting().map(|i| i.id).collect::<Vec<_>>(), [0, 1]);
+        // And the clock still advances.
+        a.dequeue();
+        a.requeue(intent_for("x", 3, Priority::Normal), 9).unwrap();
+        assert_eq!(a.clock(), 9);
     }
 
     #[test]

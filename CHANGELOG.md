@@ -42,10 +42,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   let up to `n` narrow intents run on a resource at once (default 1). A
   `Region` intent still needs its resource to itself. A limit of 0 is
   refused, since it would block the resource forever.
+- Hold queue for deferred intents (FW-206). A `Defer` no longer drops the
+  intent: it is held (`Floodwall::held`, `is_held`) until a human acts.
+  `Floodwall::release(key, by, now)` sends it back to the queue, and on
+  its next evaluation its deferrals (policy defers and conflicts) are
+  waived; rejections and scheduling still apply, and it never runs
+  alongside another agent's contradictory change that is in flight.
+  `Floodwall::expire(key, by, now)` drops it. `HoldConfig` sets a
+  capacity (oldest evicted when full, default 1024) and an optional TTL;
+  expiries are reported in `TickReport::expired`. The ledger records
+  `released` and `expired` with who did it and why, and a released
+  decision's reason lists what was overridden (`Decision::released_by`).
 - `tests/scheduler_invariants.rs`: 300 seeded random floods through the
-  public API, checking exclusivity, limits, no overtaking, maximal
-  passes, conflicts against an independent model, duplicate detection,
-  ledger completeness, and that the queue always drains.
+  public API, with random limits, conflict windows, hold capacities and
+  TTLs, a policy that changes over time, and random releases and
+  expiries. Checks exclusivity, limits, no overtaking, maximal passes,
+  conflicts against an independent model, that every live intent is in
+  exactly one place, that a released intent is never deferred again,
+  duplicate detection, ledger completeness, and that everything drains.
 
 ### Changed
 
