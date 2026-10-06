@@ -37,6 +37,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   shows in every decision's breakdown as `conflict-window` and combines
   deny-overrides with the gate, so a policy reject still wins.
   `Floodwall::with_scheduler` sets the configuration.
+- Per-resource in-flight limits (FW-205):
+  `SchedulerConfig::with_default_limit(n)` and `with_limit(resource, n)`
+  let up to `n` narrow intents run on a resource at once (default 1). A
+  `Region` intent still needs its resource to itself. A limit of 0 is
+  refused, since it would block the resource forever.
+- `tests/scheduler_invariants.rs`: 300 seeded random floods through the
+  public API, checking exclusivity, limits, no overtaking, maximal
+  passes, conflicts against an independent model, duplicate detection,
+  ledger completeness, and that the queue always drains.
 
 ### Changed
 

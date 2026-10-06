@@ -810,6 +810,19 @@ mod tests {
     }
 
     #[test]
+    fn a_limit_above_one_still_catches_conflicts_within_one_pass() {
+        let mut p = plane().with_scheduler(SchedulerConfig::default().with_limit("web", 3));
+        p.submit(scale_by("a", 1, "web", 3), 0).unwrap();
+        p.submit(scale_by("b", 1, "web", 9), 0).unwrap();
+        p.submit(scale_by("c", 1, "web", 3), 0).unwrap();
+        // All three fit under the limit. b contradicts a, which was
+        // dispatched moments earlier in the same pass; c agrees with a.
+        let report = p.tick(0);
+        assert_eq!(verdicts(&report), ["admit", "defer", "admit"]);
+        assert_eq!(p.in_flight().count(), 2);
+    }
+
+    #[test]
     fn time_never_moves_backwards() {
         let mut p = plane();
         p.submit(scale(1, "web"), 10).unwrap();

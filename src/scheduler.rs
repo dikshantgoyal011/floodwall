@@ -19,11 +19,14 @@
 //! |--------------------|-----------------------------------------------------|----------------------------------|
 //! | `Global`           | nothing at all is in flight                         | nothing else starts              |
 //! | `Region`           | no other wide intent is in flight, and nothing is in flight on its resource | nothing else starts on its resource, and no other wide intent starts |
-//! | `Service`, `Cell`  | no `Global` is in flight, and no other intent is in flight on its resource | -                  |
+//! | `Service`, `Cell`  | no `Global` is in flight, no `Region` is in flight on its resource, and fewer than the resource's limit are in flight on it | -                  |
 //!
 //! So narrow intents are partitioned by resource: work on different
-//! resources runs concurrently, and work on one resource runs one intent at
-//! a time, in queue order.
+//! resources runs concurrently, and work on one resource runs up to that
+//! resource's in-flight limit at a time, in queue order. The limit is 1
+//! unless configured otherwise ([`SchedulerConfig::with_default_limit`],
+//! [`SchedulerConfig::with_limit`]). Limits only govern narrow intents: a
+//! `Region` intent always needs its resource to itself.
 //!
 //! # No overtaking
 //!
@@ -65,23 +68,78 @@ pub const DEFAULT_CONFLICT_WINDOW: u64 = 10;
 /// ```
 /// use floodwall::SchedulerConfig;
 ///
-/// let config = SchedulerConfig::default().with_conflict_window(30);
+/// let config = SchedulerConfig::default()
+///     .with_conflict_window(30)
+///     .with_default_limit(2) // two narrow changes per resource at a time
+///     .with_limit("ledger-db", 1); // except here
 /// assert_eq!(config.conflict_window(), 30);
+/// assert_eq!(config.limit_for("web"), 2);
+/// assert_eq!(config.limit_for("ledger-db"), 1);
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchedulerConfig {
     conflict_window: u64,
+    default_limit: usize,
+    limits: BTreeMap<String, usize>,
 }
 
 impl Default for SchedulerConfig {
+    /// A 10-tick conflict window ([`DEFAULT_CONFLICT_WINDOW`]) and one
+    /// narrow intent in flight per resource.
     fn default() -> Self {
         Self {
             conflict_window: DEFAULT_CONFLICT_WINDOW,
+            default_limit: 1,
+            limits: BTreeMap::new(),
         }
     }
 }
 
+fn check_limit(limit: usize) {
+    assert!(
+        limit >= 1,
+        "an in-flight limit must be at least 1; 0 would block the resource forever"
+    );
+}
+
 impl SchedulerConfig {
+    /// How many narrow intents may be in flight at once on a resource with
+    /// no limit of its own.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `limit` is 0.
+    pub fn with_default_limit(mut self, limit: usize) -> Self {
+        check_limit(limit);
+        self.default_limit = limit;
+        self
+    }
+
+    /// How many narrow intents may be in flight at once on `resource`,
+    /// overriding the default limit.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `limit` is 0.
+    pub fn with_limit(mut self, resource: impl Into<String>, limit: usize) -> Self {
+        check_limit(limit);
+        self.limits.insert(resource.into(), limit);
+        self
+    }
+
+    /// The default per-resource in-flight limit.
+    pub fn default_limit(&self) -> usize {
+        self.default_limit
+    }
+
+    /// The in-flight limit for narrow intents on `resource`.
+    pub fn limit_for(&self, resource: &str) -> usize {
+        self.limits
+            .get(resource)
+            .copied()
+            .unwrap_or(self.default_limit)
+    }
+
     /// How many ticks after an intent completes its claim on its
     /// `(resource, action)` stays open. `0` means only in-flight intents
     /// can conflict.
@@ -262,7 +320,7 @@ impl Scheduler {
                     !self.global_in_flight()
                         && !self.region_holds(resource)
                         && !pass.resources.contains(resource)
-                        && self.in_flight_on(resource) < 1
+                        && self.in_flight_on(resource) < self.config.limit_for(resource)
                 }
             };
         if ready {
@@ -475,6 +533,73 @@ mod tests {
         s.set_config(SchedulerConfig::default().with_conflict_window(2));
         assert_eq!(s.config().conflict_window(), 2);
         assert_eq!(s.conflict(&by("b", 1, scale(5)), 3), None);
+    }
+
+    #[test]
+    fn a_resource_runs_up_to_its_limit_in_queue_order() {
+        let mut s = Scheduler::new(
+            SchedulerConfig::default()
+                .with_default_limit(2)
+                .with_limit("db", 1)
+                .with_limit("web", 3),
+        );
+        let mut q: Vec<Intent> = (0..4).map(|i| intent(i, "web", Cell)).collect();
+        q.extend((4..7).map(|i| intent(i, "api", Service)));
+        q.extend((7..9).map(|i| intent(i, "db", Cell)));
+        // web: 3, api: default 2, db: 1.
+        assert_eq!(pass(&mut s, &mut q, 0), [0, 1, 2, 4, 5, 7]);
+        assert_eq!(s.in_flight_on("web"), 3);
+        assert!(pass(&mut s, &mut q, 1).is_empty());
+        finish(&mut s, 1);
+        finish(&mut s, 7);
+        assert_eq!(pass(&mut s, &mut q, 2), [3, 8]);
+    }
+
+    #[test]
+    fn a_region_still_needs_its_resource_to_itself_under_a_limit() {
+        let mut s = Scheduler::new(SchedulerConfig::default().with_default_limit(4));
+        let mut q = vec![intent(1, "web", Cell)];
+        pass(&mut s, &mut q, 0);
+        q = vec![intent(2, "web", Region), intent(3, "web", Cell)];
+        // The limit would allow 3, but 2 is waiting for web to empty and 3
+        // must not overtake it.
+        assert!(pass(&mut s, &mut q, 1).is_empty());
+        finish(&mut s, 1);
+        assert_eq!(pass(&mut s, &mut q, 2), [2]);
+        // And nothing joins the region change on web, limit or not.
+        assert!(pass(&mut s, &mut q, 3).is_empty());
+    }
+
+    #[test]
+    fn lowering_a_limit_drains_down_to_it() {
+        let mut s = Scheduler::new(SchedulerConfig::default().with_default_limit(3));
+        let mut q: Vec<Intent> = (0..5).map(|i| intent(i, "web", Cell)).collect();
+        assert_eq!(pass(&mut s, &mut q, 0), [0, 1, 2]);
+        s.set_config(SchedulerConfig::default().with_default_limit(1));
+        finish(&mut s, 0);
+        assert!(
+            pass(&mut s, &mut q, 1).is_empty(),
+            "2 still in flight, limit 1"
+        );
+        finish(&mut s, 1);
+        assert!(
+            pass(&mut s, &mut q, 2).is_empty(),
+            "1 still in flight, limit 1"
+        );
+        finish(&mut s, 2);
+        assert_eq!(pass(&mut s, &mut q, 3), [3]);
+    }
+
+    #[test]
+    #[should_panic(expected = "in-flight limit must be at least 1")]
+    fn a_zero_default_limit_is_refused() {
+        let _ = SchedulerConfig::default().with_default_limit(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "in-flight limit must be at least 1")]
+    fn a_zero_resource_limit_is_refused() {
+        let _ = SchedulerConfig::default().with_limit("web", 0);
     }
 
     #[test]
