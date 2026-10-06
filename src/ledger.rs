@@ -22,6 +22,24 @@ fn fnv1a(seed: u64, bytes: &[u8]) -> u64 {
     h
 }
 
+/// Fold one variable-length field into the hash, prefixed by its length so
+/// field boundaries are unambiguous (`"ab" + "c"` never hashes like
+/// `"a" + "bc"`).
+fn fold_field(h: u64, bytes: &[u8]) -> u64 {
+    fnv1a(fnv1a(h, &(bytes.len() as u64).to_le_bytes()), bytes)
+}
+
+/// Why a decision came out the way it did, recorded alongside the verdict.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Evidence {
+    /// A short summary of the change, e.g. `scale web to 5`.
+    pub action: String,
+    /// The combined verdict's reason, for a `reject` or `defer`.
+    pub reason: Option<String>,
+    /// Each policy's name and its verdict label, in evaluation order.
+    pub policies: Vec<(String, String)>,
+}
+
 /// One immutable decision in the chain.
 #[derive(Clone, Debug)]
 pub struct Record {
@@ -33,6 +51,8 @@ pub struct Record {
     pub agent: String,
     /// The verdict label: `admit` / `reject` / `defer`.
     pub verdict: String,
+    /// What the change was and why it got this verdict.
+    pub evidence: Evidence,
     /// Digest of the previous record - the chain link.
     pub prev: u64,
     /// Digest of this record.
@@ -60,29 +80,53 @@ impl Ledger {
         }
     }
 
-    fn digest(prev: u64, seq: u64, intent_id: u64, agent: &str, verdict: &str) -> u64 {
-        let mut h = fnv1a(FNV_OFFSET, &prev.to_le_bytes());
-        h = fnv1a(h, &seq.to_le_bytes());
-        h = fnv1a(h, &intent_id.to_le_bytes());
-        h = fnv1a(h, agent.as_bytes());
-        h = fnv1a(h, verdict.as_bytes());
+    /// Digest of every field of `r` except `digest` itself.
+    fn digest(r: &Record) -> u64 {
+        let mut h = fnv1a(FNV_OFFSET, &r.prev.to_le_bytes());
+        h = fnv1a(h, &r.seq.to_le_bytes());
+        h = fnv1a(h, &r.intent_id.to_le_bytes());
+        h = fold_field(h, r.agent.as_bytes());
+        h = fold_field(h, r.verdict.as_bytes());
+        h = fold_field(h, r.evidence.action.as_bytes());
+        h = match &r.evidence.reason {
+            None => fnv1a(h, &[0]),
+            Some(reason) => fold_field(fnv1a(h, &[1]), reason.as_bytes()),
+        };
+        h = fnv1a(h, &(r.evidence.policies.len() as u64).to_le_bytes());
+        for (name, label) in &r.evidence.policies {
+            h = fold_field(h, name.as_bytes());
+            h = fold_field(h, label.as_bytes());
+        }
         h
     }
 
-    /// Append a decision and return the record just written.
+    /// Append a decision with no evidence and return the record just written.
     pub fn append(&mut self, intent_id: u64, agent: &str, verdict: &str) -> &Record {
-        let seq = self.records.len() as u64;
-        let prev = self.head;
-        let digest = Self::digest(prev, seq, intent_id, agent, verdict);
-        self.head = digest;
-        self.records.push(Record {
-            seq,
+        self.append_with(intent_id, agent, verdict, Evidence::default())
+    }
+
+    /// Append a decision together with its evidence and return the record
+    /// just written. The evidence is covered by the digest, so editing it
+    /// later breaks the chain just like editing the verdict.
+    pub fn append_with(
+        &mut self,
+        intent_id: u64,
+        agent: &str,
+        verdict: &str,
+        evidence: Evidence,
+    ) -> &Record {
+        let mut record = Record {
+            seq: self.records.len() as u64,
             intent_id,
             agent: agent.to_string(),
             verdict: verdict.to_string(),
-            prev,
-            digest,
-        });
+            evidence,
+            prev: self.head,
+            digest: 0,
+        };
+        record.digest = Self::digest(&record);
+        self.head = record.digest;
+        self.records.push(record);
         self.records.last().expect("a record was just pushed")
     }
 
@@ -93,7 +137,7 @@ impl Ledger {
             if r.prev != prev {
                 return false;
             }
-            let digest = Self::digest(prev, r.seq, r.intent_id, &r.agent, &r.verdict);
+            let digest = Self::digest(r);
             if digest != r.digest {
                 return false;
             }
@@ -162,5 +206,70 @@ mod tests {
         // The test module can reach the private field; production code cannot.
         l.records[1].verdict = "reject".to_string();
         assert!(!l.verify());
+    }
+
+    fn evidence(reason: Option<&str>) -> Evidence {
+        Evidence {
+            action: "destroy web".into(),
+            reason: reason.map(Into::into),
+            policies: vec![
+                ("no-global-destroy".into(), "reject".into()),
+                ("resource-allowlist".into(), "admit".into()),
+            ],
+        }
+    }
+
+    #[test]
+    fn evidence_is_recorded_and_covered_by_the_digest() {
+        let mut l = Ledger::new();
+        let r = l.append_with(1, "bot", "reject", evidence(Some("no humans")));
+        assert_eq!(r.evidence.action, "destroy web");
+        assert_eq!(r.evidence.reason.as_deref(), Some("no humans"));
+        assert_eq!(r.evidence.policies.len(), 2);
+        assert!(l.verify());
+
+        // Editing any part of the evidence breaks the chain.
+        let mut edited = l.records.clone();
+        edited[0].evidence.reason = Some("approved".into());
+        assert!(!Ledger {
+            records: edited,
+            head: l.head
+        }
+        .verify());
+
+        let mut edited = l.records.clone();
+        edited[0].evidence.policies[0].1 = "admit".into();
+        assert!(!Ledger {
+            records: edited,
+            head: l.head
+        }
+        .verify());
+
+        let mut edited = l.records.clone();
+        edited[0].evidence.action = "scale web to 3".into();
+        assert!(!Ledger {
+            records: edited,
+            head: l.head
+        }
+        .verify());
+    }
+
+    #[test]
+    fn no_reason_and_empty_reason_hash_differently() {
+        let mut a = Ledger::new();
+        a.append_with(1, "bot", "admit", evidence(None));
+        let mut b = Ledger::new();
+        b.append_with(1, "bot", "admit", evidence(Some("")));
+        assert_ne!(a.head(), b.head());
+    }
+
+    #[test]
+    fn field_boundaries_are_unambiguous() {
+        // Without length prefixes, "ab" + "c" would hash like "a" + "bc".
+        let mut a = Ledger::new();
+        a.append(1, "ab", "c");
+        let mut b = Ledger::new();
+        b.append(1, "a", "bc");
+        assert_ne!(a.head(), b.head());
     }
 }

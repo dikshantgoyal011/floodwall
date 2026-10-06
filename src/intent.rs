@@ -61,6 +61,18 @@ impl Action {
     }
 }
 
+/// A short human-readable summary, as recorded in the ledger: `apply web`,
+/// `scale web to 5`, `destroy web`. The manifest body is left out.
+impl fmt::Display for Action {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Action::Apply { resource, .. } => write!(f, "apply {resource}"),
+            Action::Scale { resource, replicas } => write!(f, "scale {resource} to {replicas}"),
+            Action::Destroy { resource } => write!(f, "destroy {resource}"),
+        }
+    }
+}
+
 /// How much of the world a change can damage if it goes wrong. Drives both
 /// policy (a wider blast radius demands stricter gates) and ordering (serialize
 /// the wide ones, parallelize the narrow ones).
@@ -179,6 +191,24 @@ mod tests {
             manifest: String::new()
         }
         .is_destructive());
+    }
+
+    #[test]
+    fn actions_summarize_without_the_manifest() {
+        let apply = Action::Apply {
+            resource: "web".into(),
+            manifest: "<large manifest>".into(),
+        };
+        assert_eq!(apply.to_string(), "apply web");
+        let scale = Action::Scale {
+            resource: "api".into(),
+            replicas: 5,
+        };
+        assert_eq!(scale.to_string(), "scale api to 5");
+        let destroy = Action::Destroy {
+            resource: "db".into(),
+        };
+        assert_eq!(destroy.to_string(), "destroy db");
     }
 
     #[test]

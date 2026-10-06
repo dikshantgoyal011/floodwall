@@ -33,6 +33,14 @@ impl Verdict {
         }
     }
 
+    /// The human-readable reason, for a `Reject` or `Defer`.
+    pub fn reason(&self) -> Option<&str> {
+        match self {
+            Verdict::Admit => None,
+            Verdict::Reject(reason) | Verdict::Defer(reason) => Some(reason),
+        }
+    }
+
     /// A short, stable label for the ledger.
     pub fn label(&self) -> &'static str {
         match self {

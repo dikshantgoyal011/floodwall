@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `ledger::Evidence`: each `Record` now carries the action summary, the
+  verdict's reason, and every policy's verdict, all covered by the
+  digest. `Ledger::append_with` records it; `Floodwall::tick` fills it in.
+  (FW-105)
+- `Display` for `Action` (`apply web`, `scale web to 5`, `destroy web`)
+  and `Verdict::reason()`.
+
 ### Changed
 
 - `RateLimit::new` and `Admission::new` now panic on a limit that could
@@ -17,6 +26,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   call has supplied (`Admission::clock`), and a `submit` or `prune_idle`
   stamped earlier is treated as that tick. Previously an earlier tick
   skipped refill for that one call. (FW-104)
+- Ledger digests length-prefix every text field, so field boundaries are
+  unambiguous. Head digests differ from 0.1.0 for the same history.
 
 ### Fixed
 

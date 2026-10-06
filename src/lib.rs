@@ -56,7 +56,7 @@ pub mod policy;
 pub use admission::{Admission, InvalidRateLimit, RateLimit, Rejected};
 pub use gate::{Gate, GateDecision};
 pub use intent::Intent;
-pub use ledger::{Ledger, Record};
+pub use ledger::{Evidence, Ledger, Record};
 pub use policy::{Policy, Verdict};
 
 /// The outcome of processing one intent: the intent itself, the gate's combined
@@ -101,8 +101,21 @@ impl Floodwall {
     pub fn tick(&mut self) -> Option<Decision> {
         let intent = self.admission.dequeue()?;
         let decision = self.gate.evaluate(&intent);
-        self.ledger
-            .append(intent.id, intent.agent.as_str(), decision.verdict.label());
+        let evidence = Evidence {
+            action: intent.action.to_string(),
+            reason: decision.verdict.reason().map(str::to_string),
+            policies: decision
+                .breakdown
+                .iter()
+                .map(|(name, verdict)| (name.clone(), verdict.label().to_string()))
+                .collect(),
+        };
+        self.ledger.append_with(
+            intent.id,
+            intent.agent.as_str(),
+            decision.verdict.label(),
+            evidence,
+        );
         Some(Decision {
             intent,
             verdict: decision.verdict,
@@ -183,7 +196,22 @@ mod tests {
         assert!(matches!(d.verdict, Verdict::Reject(_)));
         // Even rejected decisions are written to the ledger.
         assert_eq!(p.ledger().len(), 1);
-        assert_eq!(p.ledger().records()[0].verdict, "reject");
+        let record = &p.ledger().records()[0];
+        assert_eq!(record.verdict, "reject");
+        // The record says what the change was and why it was stopped.
+        assert_eq!(record.evidence.action, "destroy web");
+        assert_eq!(
+            record.evidence.reason.as_deref(),
+            Some("destructive global change requires human sign-off")
+        );
+        assert_eq!(
+            record.evidence.policies,
+            vec![
+                ("no-global-destroy".to_string(), "reject".to_string()),
+                ("blast-needs-priority".to_string(), "admit".to_string()),
+                ("resource-allowlist".to_string(), "admit".to_string()),
+            ]
+        );
         assert!(p.ledger().verify());
     }
 

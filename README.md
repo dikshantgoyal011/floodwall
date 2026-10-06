@@ -30,7 +30,7 @@ You cannot review your way out of that. You have to **govern throughput**: admit
 |-------|--------------|--------------|
 | **Admission** | [`admission`](src/admission.rs) | A per-agent token bucket caps how fast any one agent can push, so a single runaway loop cannot starve the fleet. A bounded priority queue orders what is waiting (highest priority first, FIFO within a priority) and applies backpressure once it is full. |
 | **Gate** | [`gate`](src/gate.rs) / [`policy`](src/policy.rs) | A stack of policies, each a pure function from an intent to a verdict, composed with **deny-overrides**: the harshest verdict wins, so one `Reject` blocks a change no matter how many policies admit it. |
-| **Ledger** | [`ledger`](src/ledger.rs) | Every decision, admit or reject, is appended to a hash chain. Each record folds in the previous digest, so any retroactive edit to history breaks the chain. |
+| **Ledger** | [`ledger`](src/ledger.rs) | Every decision, admit or reject, is appended to a hash chain together with its evidence: the action, the reason, and each policy's verdict. Each record folds in the previous digest, so any retroactive edit to history breaks the chain. |
 
 The unit that flows through all of it is an [`Intent`](src/intent.rs): a change an agent *wants* to make, fully attributed, tagged with how urgent it is (`Priority`) and how much it can break (`BlastRadius`). Agents never touch production directly. They submit intents. The floodwall decides.
 
@@ -110,7 +110,7 @@ floodwall demo - 4000 intents flung at the wall over 200 ticks
 
   ledger (tamper-evident)
     records      : 512
-    head digest  : 0x081eb68250004746
+    head digest  : 0x5b8f01788b0073ca
     chain valid  : true
 ```
 
