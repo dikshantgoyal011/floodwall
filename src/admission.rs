@@ -21,8 +21,8 @@
 //! a refilled bucket safe: no later call can ask about a moment when it
 //! was not yet full.
 
-use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap};
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
 use crate::intent::{AgentId, Intent, Priority};
@@ -149,43 +149,25 @@ pub enum Rejected {
     RateLimited,
     /// The queue is at capacity - backpressure, come back later.
     Backpressure,
+    /// An intent with the same agent and id is already live (queued, in
+    /// flight, or held). Returned by [`Floodwall::submit`](crate::Floodwall::submit);
+    /// [`Admission`] itself does not track identity.
+    Duplicate,
 }
 
-// Heap ordering. `BinaryHeap` is a max-heap, so the element it pops is the
-// "greatest". We want highest priority first, and within one priority the
-// lowest sequence number (FIFO) - so a smaller seq must compare as greater.
-#[derive(Debug)]
-struct Queued {
-    priority: Priority,
+/// An intent's place in the queue. Keys sort in processing order: highest
+/// priority first (hence `Reverse`), then submission order within a
+/// priority (FIFO). The scheduler walks the queue in this order and can
+/// take an intent from anywhere in it, which a heap cannot do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct QueueKey {
+    priority: Reverse<Priority>,
     seq: u64,
-    intent: Intent,
-}
-
-impl PartialEq for Queued {
-    fn eq(&self, other: &Self) -> bool {
-        self.priority == other.priority && self.seq == other.seq
-    }
-}
-
-impl Eq for Queued {}
-
-impl Ord for Queued {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.priority
-            .cmp(&other.priority)
-            .then_with(|| other.seq.cmp(&self.seq))
-    }
-}
-
-impl PartialOrd for Queued {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
 }
 
 /// The front door: per-agent rate limiting in front of a bounded priority queue.
 pub struct Admission {
-    queue: BinaryHeap<Queued>,
+    queue: BTreeMap<QueueKey, Intent>,
     capacity: usize,
     seq: u64,
     limit: RateLimit,
@@ -215,7 +197,7 @@ impl Admission {
             panic!("{e}");
         }
         Self {
-            queue: BinaryHeap::new(),
+            queue: BTreeMap::new(),
             capacity,
             seq: 0,
             limit,
@@ -269,7 +251,7 @@ impl Admission {
     /// not burn the agent's tokens.
     pub fn submit(&mut self, intent: Intent, now: u64) -> Result<(), Rejected> {
         let now = self.advance(now);
-        if self.queue.len() >= self.capacity {
+        if self.is_full() {
             return Err(Rejected::Backpressure);
         }
         if self.buckets.len() >= self.prune_at && !self.buckets.contains_key(&intent.agent) {
@@ -286,25 +268,56 @@ impl Admission {
         if !bucket.try_take(limit, now) {
             return Err(Rejected::RateLimited);
         }
-        let seq = self.seq;
-        self.seq += 1;
-        self.queue.push(Queued {
-            priority: intent.priority,
-            seq,
-            intent,
-        });
+        self.enqueue(intent);
         Ok(())
+    }
+
+    /// Put an intent at the back of its priority class.
+    fn enqueue(&mut self, intent: Intent) {
+        let key = QueueKey {
+            priority: Reverse(intent.priority),
+            seq: self.seq,
+        };
+        self.seq += 1;
+        self.queue.insert(key, intent);
     }
 
     /// Pull the next intent to process: highest priority, FIFO within a
     /// priority. Returns `None` when nothing is waiting.
     pub fn dequeue(&mut self) -> Option<Intent> {
-        self.queue.pop().map(|q| q.intent)
+        self.queue.pop_first().map(|(_, intent)| intent)
+    }
+
+    /// The waiting intents, in the order they would be dequeued.
+    pub fn waiting(&self) -> impl Iterator<Item = &Intent> {
+        self.queue.values()
+    }
+
+    /// Every queue position, in processing order. A snapshot: positions
+    /// stay valid while intents are taken from the queue.
+    pub(crate) fn queued_keys(&self) -> Vec<QueueKey> {
+        self.queue.keys().copied().collect()
+    }
+
+    /// The intent at a queue position, if it is still there.
+    pub(crate) fn get(&self, key: &QueueKey) -> Option<&Intent> {
+        self.queue.get(key)
+    }
+
+    /// Remove and return the intent at a queue position.
+    pub(crate) fn take(&mut self, key: &QueueKey) -> Option<Intent> {
+        self.queue.remove(key)
     }
 
     /// How many intents are waiting.
     pub fn len(&self) -> usize {
         self.queue.len()
+    }
+
+    /// Whether the queue is at capacity, so the next submit would be refused
+    /// with [`Rejected::Backpressure`].
+    pub fn is_full(&self) -> bool {
+        self.queue.len() >= self.capacity
     }
 
     /// Whether the queue is empty.
@@ -561,6 +574,31 @@ mod tests {
             refill_per_tick: 1.0,
         };
         let _ = Admission::new(8, limit);
+    }
+
+    #[test]
+    fn the_queue_can_be_walked_in_order_and_taken_from_anywhere() {
+        let mut a = Admission::new(3, RateLimit::new(100.0, 0.0));
+        a.submit(intent_for("x", 0, Priority::Normal), 0).unwrap();
+        a.submit(intent_for("x", 1, Priority::Pager), 0).unwrap();
+        a.submit(intent_for("x", 2, Priority::Normal), 0).unwrap();
+        assert!(a.is_full());
+        let order: Vec<u64> = a.waiting().map(|i| i.id).collect();
+        assert_eq!(order, [1, 0, 2]);
+
+        let keys = a.queued_keys();
+        assert_eq!(a.get(&keys[1]).unwrap().id, 0);
+        // Take from the middle; the rest keep their order and positions.
+        assert_eq!(a.take(&keys[1]).unwrap().id, 0);
+        assert!(a.get(&keys[1]).is_none());
+        assert!(a.take(&keys[1]).is_none());
+        assert!(!a.is_full());
+        assert_eq!(a.waiting().map(|i| i.id).collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(a.get(&keys[2]).unwrap().id, 2);
+        // A new submission joins the back of its priority class.
+        a.submit(intent_for("x", 3, Priority::Normal), 0).unwrap();
+        assert_eq!(a.waiting().map(|i| i.id).collect::<Vec<_>>(), [1, 2, 3]);
+        assert_eq!(a.dequeue().unwrap().id, 1);
     }
 
     #[test]

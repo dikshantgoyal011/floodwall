@@ -8,7 +8,7 @@
 use std::fmt;
 
 /// Stable identifier for an agent in the fleet.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct AgentId(pub String);
 
 impl AgentId {
@@ -106,7 +106,7 @@ pub enum Priority {
 }
 
 /// A proposed change, fully attributed to the agent that authored it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Intent {
     /// Author-assigned id, monotonic per agent.
     pub id: u64,
@@ -136,6 +136,41 @@ impl Intent {
             priority,
             blast_radius,
         }
+    }
+
+    /// This intent's identity. Ids are only unique per agent, so an intent
+    /// is identified by its agent and id together.
+    pub fn key(&self) -> IntentKey {
+        IntentKey {
+            agent: self.agent.clone(),
+            id: self.id,
+        }
+    }
+}
+
+/// Identifies one intent: its agent plus the agent's id for it.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct IntentKey {
+    /// The agent that authored the intent.
+    pub agent: AgentId,
+    /// The agent's id for the intent.
+    pub id: u64,
+}
+
+impl IntentKey {
+    /// Identify intent `id` from `agent`.
+    pub fn new(agent: impl Into<String>, id: u64) -> Self {
+        Self {
+            agent: AgentId::new(agent),
+            id,
+        }
+    }
+}
+
+/// `agent#id`, e.g. `reconciler-7#42`.
+impl fmt::Display for IntentKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}#{}", self.agent, self.id)
     }
 }
 

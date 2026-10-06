@@ -14,8 +14,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (FW-105)
 - `Display` for `Action` (`apply web`, `scale web to 5`, `destroy web`)
   and `Verdict::reason()`.
+- Scheduler stage between admission and the gate (FW-201). An admitted
+  intent is now *in flight*: the caller applies it and reports back with
+  `Floodwall::complete(key, Outcome, now)`, which is recorded in the
+  ledger as `succeeded` or `failed`. `Floodwall::in_flight`, `queued`,
+  `is_in_flight` and `clock` expose the plane's state. `IntentKey`
+  (agent + id) identifies an intent; `Intent::key()` returns it.
+- `Admission::waiting` (the queue in order) and `Admission::is_full`.
 
 ### Changed
+
+- **Breaking:** `Floodwall::tick()` is now `tick(now) -> TickReport`. One
+  call is a full pass over the queue that rules on every intent that may
+  start now, instead of popping a single intent. `TickReport::admitted()`
+  lists what was dispatched.
+- **Breaking:** `Rejected::Duplicate`: `Floodwall::submit` refuses an
+  intent whose key is already queued or in flight, before it touches the
+  agent's rate limit.
+- `Floodwall` keeps one clock across all its methods; a `now` earlier
+  than the latest tick seen is treated as that tick.
 
 - `RateLimit::new` and `Admission::new` now panic on a limit that could
   never admit anything sensibly: a `burst` below `1.0` (which used to

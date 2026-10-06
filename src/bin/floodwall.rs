@@ -6,7 +6,7 @@
 
 use floodwall::intent::{Action, AgentId, BlastRadius, Intent, Priority};
 use floodwall::policy::{BlastNeedsPriority, NoGlobalDestroy, ResourceAllowlist};
-use floodwall::{Admission, Floodwall, Gate, RateLimit, Rejected, Verdict};
+use floodwall::{Admission, Floodwall, Gate, Outcome, RateLimit, Rejected, Verdict};
 
 /// A tiny xorshift PRNG so the demo is reproducible without pulling in `rand`.
 struct Rng(u64);
@@ -93,20 +93,32 @@ fn main() {
                 Ok(()) => {}
                 Err(Rejected::RateLimited) => rate_limited += 1,
                 Err(Rejected::Backpressure) => backpressure += 1,
+                Err(Rejected::Duplicate) => unreachable!("every intent id is fresh"),
             }
         }
     }
 
-    // Drain phase: pull everything still waiting through the gate.
+    // Drain phase: pull everything still waiting through the gate, applying
+    // each admitted change straight away.
     let mut admitted = 0u64;
     let mut deferred = 0u64;
     let mut rejected = 0u64;
-    while let Some(decision) = plane.tick() {
-        match decision.verdict {
-            Verdict::Admit => admitted += 1,
-            Verdict::Defer(_) => deferred += 1,
-            Verdict::Reject(_) => rejected += 1,
+    let mut now = ticks;
+    while plane.pending() > 0 {
+        let report = plane.tick(now);
+        for decision in &report.decisions {
+            match decision.verdict {
+                Verdict::Admit => admitted += 1,
+                Verdict::Defer(_) => deferred += 1,
+                Verdict::Reject(_) => rejected += 1,
+            }
         }
+        for key in report.admitted().map(Intent::key) {
+            plane
+                .complete(&key, Outcome::Succeeded, now)
+                .expect("dispatched this tick");
+        }
+        now += 1;
     }
 
     let queued = offered - rate_limited - backpressure;
