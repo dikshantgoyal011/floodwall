@@ -214,7 +214,8 @@ function ModelSection() {
       <div className="model-rail">
         {[
           ["Admission", "Per-agent token buckets and a bounded priority queue keep one loop from taking the whole lane."],
-          ["Gate", "A deny-overrides policy stack evaluates every intent before it gets near production."],
+          ["Scheduler", "Wide changes run alone, narrow ones run in parallel per resource, and a waiting change is never overtaken by lower-priority work."],
+          ["Gate", "A deny-overrides policy stack and a conflict check rule on every intent. Deferred changes wait on hold for a human."],
           ["Ledger", "Every verdict is appended to a hash chain so retroactive edits break verification."],
         ].map(([title, copy]) => (
           <article key={title}>
@@ -236,7 +237,8 @@ function GateLedgerSection() {
         <p>
           Reference policies cover global destructive actions, blast-radius urgency, and resource
           allowlists. The policy trait stays small so teams can add rules that match their own
-          release discipline.
+          release discipline. A deferred change is held, not dropped, until a human releases or
+          expires it.
         </p>
       </article>
       <article className="ledger-panel" id="ledger">
@@ -271,7 +273,7 @@ function Roadmap() {
       <div className="roadmap-grid">
         {[
           ["0.1", "The wall", "Intent model, admission control, policy gate, ledger, and demo."],
-          ["0.2", "Scheduler", "Serialize wide-blast and same-resource changes while narrow work proceeds."],
+          ["0.2", "Scheduler", "Wide changes serialize, narrow work runs in parallel per resource, and contradictions wait for a human."],
           ["0.3", "Trustworthy ledger", "SHA-256 chain, signed records, and Merkle checkpoints."],
           ["0.4", "Replay", "Durable append-only state that rebuilds the plane after restart."],
         ].map(([version, title, copy]) => (

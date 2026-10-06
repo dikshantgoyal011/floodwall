@@ -81,6 +81,12 @@ pub use scheduler::{InFlight, SchedulerConfig};
 use hold::Hold;
 use scheduler::{Readiness, Scheduler};
 
+// Compile and run the README's examples as doctests, so they cannot drift
+// from the API.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+pub struct ReadmeDoctests;
+
 /// The name the scheduler's conflict check (see
 /// [`scheduler`](crate::scheduler#conflicts)) has in a decision's breakdown.
 pub const CONFLICT_CHECK: &str = "conflict-window";

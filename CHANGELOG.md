@@ -53,6 +53,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   expiries are reported in `TickReport::expired`. The ledger records
   `released` and `expired` with who did it and why, and a released
   decision's reason lists what was overridden (`Decision::released_by`).
+- Demo, README and site for v0.2 (FW-207). The demo follows a flood
+  through scheduling, conflicts, an operator working the hold queue, and
+  completions. The README's examples are compiled and run as doctests.
 - `tests/scheduler_invariants.rs`: 300 seeded random floods through the
   public API, with random limits, conflict windows, hold capacities and
   TTLs, a policy that changes over time, and random releases and
