@@ -21,6 +21,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `is_in_flight` and `clock` expose the plane's state. `IntentKey`
   (agent + id) identifies an intent; `Intent::key()` returns it.
 - `Admission::waiting` (the queue in order) and `Admission::is_full`.
+- Wide-blast intents are serialized (FW-202). A `Global` intent waits for
+  everything in flight and then runs alone; `Region` intents run one at a
+  time and need their resource to themselves. A blocked wide intent keeps
+  what it is waiting for from lower-priority work behind it, so it cannot
+  be starved.
 
 ### Changed
 

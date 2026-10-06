@@ -208,6 +208,9 @@ impl Floodwall {
         let mut report = TickReport::default();
         let mut pass = self.scheduler.begin();
         for position in self.admission.queued_keys() {
+            if pass.is_closed() {
+                break;
+            }
             let intent = self
                 .admission
                 .get(&position)
@@ -541,6 +544,63 @@ mod tests {
         p.submit(urgent, 0).unwrap();
         let ids: Vec<u64> = p.tick(0).decisions.iter().map(|d| d.intent.id).collect();
         assert_eq!(ids, [2, 1]);
+    }
+
+    fn global_apply(id: u64, resource: &str) -> Intent {
+        intent(
+            id,
+            Action::Apply {
+                resource: resource.into(),
+                manifest: "m".into(),
+            },
+            Priority::Pager,
+            BlastRadius::Global,
+        )
+    }
+
+    #[test]
+    fn a_blocked_intent_is_not_ruled_on_until_it_can_start() {
+        let mut p = plane();
+        p.submit(scale(1, "web"), 0).unwrap();
+        p.tick(0);
+        p.submit(global_apply(2, "api"), 1).unwrap();
+        let records = p.ledger().len();
+        // The global change waits for web: no decision, nothing recorded.
+        assert!(p.tick(1).decisions.is_empty());
+        assert_eq!(p.ledger().len(), records);
+        assert_eq!(p.pending(), 1);
+        p.complete(&IntentKey::new("bot", 1), Outcome::Succeeded, 2)
+            .unwrap();
+        let report = p.tick(2);
+        assert_eq!(report.admitted().count(), 1);
+        assert!(p.is_in_flight(&IntentKey::new("bot", 2)));
+    }
+
+    #[test]
+    fn a_wide_intent_the_gate_refuses_holds_nothing() {
+        let mut p = plane();
+        // Rejected by no-global-destroy, so it never starts...
+        p.submit(
+            intent(
+                1,
+                Action::Destroy {
+                    resource: "web".into(),
+                },
+                Priority::Pager,
+                BlastRadius::Global,
+            ),
+            0,
+        )
+        .unwrap();
+        p.submit(scale(2, "api"), 0).unwrap();
+        // ...and the change behind it is ruled on in the same pass.
+        let verdicts: Vec<&str> = p
+            .tick(0)
+            .decisions
+            .iter()
+            .map(|d| d.verdict.label())
+            .collect();
+        assert_eq!(verdicts, ["reject", "admit"]);
     }
 
     #[test]
