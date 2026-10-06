@@ -604,6 +604,44 @@ mod tests {
     }
 
     #[test]
+    fn a_resource_lane_takes_the_highest_priority_waiter_first() {
+        let mut p = plane();
+        p.submit(scale(1, "web"), 0).unwrap();
+        p.tick(0);
+        // Two more for web: an older normal one, then a newer urgent one.
+        p.submit(scale(2, "web"), 1).unwrap();
+        let mut urgent = scale(3, "web");
+        urgent.priority = Priority::Urgent;
+        p.submit(urgent, 1).unwrap();
+        assert!(p.tick(1).decisions.is_empty(), "web is busy");
+        p.complete(&IntentKey::new("bot", 1), Outcome::Succeeded, 2)
+            .unwrap();
+        let ids: Vec<u64> = p.tick(2).decisions.iter().map(|d| d.intent.id).collect();
+        assert_eq!(ids, [3]);
+        p.complete(&IntentKey::new("bot", 3), Outcome::Succeeded, 3)
+            .unwrap();
+        let ids: Vec<u64> = p.tick(3).decisions.iter().map(|d| d.intent.id).collect();
+        assert_eq!(ids, [2]);
+    }
+
+    #[test]
+    fn a_refused_intent_does_not_take_its_resource_lane() {
+        let mut p = plane();
+        // "cache" is off the allowlist, so the gate defers it...
+        p.submit(scale(1, "cache"), 0).unwrap();
+        p.submit(scale(2, "cache"), 0).unwrap();
+        // ...and the lane is free for the next one in the same pass.
+        let verdicts: Vec<&str> = p
+            .tick(0)
+            .decisions
+            .iter()
+            .map(|d| d.verdict.label())
+            .collect();
+        assert_eq!(verdicts, ["defer", "defer"]);
+        assert_eq!(p.in_flight().count(), 0);
+    }
+
+    #[test]
     fn time_never_moves_backwards() {
         let mut p = plane();
         p.submit(scale(1, "web"), 10).unwrap();

@@ -26,6 +26,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   time and need their resource to themselves. A blocked wide intent keeps
   what it is waiting for from lower-priority work behind it, so it cannot
   be starved.
+- Narrow intents are partitioned by resource (FW-203): work on different
+  resources runs concurrently, and work on one resource runs one intent at
+  a time, highest priority first.
 
 ### Changed
 

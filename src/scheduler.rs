@@ -19,7 +19,11 @@
 //! |--------------------|-----------------------------------------------------|----------------------------------|
 //! | `Global`           | nothing at all is in flight                         | nothing else starts              |
 //! | `Region`           | no other wide intent is in flight, and nothing is in flight on its resource | nothing else starts on its resource, and no other wide intent starts |
-//! | `Service`, `Cell`  | no `Global` is in flight, and no `Region` is in flight on its resource | -                  |
+//! | `Service`, `Cell`  | no `Global` is in flight, and no other intent is in flight on its resource | -                  |
+//!
+//! So narrow intents are partitioned by resource: work on different
+//! resources runs concurrently, and work on one resource runs one intent at
+//! a time, in queue order.
 //!
 //! # No overtaking
 //!
@@ -29,7 +33,9 @@
 //!
 //! - a blocked `Global` ends the pass: nothing behind it starts;
 //! - a blocked `Region` keeps the wide slot and its resource: nothing
-//!   behind it that is wide, or that targets its resource, starts.
+//!   behind it that is wide, or that targets its resource, starts;
+//! - a blocked narrow intent keeps its resource: nothing behind it that
+//!   targets the same resource starts.
 //!
 //! Work *ahead* of a blocked intent in the queue still starts, because it
 //! has priority over it. A blocked intent is only ever waiting on work
@@ -138,6 +144,7 @@ impl Scheduler {
                     !self.global_in_flight()
                         && !self.region_holds(resource)
                         && !pass.resources.contains(resource)
+                        && self.in_flight_on(resource) < 1
                 }
             };
         if ready {
@@ -156,7 +163,9 @@ impl Scheduler {
                 pass.wide = true;
                 pass.resources.insert(intent.action.resource().to_string());
             }
-            BlastRadius::Service | BlastRadius::Cell => {}
+            BlastRadius::Service | BlastRadius::Cell => {
+                pass.resources.insert(intent.action.resource().to_string());
+            }
         }
     }
 
@@ -381,19 +390,56 @@ mod tests {
     #[test]
     fn finishing_frees_exactly_what_was_held() {
         let mut s = Scheduler::new();
-        let mut q = vec![intent(1, "web", Cell), intent(2, "web", Service)];
+        let mut q = vec![intent(1, "web", Cell), intent(2, "api", Service)];
         assert_eq!(pass(&mut s, &mut q, 0), [1, 2]);
-        assert_eq!(s.in_flight_on("web"), 2);
-        finish(&mut s, 1);
         assert_eq!(s.in_flight_on("web"), 1);
-        q.push(intent(3, "web", Region));
-        assert!(pass(&mut s, &mut q, 1).is_empty(), "2 is still on web");
-        finish(&mut s, 2);
+        finish(&mut s, 1);
         assert_eq!(s.in_flight_on("web"), 0);
         assert!(!s.per_resource.contains_key("web"), "no stale zero entries");
+        assert_eq!(s.in_flight_on("api"), 1);
+        q.push(intent(3, "db", Global));
+        assert!(pass(&mut s, &mut q, 1).is_empty(), "2 is still on api");
+        finish(&mut s, 2);
         assert_eq!(pass(&mut s, &mut q, 2), [3]);
         finish(&mut s, 3);
         assert!(s.wide.is_none());
+        assert!(s.per_resource.is_empty());
+        assert!(s.in_flight.is_empty());
         assert!(s.finish(&IntentKey::new("bot", 3), 3).is_none());
+    }
+
+    #[test]
+    fn narrow_intents_on_one_resource_run_one_at_a_time_in_queue_order() {
+        let mut s = Scheduler::new();
+        let mut q = vec![
+            intent(1, "web", Cell),
+            intent(2, "web", Service),
+            intent(3, "web", Cell),
+        ];
+        assert_eq!(pass(&mut s, &mut q, 0), [1]);
+        assert!(pass(&mut s, &mut q, 1).is_empty());
+        finish(&mut s, 1);
+        assert_eq!(pass(&mut s, &mut q, 2), [2]);
+        finish(&mut s, 2);
+        assert_eq!(pass(&mut s, &mut q, 3), [3]);
+    }
+
+    #[test]
+    fn each_resource_is_its_own_lane() {
+        let mut s = Scheduler::new();
+        // Three intents on each of four resources, interleaved.
+        let resources = ["web", "api", "cache", "db"];
+        let mut q: Vec<Intent> = (0..12)
+            .map(|i| intent(i, resources[i as usize % 4], Cell))
+            .collect();
+        // One per resource, the first of each in queue order.
+        assert_eq!(pass(&mut s, &mut q, 0), [0, 1, 2, 3]);
+        // Finishing one lane only advances that lane.
+        finish(&mut s, 2);
+        assert_eq!(pass(&mut s, &mut q, 1), [6]);
+        for id in [0, 1, 3, 6] {
+            finish(&mut s, id);
+        }
+        assert_eq!(pass(&mut s, &mut q, 2), [4, 5, 7, 10]);
     }
 }
