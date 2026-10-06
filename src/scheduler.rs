@@ -41,10 +41,81 @@
 //! has priority over it. A blocked intent is only ever waiting on work
 //! that is already in flight, so as long as the caller completes what it
 //! is given, the front of the queue always makes progress.
+//!
+//! # Conflicts
+//!
+//! Two agents must not apply contradictory changes to one resource in the
+//! same window (see [`Action::contradicts`]). Every dispatched intent
+//! *claims* its `(resource, action)` while it is in flight and for
+//! [`SchedulerConfig::conflict_window`] ticks after it completes, however it
+//! completed. When an intent is about to start, it is checked against the
+//! claims on its resource made by *other* agents; an agent may always
+//! follow up on its own change. A contradiction defers the intent so a
+//! human can decide which change should win.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::intent::{BlastRadius, Intent, IntentKey};
+use crate::intent::{Action, BlastRadius, Intent, IntentKey};
+
+/// The conflict window used by [`SchedulerConfig::default`], in ticks.
+pub const DEFAULT_CONFLICT_WINDOW: u64 = 10;
+
+/// How the scheduler runs intents together. Build with the setters:
+///
+/// ```
+/// use floodwall::SchedulerConfig;
+///
+/// let config = SchedulerConfig::default().with_conflict_window(30);
+/// assert_eq!(config.conflict_window(), 30);
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SchedulerConfig {
+    conflict_window: u64,
+}
+
+impl Default for SchedulerConfig {
+    fn default() -> Self {
+        Self {
+            conflict_window: DEFAULT_CONFLICT_WINDOW,
+        }
+    }
+}
+
+impl SchedulerConfig {
+    /// How many ticks after an intent completes its claim on its
+    /// `(resource, action)` stays open. `0` means only in-flight intents
+    /// can conflict.
+    pub fn with_conflict_window(mut self, ticks: u64) -> Self {
+        self.conflict_window = ticks;
+        self
+    }
+
+    /// The conflict window, in ticks.
+    pub fn conflict_window(&self) -> u64 {
+        self.conflict_window
+    }
+}
+
+/// A dispatched intent's claim on its `(resource, action)`.
+#[derive(Clone, Debug)]
+struct Claim {
+    key: IntentKey,
+    action: Action,
+    /// When it completed; `None` while it is in flight.
+    done_at: Option<u64>,
+}
+
+impl Claim {
+    /// The first tick at which the claim no longer counts, if it has
+    /// completed.
+    fn closes_at(&self, window: u64) -> Option<u64> {
+        self.done_at.map(|done| done.saturating_add(window))
+    }
+
+    fn is_open(&self, now: u64, window: u64) -> bool {
+        self.closes_at(window).is_none_or(|closes| now < closes)
+    }
+}
 
 /// An intent the gate admitted, which the caller is applying.
 #[derive(Clone, Debug)]
@@ -97,20 +168,67 @@ fn is_wide(blast: BlastRadius) -> bool {
 /// In-flight bookkeeping and the rules for what may run together.
 #[derive(Debug, Default)]
 pub(crate) struct Scheduler {
+    config: SchedulerConfig,
     in_flight: BTreeMap<IntentKey, InFlight>,
     /// In-flight count per resource; resources with none are absent.
     per_resource: HashMap<String, usize>,
     wide: Option<Wide>,
+    /// Open claims per resource, oldest first; resources with none are
+    /// absent.
+    claims: HashMap<String, Vec<Claim>>,
 }
 
 impl Scheduler {
-    pub(crate) fn new() -> Self {
-        Self::default()
+    pub(crate) fn new(config: SchedulerConfig) -> Self {
+        Self {
+            config,
+            ..Self::default()
+        }
     }
 
-    /// Start a pass over the queue.
-    pub(crate) fn begin(&self) -> Pass {
+    pub(crate) fn config(&self) -> &SchedulerConfig {
+        &self.config
+    }
+
+    /// Replace the configuration. It applies from the next check on,
+    /// including to claims already made.
+    pub(crate) fn set_config(&mut self, config: SchedulerConfig) {
+        self.config = config;
+    }
+
+    /// Start a pass over the queue at tick `now`, first dropping claims
+    /// whose window has closed.
+    pub(crate) fn begin(&mut self, now: u64) -> Pass {
+        let window = self.config.conflict_window;
+        self.claims.retain(|_, claims| {
+            claims.retain(|c| c.is_open(now, window));
+            !claims.is_empty()
+        });
         Pass::default()
+    }
+
+    /// If starting `intent` at tick `now` would contradict another agent's
+    /// open claim on the same resource, say which one and why.
+    pub(crate) fn conflict(&self, intent: &Intent, now: u64) -> Option<String> {
+        let window = self.config.conflict_window;
+        let claims = self.claims.get(intent.action.resource())?;
+        let claim = claims.iter().find(|c| {
+            c.key.agent != intent.agent
+                && c.is_open(now, window)
+                && c.action.contradicts(&intent.action)
+        })?;
+        Some(match claim.closes_at(window) {
+            None => format!(
+                "contradicts `{}` by {}, which is in flight",
+                claim.action, claim.key
+            ),
+            Some(closes) => format!(
+                "contradicts `{}` by {}, completed at tick {}; conflict window open until tick {closes}",
+                claim.action,
+                claim.key,
+                claim.done_at.expect("closes_at is Some only once done")
+            ),
+        })
     }
 
     fn in_flight_on(&self, resource: &str) -> usize {
@@ -181,16 +299,31 @@ impl Scheduler {
                 global: intent.blast_radius == BlastRadius::Global,
             });
         }
-        *self.per_resource.entry(resource).or_insert(0) += 1;
+        *self.per_resource.entry(resource.clone()).or_insert(0) += 1;
+        self.claims.entry(resource).or_default().push(Claim {
+            key: key.clone(),
+            action: intent.action.clone(),
+            done_at: None,
+        });
         let previous = self.in_flight.insert(key, InFlight { intent, since: now });
         debug_assert!(previous.is_none(), "an intent was dispatched twice");
     }
 
     /// The caller finished applying an intent at tick `now`. Returns it, or
-    /// `None` if it was not in flight.
-    pub(crate) fn finish(&mut self, key: &IntentKey, _now: u64) -> Option<InFlight> {
+    /// `None` if it was not in flight. Its claim stays open for the
+    /// conflict window.
+    pub(crate) fn finish(&mut self, key: &IntentKey, now: u64) -> Option<InFlight> {
         let finished = self.in_flight.remove(key)?;
         let resource = finished.intent.action.resource();
+        let claim = self.claims.get_mut(resource).and_then(|claims| {
+            claims
+                .iter_mut()
+                .find(|c| &c.key == key && c.done_at.is_none())
+        });
+        match claim {
+            Some(claim) => claim.done_at = Some(now),
+            None => debug_assert!(false, "in-flight intent without an open claim"),
+        }
         match self.per_resource.get_mut(resource) {
             Some(1) => {
                 self.per_resource.remove(resource);
@@ -236,7 +369,7 @@ mod tests {
     /// The scheduler's half of a `Floodwall::tick`, with every ready intent
     /// admitted: returns the ids dispatched, and removes them from `queue`.
     fn pass(s: &mut Scheduler, queue: &mut Vec<Intent>, now: u64) -> Vec<u64> {
-        let mut p = s.begin();
+        let mut p = s.begin(now);
         let mut dispatched = Vec::new();
         let mut i = 0;
         while i < queue.len() && !p.is_closed() {
@@ -260,18 +393,120 @@ mod tests {
             .expect("was in flight");
     }
 
+    fn sched() -> Scheduler {
+        Scheduler::new(SchedulerConfig::default())
+    }
+
     use BlastRadius::{Cell, Global, Region, Service};
+
+    fn by(agent: &str, id: u64, action: Action) -> Intent {
+        Intent::new(id, AgentId::new(agent), action, Priority::Normal, Cell)
+    }
+
+    fn scale(n: u32) -> Action {
+        Action::Scale {
+            resource: "web".into(),
+            replicas: n,
+        }
+    }
+
+    #[test]
+    fn an_in_flight_claim_conflicts_with_another_agents_contradiction() {
+        let mut s = sched();
+        s.start(by("a", 1, scale(3)), 0);
+        let reason = s.conflict(&by("b", 1, scale(5)), 0).expect("conflict");
+        assert_eq!(
+            reason,
+            "contradicts `scale web to 3` by a#1, which is in flight"
+        );
+        // The same agent may follow up on its own change.
+        assert_eq!(s.conflict(&by("a", 2, scale(5)), 0), None);
+        // Agreeing, or a different action on the resource, is fine.
+        assert_eq!(s.conflict(&by("b", 2, scale(3)), 0), None);
+        let apply = Action::Apply {
+            resource: "web".into(),
+            manifest: "v2".into(),
+        };
+        assert_eq!(s.conflict(&by("b", 3, apply), 0), None);
+        // Another resource is untouched.
+        let api = Action::Scale {
+            resource: "api".into(),
+            replicas: 9,
+        };
+        assert_eq!(s.conflict(&by("b", 4, api), 0), None);
+    }
+
+    #[test]
+    fn a_claim_stays_open_for_the_window_after_completion() {
+        let mut s = Scheduler::new(SchedulerConfig::default().with_conflict_window(10));
+        s.start(by("a", 1, scale(3)), 0);
+        s.finish(&IntentKey::new("a", 1), 5).unwrap();
+        let late = by("b", 1, scale(5));
+        // Open for ticks 5..15.
+        assert_eq!(
+            s.conflict(&late, 14).as_deref(),
+            Some(
+                "contradicts `scale web to 3` by a#1, completed at tick 5; conflict window open until tick 15"
+            )
+        );
+        assert_eq!(s.conflict(&late, 15), None);
+        // A pass after the window drops the claim.
+        s.begin(15);
+        assert!(s.claims.is_empty());
+    }
+
+    #[test]
+    fn a_zero_window_only_guards_in_flight_work() {
+        let mut s = Scheduler::new(SchedulerConfig::default().with_conflict_window(0));
+        s.start(by("a", 1, scale(3)), 0);
+        assert!(s.conflict(&by("b", 1, scale(5)), 0).is_some());
+        s.finish(&IntentKey::new("a", 1), 2).unwrap();
+        assert_eq!(s.conflict(&by("b", 1, scale(5)), 2), None);
+        s.begin(2);
+        assert!(s.claims.is_empty());
+    }
+
+    #[test]
+    fn the_window_follows_the_current_config() {
+        let mut s = Scheduler::new(SchedulerConfig::default().with_conflict_window(10));
+        s.start(by("a", 1, scale(3)), 0);
+        s.finish(&IntentKey::new("a", 1), 0).unwrap();
+        assert!(s.conflict(&by("b", 1, scale(5)), 3).is_some());
+        s.set_config(SchedulerConfig::default().with_conflict_window(2));
+        assert_eq!(s.config().conflict_window(), 2);
+        assert_eq!(s.conflict(&by("b", 1, scale(5)), 3), None);
+    }
+
+    #[test]
+    fn claims_survive_a_reused_intent_key() {
+        // a#1 completes, then a reuses id 1 for a new change. Each claim is
+        // tracked separately: finishing the new one closes only its own.
+        let mut s = Scheduler::new(SchedulerConfig::default().with_conflict_window(10));
+        s.start(by("a", 1, scale(3)), 0);
+        s.finish(&IntentKey::new("a", 1), 1).unwrap();
+        s.start(by("a", 1, scale(4)), 2);
+        assert_eq!(s.claims["web"].len(), 2);
+        s.finish(&IntentKey::new("a", 1), 20).unwrap();
+        let done: Vec<Option<u64>> = s.claims["web"].iter().map(|c| c.done_at).collect();
+        assert_eq!(done, [Some(1), Some(20)]);
+        s.begin(20);
+        assert_eq!(
+            s.claims["web"].len(),
+            1,
+            "the first claim's window closed at 11"
+        );
+    }
 
     #[test]
     fn narrow_intents_on_different_resources_run_together() {
-        let mut s = Scheduler::new();
+        let mut s = sched();
         let mut q = vec![intent(1, "web", Service), intent(2, "api", Cell)];
         assert_eq!(pass(&mut s, &mut q, 0), [1, 2]);
     }
 
     #[test]
     fn global_waits_for_everything_in_flight_then_runs_alone() {
-        let mut s = Scheduler::new();
+        let mut s = sched();
         let mut q = vec![intent(1, "web", Service)];
         assert_eq!(pass(&mut s, &mut q, 0), [1]);
 
@@ -290,7 +525,7 @@ mod tests {
 
     #[test]
     fn a_blocked_global_holds_back_everything_behind_it() {
-        let mut s = Scheduler::new();
+        let mut s = sched();
         let mut q = vec![intent(1, "web", Service)];
         pass(&mut s, &mut q, 0);
         // The global is first in line; the cell change behind it could run
@@ -305,7 +540,7 @@ mod tests {
 
     #[test]
     fn work_ahead_of_a_blocked_global_still_runs() {
-        let mut s = Scheduler::new();
+        let mut s = sched();
         let mut q = vec![intent(1, "web", Service)];
         pass(&mut s, &mut q, 0);
         // Ahead of the global in the queue, so it has priority over it.
@@ -316,7 +551,7 @@ mod tests {
 
     #[test]
     fn regions_run_one_at_a_time_in_queue_order() {
-        let mut s = Scheduler::new();
+        let mut s = sched();
         let mut q = vec![
             intent(1, "web", Region),
             intent(2, "api", Region),
@@ -332,7 +567,7 @@ mod tests {
 
     #[test]
     fn a_region_and_a_global_never_overlap() {
-        let mut s = Scheduler::new();
+        let mut s = sched();
         let mut q = vec![intent(1, "web", Region), intent(2, "db", Global)];
         assert_eq!(pass(&mut s, &mut q, 0), [1]);
         finish(&mut s, 1);
@@ -343,7 +578,7 @@ mod tests {
 
     #[test]
     fn a_region_needs_its_resource_to_itself() {
-        let mut s = Scheduler::new();
+        let mut s = sched();
         let mut q = vec![intent(1, "web", Cell)];
         pass(&mut s, &mut q, 0);
         q.push(intent(2, "web", Region));
@@ -364,7 +599,7 @@ mod tests {
 
     #[test]
     fn a_blocked_region_keeps_its_resource_and_the_wide_slot() {
-        let mut s = Scheduler::new();
+        let mut s = sched();
         let mut q = vec![intent(1, "web", Cell)];
         pass(&mut s, &mut q, 0);
         q = vec![
@@ -389,7 +624,7 @@ mod tests {
 
     #[test]
     fn finishing_frees_exactly_what_was_held() {
-        let mut s = Scheduler::new();
+        let mut s = sched();
         let mut q = vec![intent(1, "web", Cell), intent(2, "api", Service)];
         assert_eq!(pass(&mut s, &mut q, 0), [1, 2]);
         assert_eq!(s.in_flight_on("web"), 1);
@@ -410,7 +645,7 @@ mod tests {
 
     #[test]
     fn narrow_intents_on_one_resource_run_one_at_a_time_in_queue_order() {
-        let mut s = Scheduler::new();
+        let mut s = sched();
         let mut q = vec![
             intent(1, "web", Cell),
             intent(2, "web", Service),
@@ -426,7 +661,7 @@ mod tests {
 
     #[test]
     fn each_resource_is_its_own_lane() {
-        let mut s = Scheduler::new();
+        let mut s = sched();
         // Three intents on each of four resources, interleaved.
         let resources = ["web", "api", "cache", "db"];
         let mut q: Vec<Intent> = (0..12)

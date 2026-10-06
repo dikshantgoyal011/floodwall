@@ -74,9 +74,13 @@ pub use gate::{Gate, GateDecision};
 pub use intent::{Intent, IntentKey};
 pub use ledger::{Evidence, Ledger, Record};
 pub use policy::{Policy, Verdict};
-pub use scheduler::InFlight;
+pub use scheduler::{InFlight, SchedulerConfig};
 
 use scheduler::{Readiness, Scheduler};
+
+/// The name the scheduler's conflict check (see
+/// [`scheduler`](crate::scheduler#conflicts)) has in a decision's breakdown.
+pub const CONFLICT_CHECK: &str = "conflict-window";
 
 /// The outcome of ruling on one intent: the intent itself, the combined
 /// verdict, and the per-policy breakdown that produced it.
@@ -163,12 +167,23 @@ impl Floodwall {
     pub fn new(admission: Admission, gate: Gate) -> Self {
         Self {
             admission,
-            scheduler: Scheduler::new(),
+            scheduler: Scheduler::new(SchedulerConfig::default()),
             gate,
             ledger: Ledger::new(),
             live: HashSet::new(),
             clock: 0,
         }
+    }
+
+    /// Use `config` for scheduling. It applies from the next check on.
+    pub fn with_scheduler(mut self, config: SchedulerConfig) -> Self {
+        self.scheduler.set_config(config);
+        self
+    }
+
+    /// The scheduling configuration in use.
+    pub fn scheduler_config(&self) -> &SchedulerConfig {
+        self.scheduler.config()
     }
 
     fn advance(&mut self, now: u64) -> u64 {
@@ -206,7 +221,7 @@ impl Floodwall {
     pub fn tick(&mut self, now: u64) -> TickReport {
         let now = self.advance(now);
         let mut report = TickReport::default();
-        let mut pass = self.scheduler.begin();
+        let mut pass = self.scheduler.begin(now);
         for position in self.admission.queued_keys() {
             if pass.is_closed() {
                 break;
@@ -231,28 +246,41 @@ impl Floodwall {
 
     /// Rule on an intent that may start now, record the decision, and
     /// dispatch it if admitted.
+    ///
+    /// The verdict is the gate's policies plus the scheduler's conflict
+    /// check, combined deny-overrides; the conflict check appears in the
+    /// breakdown as [`CONFLICT_CHECK`].
     fn decide(&mut self, intent: Intent, now: u64) -> Decision {
-        let decision = self.gate.evaluate(&intent);
-        let policies = decision
-            .breakdown
+        let GateDecision {
+            mut verdict,
+            mut breakdown,
+        } = self.gate.evaluate(&intent);
+        let conflict = match self.scheduler.conflict(&intent, now) {
+            Some(reason) => Verdict::Defer(reason),
+            None => Verdict::Admit,
+        };
+        verdict = verdict.harsher(conflict.clone());
+        breakdown.push((CONFLICT_CHECK.to_string(), conflict));
+
+        let policies = breakdown
             .iter()
             .map(|(name, verdict)| (name.clone(), verdict.label().to_string()))
             .collect();
         self.record(
             &intent,
-            decision.verdict.label(),
-            decision.verdict.reason().map(str::to_string),
+            verdict.label(),
+            verdict.reason().map(str::to_string),
             policies,
         );
-        if decision.verdict.is_admit() {
+        if verdict.is_admit() {
             self.scheduler.start(intent.clone(), now);
         } else {
             self.live.remove(&intent.key());
         }
         Decision {
             intent,
-            verdict: decision.verdict,
-            breakdown: decision.breakdown,
+            verdict,
+            breakdown,
         }
     }
 
@@ -399,6 +427,7 @@ mod tests {
                 ("no-global-destroy".to_string(), "reject".to_string()),
                 ("blast-needs-priority".to_string(), "admit".to_string()),
                 ("resource-allowlist".to_string(), "admit".to_string()),
+                (CONFLICT_CHECK.to_string(), "admit".to_string()),
             ]
         );
         // A rejected intent is not in flight.
@@ -639,6 +668,145 @@ mod tests {
             .collect();
         assert_eq!(verdicts, ["defer", "defer"]);
         assert_eq!(p.in_flight().count(), 0);
+    }
+
+    fn scale_by(agent: &str, id: u64, resource: &str, replicas: u32) -> Intent {
+        Intent::new(
+            id,
+            AgentId::new(agent),
+            Action::Scale {
+                resource: resource.into(),
+                replicas,
+            },
+            Priority::Normal,
+            BlastRadius::Service,
+        )
+    }
+
+    fn verdicts(report: &TickReport) -> Vec<&'static str> {
+        report.decisions.iter().map(|d| d.verdict.label()).collect()
+    }
+
+    #[test]
+    fn contradictory_changes_from_two_agents_are_deferred() {
+        let mut p = plane().with_scheduler(SchedulerConfig::default().with_conflict_window(10));
+        p.submit(scale_by("a", 1, "web", 3), 0).unwrap();
+        p.submit(scale_by("b", 1, "web", 8), 0).unwrap();
+        // a goes first; b waits for the web lane.
+        assert_eq!(verdicts(&p.tick(0)), ["admit"]);
+        p.complete(&IntentKey::new("a", 1), Outcome::Succeeded, 2)
+            .unwrap();
+        // When b's turn comes, a's change is still within the window.
+        let report = p.tick(3);
+        assert_eq!(verdicts(&report), ["defer"]);
+        let d = &report.decisions[0];
+        assert_eq!(
+            d.verdict.reason(),
+            Some(
+                "contradicts `scale web to 3` by a#1, completed at tick 2; conflict window open until tick 12"
+            )
+        );
+        assert_eq!(d.breakdown.last().unwrap().0, CONFLICT_CHECK);
+        let record = p.ledger().records().last().unwrap();
+        assert_eq!(record.verdict, "defer");
+        assert_eq!(
+            record.evidence.policies.last(),
+            Some(&(CONFLICT_CHECK.to_string(), "defer".to_string()))
+        );
+        // After the window closes, b may try again.
+        p.submit(scale_by("b", 1, "web", 8), 12).unwrap();
+        assert_eq!(verdicts(&p.tick(12)), ["admit"]);
+    }
+
+    #[test]
+    fn agreeing_and_own_follow_up_changes_are_not_conflicts() {
+        let mut p = plane();
+        p.submit(scale_by("a", 1, "web", 3), 0).unwrap();
+        p.tick(0);
+        p.complete(&IntentKey::new("a", 1), Outcome::Succeeded, 1)
+            .unwrap();
+        // b agrees with a; a changes its own mind.
+        p.submit(scale_by("b", 1, "web", 3), 1).unwrap();
+        assert_eq!(verdicts(&p.tick(1)), ["admit"]);
+        p.complete(&IntentKey::new("b", 1), Outcome::Succeeded, 2)
+            .unwrap();
+        p.submit(scale_by("a", 2, "web", 7), 2).unwrap();
+        // b's claim (scale to 3) contradicts a's new target, so now a is
+        // the one deferred: the window cuts both ways between agents.
+        assert_eq!(verdicts(&p.tick(2)), ["defer"]);
+    }
+
+    #[test]
+    fn a_policy_reject_beats_a_conflict() {
+        let mut p = plane();
+        p.submit(scale_by("a", 1, "web", 3), 0).unwrap();
+        p.tick(0);
+        // Contradicts a's change, and BlastNeedsPriority rejects a Bulk
+        // service change outright: reject wins.
+        let mut bulk = scale_by("b", 1, "web", 5);
+        bulk.priority = Priority::Bulk;
+        p.complete(&IntentKey::new("a", 1), Outcome::Succeeded, 1)
+            .unwrap();
+        p.submit(bulk, 1).unwrap();
+        let report = p.tick(1);
+        assert_eq!(verdicts(&report), ["reject"]);
+        let labels: Vec<(&str, &str)> = report.decisions[0]
+            .breakdown
+            .iter()
+            .map(|(n, v)| (n.as_str(), v.label()))
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                ("no-global-destroy", "admit"),
+                ("blast-needs-priority", "reject"),
+                ("resource-allowlist", "admit"),
+                (CONFLICT_CHECK, "defer"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_failed_change_still_holds_its_claim() {
+        let mut p = plane();
+        p.submit(scale_by("a", 1, "web", 3), 0).unwrap();
+        p.tick(0);
+        p.complete(
+            &IntentKey::new("a", 1),
+            Outcome::Failed("timeout".into()),
+            1,
+        )
+        .unwrap();
+        // It may have partly applied, so it still counts.
+        p.submit(scale_by("b", 1, "web", 5), 1).unwrap();
+        assert_eq!(verdicts(&p.tick(1)), ["defer"]);
+    }
+
+    #[test]
+    fn destroy_conflicts_with_any_change_to_the_same_resource() {
+        let mut p = plane().with_scheduler(SchedulerConfig::default().with_conflict_window(0));
+        assert_eq!(p.scheduler_config().conflict_window(), 0);
+        p.submit(
+            Intent::new(
+                1,
+                AgentId::new("a"),
+                Action::Destroy {
+                    resource: "web".into(),
+                },
+                Priority::Normal,
+                BlastRadius::Service,
+            ),
+            0,
+        )
+        .unwrap();
+        p.tick(0);
+        // With a zero window only the in-flight destroy counts; this one
+        // waits for the lane, and by then the destroy has completed.
+        p.submit(scale_by("b", 1, "web", 5), 0).unwrap();
+        assert!(p.tick(0).decisions.is_empty());
+        p.complete(&IntentKey::new("a", 1), Outcome::Succeeded, 1)
+            .unwrap();
+        assert_eq!(verdicts(&p.tick(1)), ["admit"]);
     }
 
     #[test]

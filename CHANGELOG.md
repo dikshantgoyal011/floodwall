@@ -29,6 +29,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Narrow intents are partitioned by resource (FW-203): work on different
   resources runs concurrently, and work on one resource runs one intent at
   a time, highest priority first.
+- Conflict detection on `(resource, action)` (FW-204). A dispatched intent
+  claims its `(resource, action)` while in flight and for a conflict
+  window after it completes (`SchedulerConfig::with_conflict_window`,
+  default 10 ticks). Another agent's contradictory intent
+  (`Action::contradicts`) is deferred when its turn comes. The check
+  shows in every decision's breakdown as `conflict-window` and combines
+  deny-overrides with the gate, so a policy reject still wins.
+  `Floodwall::with_scheduler` sets the configuration.
 
 ### Changed
 
