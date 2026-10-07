@@ -160,6 +160,24 @@ impl fmt::Display for NotInFlight {
 
 impl std::error::Error for NotInFlight {}
 
+/// [`Floodwall::try_new`] was given an [`Admission`] that has two queued
+/// intents with this key. Admission does not track identity, so this can
+/// happen when intents are submitted to it directly.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DuplicateQueued(pub IntentKey);
+
+impl fmt::Display for DuplicateQueued {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "intent {} is queued more than once in the admission controller",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for DuplicateQueued {}
+
 /// The control plane: admission control and a scheduler in front of a
 /// policy gate, with every decision recorded in a tamper-evident ledger.
 ///
@@ -185,17 +203,46 @@ pub struct Floodwall {
 
 impl Floodwall {
     /// Assemble a control plane from an admission controller and a gate.
+    ///
+    /// The controller may already hold queued intents: the plane adopts
+    /// them as they are. They become live, so their keys are refused as
+    /// duplicates, and the next [`Floodwall::tick`] rules on them like any
+    /// other. The plane's clock starts at the controller's
+    /// ([`Admission::clock`]).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the controller has two queued intents with the same
+    /// [`IntentKey`]; [`Floodwall::try_new`] returns an error instead.
     pub fn new(admission: Admission, gate: Gate) -> Self {
-        Self {
+        match Self::try_new(admission, gate) {
+            Ok(plane) => plane,
+            Err(e) => panic!("{e}"),
+        }
+    }
+
+    /// Like [`Floodwall::new`], but returns [`DuplicateQueued`] if the
+    /// controller has two queued intents with the same [`IntentKey`]. The
+    /// plane tracks every intent by its key, so it cannot adopt both.
+    pub fn try_new(admission: Admission, gate: Gate) -> Result<Self, DuplicateQueued> {
+        let mut live = HashSet::with_capacity(admission.len());
+        for intent in admission.waiting() {
+            let key = intent.key();
+            if live.contains(&key) {
+                return Err(DuplicateQueued(key));
+            }
+            live.insert(key);
+        }
+        Ok(Self {
+            clock: admission.clock(),
             admission,
             scheduler: Scheduler::new(SchedulerConfig::default()),
             gate,
             ledger: Ledger::new(),
             hold: Hold::new(HoldConfig::default()),
             released: HashMap::new(),
-            live: HashSet::new(),
-            clock: 0,
-        }
+            live,
+        })
     }
 
     /// Use `config` for the hold queue. A lower capacity or TTL takes
@@ -1308,5 +1355,80 @@ mod tests {
         assert_eq!(p.clock(), 10);
         // Dispatched at the clock, not the stale tick.
         assert_eq!(p.in_flight().next().unwrap().since, 10);
+    }
+
+    // A plane can be built around an Admission that already holds queued
+    // intents. Review repro on PR #11: those intents were not live, so a
+    // resubmitted key was accepted, both copies were dispatched, and the
+    // resource bookkeeping was corrupted; the plane's clock also restarted
+    // at 0.
+
+    fn populated(at: u64, intents: Vec<Intent>) -> Admission {
+        let mut admission = Admission::new(16, RateLimit::new(8.0, 1.0));
+        for intent in intents {
+            admission.submit(intent, at).unwrap();
+        }
+        admission
+    }
+
+    #[test]
+    fn a_populated_admission_s_queued_intents_are_live() {
+        let mut p = Floodwall::new(populated(100, vec![scale(1, "web")]), Gate::new());
+        assert_eq!(p.pending(), 1);
+        // The review repro: the same key aimed at another resource.
+        assert_eq!(p.submit(scale(1, "api"), 0), Err(Rejected::Duplicate));
+        // Only the queued copy is dispatched, and its lane is tracked.
+        assert_eq!(verdicts(&p.tick(0)), ["admit"]);
+        assert_eq!(p.in_flight().count(), 1);
+        p.submit(scale(2, "web"), 100).unwrap();
+        assert!(p.tick(100).decisions.is_empty(), "web's lane is taken");
+        p.complete(&IntentKey::new("bot", 1), Outcome::Succeeded, 101)
+            .unwrap();
+        // Completing it frees web for the next change.
+        assert_eq!(verdicts(&p.tick(101)), ["admit"]);
+        // And the adopted key is reusable once it is done.
+        assert_eq!(p.submit(scale(1, "api"), 101), Ok(()));
+    }
+
+    #[test]
+    fn a_populated_admission_s_clock_carries_over() {
+        let p = Floodwall::new(populated(100, vec![scale(1, "web")]), Gate::new());
+        assert_eq!(p.clock(), 100);
+        let mut p = p;
+        // A stale tick is treated as the adopted clock.
+        p.tick(0);
+        assert_eq!(p.clock(), 100);
+        assert_eq!(p.in_flight().next().unwrap().since, 100);
+        // An empty Admission that has seen time carries it over too.
+        let mut idle = Admission::new(4, RateLimit::new(8.0, 1.0));
+        idle.prune_idle(42);
+        assert_eq!(Floodwall::new(idle, Gate::new()).clock(), 42);
+    }
+
+    #[test]
+    fn an_admission_queueing_one_key_twice_is_refused() {
+        // Admission does not track identity, so it can hold two intents
+        // with one key; the plane refuses to adopt it.
+        let twice = || populated(5, vec![scale(1, "web"), scale(1, "api"), scale(2, "db")]);
+        assert_eq!(
+            Floodwall::try_new(twice(), Gate::new()).err(),
+            Some(DuplicateQueued(IntentKey::new("bot", 1)))
+        );
+        assert_eq!(
+            DuplicateQueued(IntentKey::new("bot", 1)).to_string(),
+            "intent bot#1 is queued more than once in the admission controller"
+        );
+        let unique = populated(5, vec![scale(1, "web"), scale(2, "api")]);
+        let p = Floodwall::try_new(unique, Gate::new()).expect("unique keys");
+        assert_eq!((p.pending(), p.clock()), (2, 5));
+    }
+
+    #[test]
+    #[should_panic(expected = "intent bot#1 is queued more than once")]
+    fn new_panics_on_an_admission_queueing_one_key_twice() {
+        let _ = Floodwall::new(
+            populated(0, vec![scale(1, "web"), scale(1, "web")]),
+            Gate::new(),
+        );
     }
 }

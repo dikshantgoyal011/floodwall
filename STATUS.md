@@ -16,9 +16,10 @@ flight until the caller reports back; deferred intents wait in a hold
 queue for a human to release or expire them. Every decision, release,
 expiry and outcome lands in the hash-chained `Ledger`.
 
-Still zero dependencies and pinned to Rust 1.95. 95 unit tests, 6
+Still zero dependencies and pinned to Rust 1.95. 99 unit tests, 6
 doctests (including the README examples), and a randomized invariant
-test of 300 seeded floods, all fmt + clippy (`-D warnings`) clean.
+test of 300 seeded floods (half of them starting from an `Admission`
+that already has work queued), all fmt + clippy (`-D warnings`) clean.
 
 The floodwall.ai site (React + Vite in `site/`, built into `docs/` for
 GitHub Pages) describes the scheduler and hold queue.

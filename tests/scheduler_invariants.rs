@@ -1,6 +1,8 @@
 //! Randomized checks of the scheduler's guarantees, through the public API.
 //!
-//! Each seed builds a plane with a random configuration, floods it with
+//! Each seed builds a plane with a random configuration (half of them
+//! around an Admission that already has work queued and a clock that has
+//! moved on), floods it with
 //! random intents from several agents, ticks it, completes in-flight work
 //! at random, and has a human release or expire held intents at random.
 //! After every step it checks the invariants the scheduler and hold queue
@@ -208,6 +210,10 @@ struct Coverage {
     expired_by_tick: usize,
     expired_by_human: usize,
     not_held_errors: usize,
+    /// Intents already queued in the Admission the plane was built from.
+    adopted: usize,
+    /// Resubmissions refused because the key was an adopted intent's.
+    adopted_duplicates_refused: usize,
 }
 
 /// Nothing behind a blocked intent in the queue took what it waits for.
@@ -274,7 +280,32 @@ fn run(seed: u64, cov: &mut Coverage) {
         .with(BlastNeedsPriority)
         .with(ResourceAllowlist::new(["web", "api", "cache", "db"]))
         .with(QueueBan(Arc::clone(&ban)));
-    let admission = Admission::new(QUEUE_CAPACITY, RateLimit::new(6.0, 2.0));
+    let mut admission = Admission::new(QUEUE_CAPACITY, RateLimit::new(6.0, 2.0));
+    let mut model = Model::default();
+    let mut next_id: HashMap<&str, u64> = HashMap::new();
+    // Half the seeds build the plane around an Admission that already has
+    // work queued and has seen time pass.
+    let start = if rng.chance(50) {
+        1 + rng.below(500)
+    } else {
+        0
+    };
+    let mut adopted = HashSet::new();
+    if start > 0 {
+        admission.prune_idle(start); // advances its clock even if nothing is queued
+        for _ in 0..rng.below(40) {
+            let agent = *rng.pick(&AGENTS);
+            let id = next_id.entry(agent).or_insert(0);
+            *id += 1;
+            let intent = random_intent(&mut rng, agent, *id);
+            let key = intent.key();
+            if admission.submit(intent, start).is_ok() {
+                cov.adopted += 1;
+                model.live.insert(key.clone());
+                adopted.insert(key);
+            }
+        }
+    }
     let hold = HoldConfig::default()
         .with_capacity(*rng.pick(&[0, 2, 8, 1024]))
         .with_ttl(*rng.pick(&[None, Some(3), Some(15)]));
@@ -282,11 +313,15 @@ fn run(seed: u64, cov: &mut Coverage) {
         .with_scheduler(random_config(&mut rng))
         .with_hold(hold);
     let window = plane.scheduler_config().conflict_window();
-    let mut model = Model::default();
-    let mut next_id: HashMap<&str, u64> = HashMap::new();
+    assert_eq!(
+        plane.clock(),
+        start,
+        "seed {seed}: plane did not adopt the clock"
+    );
+    check_hold(&plane, &model, seed); // adopted intents are live and queued
 
-    let flood_ticks = 60;
-    let mut now = 0;
+    let flood_ticks = start + 60;
+    let mut now = start;
     loop {
         let flooding = now < flood_ticks;
         if rng.chance(10) {
@@ -309,6 +344,9 @@ fn run(seed: u64, cov: &mut Coverage) {
                     Ok(()) => assert!(model.live.insert(key), "seed {seed}: accepted a live key"),
                     Err(Rejected::Duplicate) => {
                         cov.duplicates_refused += 1;
+                        if adopted.contains(&key) {
+                            cov.adopted_duplicates_refused += 1;
+                        }
                         assert!(model.live.contains(&key), "seed {seed}: false duplicate")
                     }
                     Err(Rejected::RateLimited | Rejected::Backpressure) => {}
@@ -508,4 +546,6 @@ fn scheduler_invariants_hold_across_random_floods() {
     assert!(cov.released_but_rejected > 0, "{cov:?}");
     assert!(cov.expired_by_tick > 100, "{cov:?}");
     assert!(cov.expired_by_human > 100, "{cov:?}");
+    assert!(cov.adopted > 1_000, "{cov:?}");
+    assert!(cov.adopted_duplicates_refused > 10, "{cov:?}");
 }
