@@ -71,11 +71,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   start now, instead of popping a single intent. `TickReport::admitted()`
   lists what was dispatched.
 - **Breaking:** `Rejected::Duplicate`: `Floodwall::submit` refuses an
-  intent whose key is already queued or in flight, before it touches the
-  agent's rate limit.
+  intent whose key is already queued, in flight or held, before it
+  touches the agent's rate limit.
 - `Floodwall` keeps one clock across all its methods; a `now` earlier
   than the latest tick seen is treated as that tick.
-
 - `RateLimit::new` and `Admission::new` now panic on a limit that could
   never admit anything sensibly: a `burst` below `1.0` (which used to
   rate-limit every intent silently), or a NaN, infinite, or negative

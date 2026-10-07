@@ -188,15 +188,15 @@ function Hero() {
       </div>
       <div className="hero-status" aria-label="Current crate state">
         <span>
-          <b>0.1</b>
+          <b>{__CRATE_STATS__.version}</b>
           shipped
         </span>
         <span>
-          <b>0</b>
+          <b>{__CRATE_STATS__.dependencies}</b>
           dependencies
         </span>
         <span>
-          <b>21</b>
+          <b>{__CRATE_STATS__.tests}</b>
           tests
         </span>
       </div>

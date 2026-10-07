@@ -1,4 +1,7 @@
 @import "tailwindcss";
+/* Build-time helpers, not markup: keep their words out of the class scan. */
+@source not "../../crate-stats.mjs";
+@source not "../../crate-stats.test.mjs";
 
 :root {
   color-scheme: light;
