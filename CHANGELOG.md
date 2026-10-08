@@ -66,6 +66,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Merkle checkpoints (FW-303). `floodwall::merkle` builds RFC 6962
+  Merkle trees over record digests (`root`, `inclusion_proof`,
+  `verify_inclusion`, and an incremental `Frontier`).
+  `Ledger::with_checkpoints(n)` cuts a `Checkpoint` (size, chain head,
+  Merkle root, frontier) every `n` records, `Ledger::with_signer(key)`
+  signs each with the plane's key, and `Ledger::checkpoint` /
+  `Floodwall::checkpoint` cut one now. `audit_suffix(trusted, latest,
+  records, key)` checks the records after a trusted checkpoint without
+  any before it; `Ledger::records_after` hands them over and
+  `Ledger::prove_inclusion` proves a single record in O(log n) hashes.
+  `Ledger::verify` also checks stored checkpoints against the records;
+  `Ledger::verify_checkpoint_signatures` checks their signatures.
+  `Floodwall::with_ledger` sets up the plane's ledger.
 - **Breaking:** signed intents and records (FW-302). Agents sign intents
   with Ed25519 (`Intent::signed`); `Intent::digest` is SHA-256 over a
   documented encoding of every field but the signature, and `Priority`

@@ -51,7 +51,8 @@ GitHub Pages) describes the scheduler and hold queue.
   (FW-907).
 - Priority is strict, so `Bulk` work can starve under a constant stream of
   higher-priority intents (FW-908).
-- Agent signatures prove who asked for each change, but the plane's own
-  verdicts are not signed yet: whoever holds the ledger can still rewrite
-  verdicts consistently and publish a new head. Having the plane sign its
-  Merkle checkpoints (FW-303) is the natural way to close that gap.
+- The plane's verdicts are protected once a checkpoint covering them is
+  signed (`Ledger::with_signer`). Records after the latest signed
+  checkpoint can still be rewritten by whoever holds the ledger until the
+  next one is cut, so pick the checkpoint interval with that window in
+  mind, or cut one with `Floodwall::checkpoint` when it matters.

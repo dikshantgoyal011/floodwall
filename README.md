@@ -37,7 +37,7 @@ You cannot review your way out of that. You have to **govern throughput**: admit
 | **Scheduler** | [`scheduler`](src/scheduler.rs) | Decides when each waiting intent may start. A `Global` change runs alone; `Region` changes run one at a time with their resource to themselves; narrow changes run in parallel across resources, up to a per-resource in-flight limit. A blocked intent keeps what it waits for from lower-priority work, so wide changes are never starved. Two agents' contradictory changes to one resource within a conflict window are deferred. |
 | **Gate** | [`gate`](src/gate.rs) / [`policy`](src/policy.rs) | A stack of policies, each a pure function from an intent to a verdict, composed with **deny-overrides**: the harshest verdict wins, so one `Reject` blocks a change no matter how many policies admit it. |
 | **Hold** | [`hold`](src/hold.rs) | A `Defer` is "not yet", not "no". Deferred intents wait here until a human releases them (their deferrals are then waived; rejections still apply) or expires them, or until a TTL runs out. |
-| **Ledger** | [`ledger`](src/ledger.rs) | Every decision, release, expiry and outcome is appended to a SHA-256 hash chain together with its evidence: the action, the reason, and each policy's verdict. Each record folds in the previous digest, so any retroactive edit to history breaks the chain. |
+| **Ledger** | [`ledger`](src/ledger.rs) | Every decision, release, expiry and outcome is appended to a SHA-256 hash chain together with its evidence: the action, the reason, and each policy's verdict. Each record folds in the previous digest, so any retroactive edit to history breaks the chain. Every so many records the ledger cuts a [checkpoint](src/checkpoint.rs) (chain head + Merkle root), optionally signed by the plane, so an auditor can check the rest of the ledger from a checkpoint without replaying it from genesis. |
 
 The unit that flows through all of it is an [`Intent`](src/intent.rs): a change an agent *wants* to make, fully attributed, tagged with how urgent it is (`Priority`) and how much it can break (`BlastRadius`). Agents never touch production directly. They submit intents. The floodwall decides what runs, when, and alongside what; the caller applies each admitted change and reports back.
 
@@ -144,6 +144,35 @@ plane.tick(0);
 assert_eq!(plane.ledger().verify_signatures(&keyring), Ok(1));
 ```
 
+Checkpoints let an auditor pick up from where they last checked, with only the new records:
+
+```rust
+# use floodwall::{audit_suffix, Admission, Floodwall, Gate, Ledger, RateLimit, SigningKey};
+# use floodwall::intent::{Action, AgentId, BlastRadius, Intent, Priority};
+let plane_key = SigningKey::from_seed(&[7; 32]);
+let mut plane = Floodwall::new(Admission::new(1024, RateLimit::new(8.0, 1.0)), Gate::new())
+    .with_ledger(Ledger::new().with_checkpoints(2).with_signer(plane_key.clone()));
+for id in 0..5 {
+    let intent = Intent::new(
+        id,
+        AgentId::new("deployer"),
+        Action::Scale { resource: format!("svc-{id}"), replicas: 3 },
+        Priority::Normal,
+        BlastRadius::Service,
+    );
+    plane.submit(intent, 0).unwrap();
+}
+plane.tick(0); // five decisions recorded: checkpoints at 2 and 4
+let latest = plane.checkpoint(); // and one now, at 5
+
+// The auditor already trusted the checkpoint at 2. They check the three
+// records after it, and nothing before it.
+let trusted = plane.ledger().checkpoints()[0].clone();
+let suffix = plane.ledger().records_after(&trusted).unwrap();
+assert_eq!(suffix.len(), 3);
+assert!(audit_suffix(&trusted, &latest, suffix, Some(&plane_key.verifying_key())).is_ok());
+```
+
 Writing your own policy is one trait method:
 
 ```rust
@@ -201,9 +230,14 @@ floodwall demo - 4000 intents flung at the wall over 200 ticks, settled by tick 
     head digest    : 189f5d551888eeae1379978c5662e54d7bb4b25323bdf871bbbecd5c0f84c3ca
     chain valid    : true
     signatures     : all 2043 records signed by their agents
+
+  checkpoints (audit without replaying)
+    checkpoints    : 8, all signed by the plane
+    suffix audit   : records 1792..2043 checked from the checkpoint at 1792: ok
+    inclusion      : record 681 proven in the latest root with 11 hashes: true
 ```
 
-Five agents (including a `chaos-monkey`) fling 4000 changes at the wall. Admission control turns most of the flood away. The scheduler runs what is left in parallel across resources while serializing region-wide and global changes, the gate and conflict check sort each change into admit / defer / reject, and an operator works the hold queue every 10 ticks. Every admitted change is applied and reported back, and the ledger comes out the other side with its chain intact. Every agent signs its intents; the chaos monkey now and then forges one in the deployer's name, which is refused at the door, and every record left in the ledger verifies against the agents' public keys.
+Five agents (including a `chaos-monkey`) fling 4000 changes at the wall. Admission control turns most of the flood away. The scheduler runs what is left in parallel across resources while serializing region-wide and global changes, the gate and conflict check sort each change into admit / defer / reject, and an operator works the hold queue every 10 ticks. Every admitted change is applied and reported back, and the ledger comes out the other side with its chain intact. Every agent signs its intents; the chaos monkey now and then forges one in the deployer's name, which is refused at the door, and every record left in the ledger verifies against the agents' public keys. Finally, an auditor who trusts the second-to-last signed checkpoint checks the rest of the ledger from it alone, and one record is proven to be in the ledger with a handful of hashes.
 
 ## Status
 
@@ -211,7 +245,7 @@ Five agents (including a `chaos-monkey`) fling 4000 changes at the wall. Admissi
 |-----|-------------------------------------------------------------------------|--------|
 | 0.1 | Intent model, per-agent token-bucket admission + bounded priority queue, deny-overrides policy gate, hash-chained ledger, end-to-end `Floodwall` | **shipped** |
 | 0.2 | Scheduler: wide-blast serialization, narrow work in parallel by resource, per-resource in-flight limits, conflict detection, hold queue with human release and expiry | **done** |
-| 0.3 | Cryptographic ledger (SHA-256 chain, signed records) + Merkle checkpoints | in progress: SHA-256 chain and signed records done |
+| 0.3 | Cryptographic ledger (SHA-256 chain, signed records) + Merkle checkpoints | in progress: chain, signatures and checkpoints done; export next |
 | 0.4 | Persistence + replay: rebuild plane state from the ledger               |        |
 | 0.5 | Policy-as-code: declarative rules + a worked OPA-style example          |        |
 
@@ -219,7 +253,7 @@ See [GOALS.md](GOALS.md) for the full roadmap and [STATUS.md](STATUS.md) for cur
 
 ## Design notes
 
-- **Zero dependencies.** Everything here is `std`. The ledger is a SHA-256 hash chain; SHA-256 is implemented from scratch (ported from the sibling crate [`shunya`](https://github.com/protosphinx/shunya)), and so are SHA-512 and Ed25519. Each is checked against its standard's test vectors (FIPS 180-4, RFC 8032) and against an independent implementation. The exact bytes each record digest and each signed intent cover are documented in [`ledger`](src/ledger.rs) and [`intent`](src/intent.rs), so an auditor can recompute them.
+- **Zero dependencies.** Everything here is `std`. The ledger is a SHA-256 hash chain; SHA-256 is implemented from scratch (ported from the sibling crate [`shunya`](https://github.com/protosphinx/shunya)), and so are SHA-512 and Ed25519. Each is checked against its standard's test vectors (FIPS 180-4, RFC 8032) and against an independent implementation. The exact bytes each record digest and each signed intent cover are documented in [`ledger`](src/ledger.rs) and [`intent`](src/intent.rs), so an auditor can recompute them. Merkle roots use the RFC 6962 tree shape that Certificate Transparency logs use, so standard tooling can check them.
 - **Signing is not side-channel audited.** Verification only handles public data. Signing avoids secret-dependent branches where it is easy to, but agents holding long-lived production keys may prefer a vetted library: the signatures are standard Ed25519 and verify here all the same.
 - **No wall clock.** Time is a logical tick supplied by the caller, so the whole plane is deterministic and testable. Time never moves backwards: a tick earlier than the latest one seen is treated as the latest.
 - **You apply the changes.** floodwall decides; it does not execute. An admitted intent is in flight until you call `complete`, so report back even when a change fails or times out.

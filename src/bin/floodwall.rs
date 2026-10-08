@@ -11,11 +11,12 @@
 use std::collections::{BTreeMap, HashSet};
 
 use floodwall::intent::{Action, AgentId, BlastRadius, Intent, IntentKey, Priority};
+use floodwall::merkle::verify_inclusion;
 use floodwall::policy::{BlastNeedsPriority, NoGlobalDestroy, ResourceAllowlist};
 use floodwall::sha256::sha256;
 use floodwall::{
-    Admission, Floodwall, Gate, HoldConfig, Keyring, Outcome, RateLimit, Rejected, SchedulerConfig,
-    SigningKey, Verdict, CONFLICT_CHECK,
+    audit_suffix, Admission, Floodwall, Gate, HoldConfig, Keyring, Ledger, Outcome, RateLimit,
+    Rejected, SchedulerConfig, SigningKey, Verdict, CONFLICT_CHECK,
 };
 
 /// A tiny xorshift PRNG so the demo is reproducible without pulling in `rand`.
@@ -73,6 +74,8 @@ fn main() {
         .iter()
         .map(|a| SigningKey::from_seed(&sha256(format!("floodwall-demo/{a}").as_bytes())))
         .collect();
+    // The plane's own key, for signing its checkpoints.
+    let plane_key = SigningKey::from_seed(&sha256(b"floodwall-demo/plane"));
     let keyring = agents
         .iter()
         .zip(&keys)
@@ -99,7 +102,14 @@ fn main() {
     let mut plane = Floodwall::new(admission, gate)
         .with_scheduler(scheduler)
         .with_hold(hold)
-        .with_keyring(keyring.clone());
+        .with_keyring(keyring.clone())
+        // A signed checkpoint every 256 records, so the ledger can be
+        // audited from any checkpoint without replaying it from genesis.
+        .with_ledger(
+            Ledger::new()
+                .with_checkpoints(256)
+                .with_signer(plane_key.clone()),
+        );
 
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
     let flood_ticks = 200u64;
@@ -255,6 +265,7 @@ fn main() {
     }
 
     let queued = t.offered - t.forged - t.rate_limited - t.backpressure;
+    let latest = plane.checkpoint();
     let ledger = plane.ledger();
     println!(
         "floodwall demo - {} intents flung at the wall over {flood_ticks} ticks, settled by tick {now}\n",
@@ -304,4 +315,43 @@ fn main() {
         Ok(n) => println!("    signatures     : all {n} records signed by their agents"),
         Err(e) => println!("    signatures     : FAILED, {e}"),
     }
+
+    // An auditor who already trusts the second-to-last checkpoint checks
+    // the rest with only the records after it, and proves one record is in
+    // the ledger with a handful of hashes.
+    let pk = plane_key.verifying_key();
+    let cps = ledger.checkpoints();
+    let trusted = &cps[cps.len() - 2];
+    let suffix = ledger
+        .records_after(trusted)
+        .expect("an earlier checkpoint");
+    let audit = audit_suffix(trusted, &latest, suffix, Some(&pk));
+    let seq = latest.size / 3;
+    let proof = ledger
+        .prove_inclusion(seq, latest.size)
+        .expect("seq < size");
+    let included = verify_inclusion(
+        &ledger.records()[seq as usize].digest,
+        seq,
+        latest.size,
+        &proof,
+        &latest.root,
+    );
+    println!();
+    println!("  checkpoints (audit without replaying)");
+    match ledger.verify_checkpoint_signatures(&pk) {
+        Ok(n) => println!("    checkpoints    : {n}, all signed by the plane"),
+        Err(i) => println!("    checkpoints    : FAILED, checkpoint {i} is not signed"),
+    }
+    match audit {
+        Ok(()) => println!(
+            "    suffix audit   : records {}..{} checked from the checkpoint at {}: ok",
+            trusted.size, latest.size, trusted.size
+        ),
+        Err(e) => println!("    suffix audit   : FAILED, {e}"),
+    }
+    println!(
+        "    inclusion      : record {seq} proven in the latest root with {} hashes: {included}",
+        proof.len()
+    );
 }

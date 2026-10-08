@@ -60,12 +60,14 @@
 //! ```
 
 pub mod admission;
+pub mod checkpoint;
 pub mod ed25519;
 pub mod gate;
 pub mod hold;
 pub mod intent;
 pub mod keyring;
 pub mod ledger;
+pub mod merkle;
 pub mod policy;
 pub mod scheduler;
 pub mod sha256;
@@ -75,6 +77,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 pub use admission::{Admission, InvalidRateLimit, RateLimit, Rejected};
+pub use checkpoint::{audit_suffix, AuditError, Checkpoint};
 pub use ed25519::{InvalidKey, Signature, SigningKey, VerifyingKey};
 pub use gate::{Gate, GateDecision};
 pub use hold::{Held, HoldConfig, HoldError};
@@ -609,6 +612,29 @@ impl Floodwall {
     /// The decision ledger.
     pub fn ledger(&self) -> &Ledger {
         &self.ledger
+    }
+
+    /// Record decisions in `ledger`, set up with checkpoints and a signer
+    /// as needed (see [`Ledger::with_checkpoints`] and
+    /// [`Ledger::with_signer`]).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `ledger` already has records, or this plane has already
+    /// recorded something: a ledger is one plane's history from the start.
+    pub fn with_ledger(mut self, ledger: Ledger) -> Self {
+        assert!(
+            ledger.is_empty() && self.ledger.is_empty(),
+            "with_ledger needs an empty ledger and a plane that has not recorded anything"
+        );
+        self.ledger = ledger;
+        self
+    }
+
+    /// Cut a checkpoint of the ledger now, unless the latest one already
+    /// covers every record, and return it.
+    pub fn checkpoint(&mut self) -> Checkpoint {
+        self.ledger.checkpoint()
     }
 }
 
@@ -1682,5 +1708,55 @@ mod tests {
             .iter()
             .all(|(n, _)| n != SIGNATURE_CHECK));
         assert!(p.ledger().records()[1].signature.is_some());
+    }
+
+    // Checkpoints (FW-303).
+
+    #[test]
+    fn a_plane_checkpoints_its_ledger_for_suffix_audits() {
+        let plane_key = SigningKey::from_seed(&[50; 32]);
+        let ledger = Ledger::new()
+            .with_checkpoints(3)
+            .with_signer(plane_key.clone());
+        let mut p = plane().with_ledger(ledger);
+        for id in 1..=4 {
+            p.submit(scale(id, ["web", "api", "db", "queue"][id as usize - 1]), 0)
+                .unwrap();
+        }
+        p.tick(0); // web, api admitted; db, queue deferred (off the allowlist)
+        for id in 1..=2 {
+            p.complete(&IntentKey::new("bot", id), Outcome::Succeeded, 1)
+                .unwrap();
+        }
+        let latest = p.checkpoint(); // 6 records
+        let cps = p.ledger().checkpoints();
+        assert_eq!(cps.iter().map(|c| c.size).collect::<Vec<_>>(), [3, 6]);
+        assert_eq!(latest, cps[1]);
+        // An auditor holding only the first checkpoint and the plane's key
+        // checks everything after it.
+        let first = cps[0].clone();
+        let suffix = p.ledger().records_after(&first).unwrap();
+        assert_eq!(
+            audit_suffix(&first, &latest, suffix, Some(&plane_key.verifying_key())),
+            Ok(())
+        );
+        assert!(p.ledger().verify());
+    }
+
+    #[test]
+    #[should_panic(expected = "with_ledger needs an empty ledger")]
+    fn with_ledger_refuses_a_ledger_with_history() {
+        let mut ledger = Ledger::new();
+        ledger.append(1, "bot", "admit");
+        let _ = plane().with_ledger(ledger);
+    }
+
+    #[test]
+    #[should_panic(expected = "with_ledger needs an empty ledger")]
+    fn with_ledger_refuses_a_plane_with_history() {
+        let mut p = plane();
+        p.submit(scale(1, "web"), 0).unwrap();
+        p.tick(0);
+        let _ = p.with_ledger(Ledger::new());
     }
 }

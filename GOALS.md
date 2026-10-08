@@ -81,8 +81,12 @@ independent model).
   intents with Ed25519 (with SHA-512, from scratch); the plane checks them
   against a keyring at submit, and every record carries the signature so
   `Ledger::verify_signatures` proves authorship with public keys alone.
-- **FW-303** Periodic Merkle checkpoints so a verifier can audit a suffix
-  without replaying from genesis.
+- **FW-303** ✓ Periodic Merkle checkpoints so a verifier can audit a suffix
+  without replaying from genesis. RFC 6962 Merkle tree over record digests;
+  checkpoints (head, root, frontier) cut every N records and optionally
+  signed by the plane; `audit_suffix` checks the records after a trusted
+  checkpoint alone; `Ledger::prove_inclusion` gives O(log n) inclusion
+  proofs.
 - **FW-304** *(new)* A plain export format (JSON Lines) so auditors can
   verify the chain with their own tooling.
 

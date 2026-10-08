@@ -13,13 +13,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use floodwall::intent::{Action, AgentId, BlastRadius, Intent, IntentKey, Priority};
+use floodwall::merkle::verify_inclusion;
 use floodwall::policy::{BlastNeedsPriority, NoGlobalDestroy, Policy, ResourceAllowlist};
 use floodwall::sha256::sha256;
+use floodwall::{audit_suffix, Keyring, Ledger, SigningKey};
 use floodwall::{
     Admission, Floodwall, Gate, HoldConfig, HoldError, Outcome, RateLimit, Rejected,
     SchedulerConfig, Verdict, CONFLICT_CHECK,
 };
-use floodwall::{Keyring, SigningKey};
 
 /// A tiny xorshift PRNG, so every seed is reproducible.
 struct Rng(u64);
@@ -218,6 +219,8 @@ struct Coverage {
     adopted_duplicates_refused: usize,
     forgeries_refused: usize,
     signed_records: usize,
+    suffix_audits: usize,
+    inclusion_proofs: usize,
 }
 
 /// Nothing behind a blocked intent in the queue took what it waits for.
@@ -336,9 +339,18 @@ fn run_with(seed: u64, cov: &mut Coverage, signed: bool) {
     let hold = HoldConfig::default()
         .with_capacity(*rng.pick(&[0, 2, 8, 1024]))
         .with_ttl(*rng.pick(&[None, Some(3), Some(15)]));
+    // Every flood checkpoints its ledger at a random interval, so each run
+    // ends with suffix audits. Signed floods also sign their checkpoints
+    // (Ed25519 is slow in debug builds, so only those).
+    let plane_key = key_of("the-plane");
+    let mut ledger = Ledger::new().with_checkpoints(1 + rng.below(40));
+    if signed {
+        ledger = ledger.with_signer(plane_key.clone());
+    }
     let mut plane = Floodwall::new(admission, gate)
         .with_scheduler(random_config(&mut rng))
-        .with_hold(hold);
+        .with_hold(hold)
+        .with_ledger(ledger);
     if signed {
         plane = plane.with_keyring(keyring.clone());
     }
@@ -581,6 +593,49 @@ fn run_with(seed: u64, cov: &mut Coverage, signed: bool) {
         );
         cov.signed_records += plane.ledger().len();
     }
+
+    // Checkpoints: signed by the plane in signed floods, and every suffix
+    // between two of them audits from the earlier one alone.
+    plane.checkpoint();
+    let ledger = plane.ledger();
+    let pk = plane_key.verifying_key();
+    let key = signed.then_some(&pk);
+    let cps = ledger.checkpoints();
+    if signed {
+        assert_eq!(
+            ledger.verify_checkpoint_signatures(&pk),
+            Ok(cps.len()),
+            "seed {seed}: an unsigned checkpoint"
+        );
+    }
+    for pair in cps.windows(2) {
+        let suffix = &ledger.records()[pair[0].size as usize..pair[1].size as usize];
+        assert_eq!(
+            audit_suffix(&pair[0], &pair[1], suffix, key),
+            Ok(()),
+            "seed {seed}: suffix {}..{} failed its audit",
+            pair[0].size,
+            pair[1].size
+        );
+        cov.suffix_audits += 1;
+    }
+    let (first, last) = (&cps[0], cps.last().unwrap());
+    assert_eq!(
+        audit_suffix(first, last, ledger.records_after(first).unwrap(), key),
+        Ok(()),
+        "seed {seed}: the whole suffix failed its audit"
+    );
+    // A few records proven to be in the final checkpoint.
+    for _ in 0..3 {
+        let seq = rng.below(last.size);
+        let proof = ledger.prove_inclusion(seq, last.size).unwrap();
+        let digest = ledger.records()[seq as usize].digest;
+        assert!(
+            verify_inclusion(&digest, seq, last.size, &proof, &last.root),
+            "seed {seed}: record {seq} not proven"
+        );
+        cov.inclusion_proofs += 1;
+    }
 }
 
 #[test]
@@ -608,6 +663,8 @@ fn scheduler_invariants_hold_across_random_floods() {
     assert!(cov.expired_by_human > 100, "{cov:?}");
     assert!(cov.adopted > 1_000, "{cov:?}");
     assert!(cov.adopted_duplicates_refused > 10, "{cov:?}");
+    assert!(cov.suffix_audits > 1_000, "{cov:?}");
+    assert!(cov.inclusion_proofs >= 900, "{cov:?}");
 }
 
 #[test]
