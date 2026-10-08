@@ -30,10 +30,10 @@ GitHub Pages) describes the scheduler and hold queue.
   wide-blast serialization, per-resource lanes, conflict detection,
   per-resource in-flight limits, hold queue with human release and
   expiry, and the demo, README and site updates.
-- **v0.1.x** - FW-101 to FW-105: robots.txt and sitemap.xml shipped, CI
-  check that `docs/` matches `site/`, `RateLimit` validation, idle
-  rate-limit buckets forgotten, and ledger evidence. FW-106 (site stats
-  read from the crate) is in review.
+- **v0.1.x** - FW-101 to FW-106: robots.txt and sitemap.xml shipped, CI
+  check that `docs/` matches `site/`, `RateLimit` validation, refilled
+  rate-limit buckets forgotten, ledger evidence, and site stats read from
+  the crate.
 - **v0.1** - Intent model, admission control, policy gate, hash-chained
   ledger, end-to-end `Floodwall`, demo binary, CI, Dependabot.
 

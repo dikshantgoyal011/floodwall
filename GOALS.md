@@ -22,25 +22,31 @@ shipped, from a review of the v0.1 code and site.
 - Demo binary flooding the wall with 4000 intents across five agents.
 - Tests: 20 unit + 1 doctest. fmt + clippy (`-D warnings`) clean.
 
-## v0.1.x - hardening *(new)*
+## v0.1.x - hardening *(new)* ✦ **done**
 
 Small fixes found reviewing v0.1. None change the public model.
 
-- **FW-101** Ship `robots.txt` and `sitemap.xml` to floodwall.ai: they were
-  added to `site/public/` but `docs/` was never rebuilt.
-- **FW-102** CI check that fails when `docs/` is out of date with a fresh
+- **FW-101** ✓ Ship `robots.txt` and `sitemap.xml` to floodwall.ai: they
+  were added to `site/public/` but `docs/` was never rebuilt.
+- **FW-102** ✓ CI check that fails when `docs/` is out of date with a fresh
   `site/` build, so the published site cannot drift from its source again.
-- **FW-103** Validate `RateLimit`: a `burst` below `1.0` means the bucket can
-  never hold a whole token, so every intent from every agent is silently
-  rate-limited. Reject non-finite, negative, or sub-1 bursts up front.
-- **FW-104** Bound the per-agent bucket map. Buckets are never evicted, so a
-  fleet that mints fresh agent ids grows memory without limit. Drop buckets
-  that have refilled to `burst` and been idle past a horizon.
-- **FW-105** Make ledger records carry the evidence: the verdict reason, the
-  per-policy breakdown, and a summary of the action. Today a record holds
-  only the `admit` / `defer` / `reject` label.
-- **FW-106** Keep the site's hero stats (version, dependency and test counts)
-  in step with the crate instead of hard-coding them.
+  `.gitattributes` keeps `site/` and `docs/` LF so Windows builds match.
+- **FW-103** ✓ Validate `RateLimit`: a `burst` below `1.0` means the bucket
+  can never hold a whole token, so every intent from every agent is
+  silently rate-limited. Non-finite, negative, or sub-1 bursts are refused
+  up front (`RateLimit::try_new`).
+- **FW-104** ✓ Bound the per-agent bucket map: a fleet that minted fresh
+  agent ids grew memory without limit. A bucket that has refilled to
+  `burst` is identical to a new one, so it is forgotten; pruning runs as
+  the map grows and never changes a decision, because `Admission` time
+  never moves backwards. Exception: with `refill_per_tick == 0` a spent
+  bucket never refills and is kept, since that limit is a lifetime quota.
+- **FW-105** ✓ Ledger records carry the evidence: the verdict reason, the
+  per-policy breakdown, and a summary of the action.
+- **FW-106** ✓ The site's hero stats (version, dependency and test counts)
+  are read from the crate at build time instead of hard-coded. The test
+  count is source-counted: `#[test]` functions and doc examples under
+  `src/`.
 
 ## v0.2 - scheduler ✦ **done**
 
