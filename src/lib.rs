@@ -66,6 +66,7 @@ pub mod intent;
 pub mod ledger;
 pub mod policy;
 pub mod scheduler;
+pub mod sha256;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;

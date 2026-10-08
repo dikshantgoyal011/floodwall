@@ -51,5 +51,5 @@ GitHub Pages) describes the scheduler and hold queue.
   (FW-907).
 - Priority is strict, so `Bulk` work can starve under a constant stream of
   higher-priority intents (FW-908).
-- The ledger hash is FNV-1a, which detects accidents but not a motivated
-  attacker (FW-301).
+- Ledger records are not yet signed (FW-302), so whoever holds the ledger
+  can rewrite it consistently and publish a new head.

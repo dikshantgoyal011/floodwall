@@ -66,6 +66,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Breaking:** the ledger is a SHA-256 hash chain instead of FNV-1a
+  (FW-301). `Record::prev`, `Record::digest` and `Ledger::head()` are a
+  32-byte `ledger::Digest` (shown as hex) instead of a `u64`; the genesis
+  `prev` is `Digest::GENESIS`, all zeros. Every record digest is
+  domain-separated and its exact encoding is documented in `ledger`;
+  `Record::compute_digest` recomputes it. `Ledger::verify` now also
+  checks that each record is at its position and that the chain ends at
+  the head, so a truncated ledger fails. SHA-256 is from scratch in
+  `floodwall::sha256` (one-shot `sha256` and streaming `Sha256`), ported
+  from `shunya`.
 - **Breaking:** `Floodwall::tick()` is now `tick(now) -> TickReport`. One
   call is a full pass over the queue that rules on every intent that may
   start now, instead of popping a single intent. `TickReport::admitted()`

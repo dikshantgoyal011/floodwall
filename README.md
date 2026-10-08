@@ -36,7 +36,7 @@ You cannot review your way out of that. You have to **govern throughput**: admit
 | **Scheduler** | [`scheduler`](src/scheduler.rs) | Decides when each waiting intent may start. A `Global` change runs alone; `Region` changes run one at a time with their resource to themselves; narrow changes run in parallel across resources, up to a per-resource in-flight limit. A blocked intent keeps what it waits for from lower-priority work, so wide changes are never starved. Two agents' contradictory changes to one resource within a conflict window are deferred. |
 | **Gate** | [`gate`](src/gate.rs) / [`policy`](src/policy.rs) | A stack of policies, each a pure function from an intent to a verdict, composed with **deny-overrides**: the harshest verdict wins, so one `Reject` blocks a change no matter how many policies admit it. |
 | **Hold** | [`hold`](src/hold.rs) | A `Defer` is "not yet", not "no". Deferred intents wait here until a human releases them (their deferrals are then waived; rejections still apply) or expires them, or until a TTL runs out. |
-| **Ledger** | [`ledger`](src/ledger.rs) | Every decision, release, expiry and outcome is appended to a hash chain together with its evidence: the action, the reason, and each policy's verdict. Each record folds in the previous digest, so any retroactive edit to history breaks the chain. |
+| **Ledger** | [`ledger`](src/ledger.rs) | Every decision, release, expiry and outcome is appended to a SHA-256 hash chain together with its evidence: the action, the reason, and each policy's verdict. Each record folds in the previous digest, so any retroactive edit to history breaks the chain. |
 
 The unit that flows through all of it is an [`Intent`](src/intent.rs): a change an agent *wants* to make, fully attributed, tagged with how urgent it is (`Priority`) and how much it can break (`BlastRadius`). Agents never touch production directly. They submit intents. The floodwall decides what runs, when, and alongside what; the caller applies each admitted change and reports back.
 
@@ -168,7 +168,7 @@ floodwall demo - 4000 intents flung at the wall over 200 ticks, settled by tick 
 
   ledger (tamper-evident)
     records        : 2497
-    head digest    : 0x773cfb492ae1eaec
+    head digest    : 54e78d604c96a58535e184c6f72392c08d8a6d60b703219dd1b0205536eff28f
     chain valid    : true
 ```
 
@@ -180,7 +180,7 @@ Five agents (including a `chaos-monkey`) fling 4000 changes at the wall. Admissi
 |-----|-------------------------------------------------------------------------|--------|
 | 0.1 | Intent model, per-agent token-bucket admission + bounded priority queue, deny-overrides policy gate, hash-chained ledger, end-to-end `Floodwall` | **shipped** |
 | 0.2 | Scheduler: wide-blast serialization, narrow work in parallel by resource, per-resource in-flight limits, conflict detection, hold queue with human release and expiry | **done** |
-| 0.3 | Cryptographic ledger (SHA-256 chain, signed records) + Merkle checkpoints |  next  |
+| 0.3 | Cryptographic ledger (SHA-256 chain, signed records) + Merkle checkpoints | in progress |
 | 0.4 | Persistence + replay: rebuild plane state from the ledger               |        |
 | 0.5 | Policy-as-code: declarative rules + a worked OPA-style example          |        |
 
@@ -188,7 +188,7 @@ See [GOALS.md](GOALS.md) for the full roadmap and [STATUS.md](STATUS.md) for cur
 
 ## Design notes
 
-- **Zero dependencies.** Everything here is `std`. The hash chain is a hand-rolled FNV-1a placeholder (swap in a real cryptographic hash before trusting it against an adversary; the sibling crate [`shunya`](https://github.com/protosphinx/shunya) has a from-scratch SHA-256).
+- **Zero dependencies.** Everything here is `std`. The ledger is a SHA-256 hash chain; SHA-256 is implemented from scratch (ported from the sibling crate [`shunya`](https://github.com/protosphinx/shunya)) and checked against the FIPS 180-4 vectors and an independent implementation. The exact bytes each record digest covers are documented in [`ledger`](src/ledger.rs), so an auditor can recompute them.
 - **No wall clock.** Time is a logical tick supplied by the caller, so the whole plane is deterministic and testable. Time never moves backwards: a tick earlier than the latest one seen is treated as the latest.
 - **You apply the changes.** floodwall decides; it does not execute. An admitted intent is in flight until you call `complete`, so report back even when a change fails or times out.
 - **`unsafe` is forbidden** at the crate level.
