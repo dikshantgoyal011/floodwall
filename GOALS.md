@@ -74,8 +74,9 @@ independent model).
 
 ## v0.3 - trustworthy ledger ◦ next
 
-- **FW-301** Replace FNV-1a with a SHA-256 chain (reuse the from-scratch
-  primitive from `shunya`).
+- **FW-301** ✓ Replace FNV-1a with a SHA-256 chain (reuse the from-scratch
+  primitive from `shunya`). The record encoding is documented in
+  `src/ledger.rs` and pinned by digests from an independent implementation.
 - **FW-302** Per-record signatures keyed by agent identity.
 - **FW-303** Periodic Merkle checkpoints so a verifier can audit a suffix
   without replaying from genesis.

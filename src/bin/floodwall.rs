@@ -269,6 +269,6 @@ fn main() {
     println!();
     println!("  ledger (tamper-evident)");
     println!("    records        : {}", ledger.len());
-    println!("    head digest    : {:#018x}", ledger.head());
+    println!("    head digest    : {}", ledger.head());
     println!("    chain valid    : {}", ledger.verify());
 }
