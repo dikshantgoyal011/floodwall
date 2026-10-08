@@ -349,14 +349,16 @@ function FooterScene() {
             <a href="https://github.com/erphq/floodwall/blob/main/GOALS.md">Goals</a>
           </div>
           <div>
-            <h3>Company</h3>
+            <h3>Related projects</h3>
+            <a href="https://vmyard.com/">VMyard agent runtimes</a>
+            <a href="https://knockstat.com/">knockstat server-log analytics</a>
             <a href="https://github.com/erphq/floodwall/blob/main/STATUS.md">Status</a>
             <a href="https://erp.ai">ERP.AI</a>
           </div>
         </nav>
         <div className="footer-bottom">
           <strong>SAN FRANCISCO BAY</strong>
-          <span>&copy; 2026 Floodwall. An ERP.AI project.</span>
+          <span>&copy; 2026 Floodwall. An ERP.AI project. · built with <a href="https://proto.erp.ai">Proto</a></span>
         </div>
       </div>
     </footer>
