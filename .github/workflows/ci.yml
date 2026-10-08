@@ -21,6 +21,20 @@ jobs:
         run: cargo test --all
       - name: build
         run: cargo build --release
+      # Export the demo's ledger and verify it, plus the edge-case export
+      # written by `cargo test`, with the independent Node verifier: proof
+      # that the export is enough to audit the ledger without this crate.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: verify exports independently
+        run: |
+          cargo run --release -- --export target/audit
+          node tools/verify-ledger.mjs target/audit/ledger.jsonl target/audit/keys.json
+          node tools/verify-ledger.mjs target/audit/ledger-suffix.jsonl target/audit/keys.json
+          node tools/verify-ledger.mjs target/export-fixture/edge.jsonl target/export-fixture/keys.json
+          node tools/verify-ledger.mjs target/export-fixture/edge-suffix.jsonl target/export-fixture/keys.json
+          node --test tools/verify-ledger.test.mjs
   frontend:
     runs-on: ubuntu-latest
     steps:

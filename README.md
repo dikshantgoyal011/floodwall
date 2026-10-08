@@ -173,6 +173,19 @@ assert_eq!(suffix.len(), 3);
 assert!(audit_suffix(&trusted, &latest, suffix, Some(&plane_key.verifying_key())).is_ok());
 ```
 
+### Auditing with your own tools
+
+The ledger exports as [JSON Lines](src/export.rs): a header, then every record and checkpoint, one per line, with the exact bytes each digest and signature covers documented in the crate. Auditors don't need this crate to check it:
+
+```text
+$ cargo run --release -- --export audit/      # the demo writes ledger.jsonl, ledger-suffix.jsonl and keys.json
+$ node tools/verify-ledger.mjs audit/ledger.jsonl audit/keys.json
+ok: 2043 records from genesis; 8 checkpoints; head 189f5d55…
+ok: 2043 agent signatures and every checkpoint signature verified
+```
+
+[`tools/verify-ledger.mjs`](tools/verify-ledger.mjs) is an independent implementation using only Node's standard library. It recomputes every record digest, checks every link, Merkle root and frontier, and with the public keys checks every agent and checkpoint signature. A suffix export (`Ledger::export_jsonl_from(checkpoint)`) is checked from that checkpoint alone. CI runs it on every change.
+
 Writing your own policy is one trait method:
 
 ```rust
@@ -245,8 +258,8 @@ Five agents (including a `chaos-monkey`) fling 4000 changes at the wall. Admissi
 |-----|-------------------------------------------------------------------------|--------|
 | 0.1 | Intent model, per-agent token-bucket admission + bounded priority queue, deny-overrides policy gate, hash-chained ledger, end-to-end `Floodwall` | **shipped** |
 | 0.2 | Scheduler: wide-blast serialization, narrow work in parallel by resource, per-resource in-flight limits, conflict detection, hold queue with human release and expiry | **done** |
-| 0.3 | Cryptographic ledger (SHA-256 chain, signed records) + Merkle checkpoints | in progress: chain, signatures and checkpoints done; export next |
-| 0.4 | Persistence + replay: rebuild plane state from the ledger               |        |
+| 0.3 | Cryptographic ledger: SHA-256 chain, Ed25519-signed records, signed Merkle checkpoints, JSON Lines export with an independent verifier | **done** |
+| 0.4 | Persistence + replay: rebuild plane state from the ledger               |  next  |
 | 0.5 | Policy-as-code: declarative rules + a worked OPA-style example          |        |
 
 See [GOALS.md](GOALS.md) for the full roadmap and [STATUS.md](STATUS.md) for current state.
@@ -254,6 +267,7 @@ See [GOALS.md](GOALS.md) for the full roadmap and [STATUS.md](STATUS.md) for cur
 ## Design notes
 
 - **Zero dependencies.** Everything here is `std`. The ledger is a SHA-256 hash chain; SHA-256 is implemented from scratch (ported from the sibling crate [`shunya`](https://github.com/protosphinx/shunya)), and so are SHA-512 and Ed25519. Each is checked against its standard's test vectors (FIPS 180-4, RFC 8032) and against an independent implementation. The exact bytes each record digest and each signed intent cover are documented in [`ledger`](src/ledger.rs) and [`intent`](src/intent.rs), so an auditor can recompute them. Merkle roots use the RFC 6962 tree shape that Certificate Transparency logs use, so standard tooling can check them.
+- **Auditable without this crate.** The JSON Lines export plus the documented encodings are enough to verify everything; `tools/verify-ledger.mjs` proves it in CI, sharing no code with the Rust implementation.
 - **Signing is not side-channel audited.** Verification only handles public data. Signing avoids secret-dependent branches where it is easy to, but agents holding long-lived production keys may prefer a vetted library: the signatures are standard Ed25519 and verify here all the same.
 - **No wall clock.** Time is a logical tick supplied by the caller, so the whole plane is deterministic and testable. Time never moves backwards: a tick earlier than the latest one seen is treated as the latest.
 - **You apply the changes.** floodwall decides; it does not execute. An admitted intent is in flight until you call `complete`, so report back even when a change fails or times out.

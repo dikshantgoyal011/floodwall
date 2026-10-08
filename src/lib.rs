@@ -62,6 +62,7 @@
 pub mod admission;
 pub mod checkpoint;
 pub mod ed25519;
+pub mod export;
 pub mod gate;
 pub mod hold;
 pub mod intent;

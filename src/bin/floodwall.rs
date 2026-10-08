@@ -7,9 +7,18 @@
 //! failing), and the tamper-evident ledger at the end. Every agent signs
 //! its intents, and the chaos monkey now and then forges one in another
 //! agent's name. Deterministic and dependency-free.
+//!
+//! `floodwall --export DIR` also writes the ledger for auditors: the whole
+//! of it (`ledger.jsonl`), the part after the second-to-last checkpoint
+//! (`ledger-suffix.jsonl`), and the public keys to check it with
+//! (`keys.json`). `node tools/verify-ledger.mjs` verifies them.
 
 use std::collections::{BTreeMap, HashSet};
+use std::fs::{self, File};
+use std::io::{BufWriter, Write};
+use std::path::PathBuf;
 
+use floodwall::export::keys_json;
 use floodwall::intent::{Action, AgentId, BlastRadius, Intent, IntentKey, Priority};
 use floodwall::merkle::verify_inclusion;
 use floodwall::policy::{BlastNeedsPriority, NoGlobalDestroy, ResourceAllowlist};
@@ -60,6 +69,14 @@ struct Tally {
 }
 
 fn main() {
+    let export_dir = match std::env::args().skip(1).collect::<Vec<_>>().as_slice() {
+        [] => None,
+        [flag, dir] if flag == "--export" => Some(PathBuf::from(dir)),
+        _ => {
+            eprintln!("usage: floodwall [--export DIR]");
+            std::process::exit(2);
+        }
+    };
     let agents = [
         "reconciler-1",
         "reconciler-2",
@@ -354,4 +371,36 @@ fn main() {
         "    inclusion      : record {seq} proven in the latest root with {} hashes: {included}",
         proof.len()
     );
+
+    if let Some(dir) = export_dir {
+        let write = |name: &str, body: &dyn Fn(&mut BufWriter<File>) -> std::io::Result<()>| {
+            let path = dir.join(name);
+            let mut out = BufWriter::new(File::create(&path)?);
+            body(&mut out)?;
+            out.flush()
+        };
+        let result = fs::create_dir_all(&dir)
+            .and_then(|()| write("ledger.jsonl", &|out| ledger.export_jsonl(out)))
+            .and_then(|()| {
+                write("ledger-suffix.jsonl", &|out| {
+                    ledger.export_jsonl_from(trusted, out)
+                })
+            })
+            .and_then(|()| {
+                write("keys.json", &|out| {
+                    writeln!(out, "{}", keys_json(&keyring, Some(&pk)))
+                })
+            });
+        match result {
+            Ok(()) => println!(
+                "
+  exported to {}: ledger.jsonl, ledger-suffix.jsonl, keys.json",
+                dir.display()
+            ),
+            Err(e) => {
+                eprintln!("export to {} failed: {e}", dir.display());
+                std::process::exit(1);
+            }
+        }
+    }
 }

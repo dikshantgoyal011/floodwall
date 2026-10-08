@@ -65,6 +65,11 @@ impl Keyring {
         self.keys.get(agent)
     }
 
+    /// Every agent and its key, ordered by agent.
+    pub fn iter(&self) -> impl Iterator<Item = (&AgentId, &VerifyingKey)> {
+        self.keys.iter()
+    }
+
     /// How many agents have keys.
     pub fn len(&self) -> usize {
         self.keys.len()

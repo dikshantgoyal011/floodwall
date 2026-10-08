@@ -66,6 +66,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- JSON Lines export for auditors (FW-304). `Ledger::export_jsonl` writes
+  a header, every record and every checkpoint, one JSON object per line;
+  `Ledger::export_jsonl_from(checkpoint)` writes only what follows a
+  trusted checkpoint, and refuses a checkpoint that does not match the
+  ledger. The format is documented in `floodwall::export` (u64 values
+  that can exceed 2^53, like `intent_id`, are decimal strings).
+  `export::keys_json` writes the public keys an auditor needs, and
+  `Keyring::iter` lists them. The demo takes `--export DIR`.
+  `tools/verify-ledger.mjs` is an independent verifier using only Node's
+  standard library; CI runs it on the demo's export and on an edge-case
+  fixture, plus tamper tests.
 - Merkle checkpoints (FW-303). `floodwall::merkle` builds RFC 6962
   Merkle trees over record digests (`root`, `inclusion_proof`,
   `verify_inclusion`, and an incremental `Frontier`).
