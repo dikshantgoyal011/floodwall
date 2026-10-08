@@ -8,7 +8,7 @@
 use std::fmt;
 
 /// Stable identifier for an agent in the fleet.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct AgentId(pub String);
 
 impl AgentId {
@@ -59,6 +59,28 @@ impl Action {
             Action::Destroy { .. } | Action::Scale { replicas: 0, .. }
         )
     }
+
+    /// Whether applying both actions would fight over the same resource:
+    /// two scales to different replica counts, two applies of different
+    /// manifests, or a destroy alongside anything but another destroy.
+    ///
+    /// Identical actions do not contradict (they agree on the outcome), and
+    /// an apply does not contradict a scale: conflicts are keyed on
+    /// `(resource, action)`, and those are different actions. Actions on
+    /// different resources never contradict. The relation is symmetric.
+    pub fn contradicts(&self, other: &Action) -> bool {
+        if self.resource() != other.resource() {
+            return false;
+        }
+        match (self, other) {
+            (Action::Destroy { .. }, Action::Destroy { .. }) => false,
+            (Action::Destroy { .. }, _) | (_, Action::Destroy { .. }) => true,
+            (Action::Scale { replicas: a, .. }, Action::Scale { replicas: b, .. }) => a != b,
+            (Action::Apply { manifest: a, .. }, Action::Apply { manifest: b, .. }) => a != b,
+            (Action::Apply { .. }, Action::Scale { .. })
+            | (Action::Scale { .. }, Action::Apply { .. }) => false,
+        }
+    }
 }
 
 /// A short human-readable summary, as recorded in the ledger: `apply web`,
@@ -106,7 +128,7 @@ pub enum Priority {
 }
 
 /// A proposed change, fully attributed to the agent that authored it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Intent {
     /// Author-assigned id, monotonic per agent.
     pub id: u64,
@@ -136,6 +158,41 @@ impl Intent {
             priority,
             blast_radius,
         }
+    }
+
+    /// This intent's identity. Ids are only unique per agent, so an intent
+    /// is identified by its agent and id together.
+    pub fn key(&self) -> IntentKey {
+        IntentKey {
+            agent: self.agent.clone(),
+            id: self.id,
+        }
+    }
+}
+
+/// Identifies one intent: its agent plus the agent's id for it.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct IntentKey {
+    /// The agent that authored the intent.
+    pub agent: AgentId,
+    /// The agent's id for the intent.
+    pub id: u64,
+}
+
+impl IntentKey {
+    /// Identify intent `id` from `agent`.
+    pub fn new(agent: impl Into<String>, id: u64) -> Self {
+        Self {
+            agent: AgentId::new(agent),
+            id,
+        }
+    }
+}
+
+/// `agent#id`, e.g. `reconciler-7#42`.
+impl fmt::Display for IntentKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}#{}", self.agent, self.id)
     }
 }
 
@@ -209,6 +266,40 @@ mod tests {
             resource: "db".into(),
         };
         assert_eq!(destroy.to_string(), "destroy db");
+    }
+
+    #[test]
+    fn contradiction_is_keyed_on_resource_and_action() {
+        let apply = |r: &str, m: &str| Action::Apply {
+            resource: r.into(),
+            manifest: m.into(),
+        };
+        let scale = |r: &str, n: u32| Action::Scale {
+            resource: r.into(),
+            replicas: n,
+        };
+        let destroy = |r: &str| Action::Destroy { resource: r.into() };
+        let cases = [
+            // Same action, different outcome: contradict.
+            (scale("web", 3), scale("web", 5), true),
+            (apply("web", "v1"), apply("web", "v2"), true),
+            // Same action, same outcome: agree.
+            (scale("web", 3), scale("web", 3), false),
+            (apply("web", "v1"), apply("web", "v1"), false),
+            (destroy("web"), destroy("web"), false),
+            // A teardown fights with any change to what it tears down.
+            (destroy("web"), scale("web", 3), true),
+            (destroy("web"), apply("web", "v1"), true),
+            // Different actions on one resource: different keys.
+            (apply("web", "v1"), scale("web", 3), false),
+            // Different resources never contradict.
+            (scale("web", 3), scale("api", 5), false),
+            (destroy("web"), apply("api", "v1"), false),
+        ];
+        for (a, b, want) in cases {
+            assert_eq!(a.contradicts(&b), want, "{a} vs {b}");
+            assert_eq!(b.contradicts(&a), want, "{b} vs {a} (symmetry)");
+        }
     }
 
     #[test]

@@ -33,6 +33,15 @@ impl Verdict {
         }
     }
 
+    /// Deny-overrides of two verdicts: the harsher one, or `self` on a tie.
+    pub(crate) fn harsher(self, other: Verdict) -> Verdict {
+        if other.rank() > self.rank() {
+            other
+        } else {
+            self
+        }
+    }
+
     /// The human-readable reason, for a `Reject` or `Defer`.
     pub fn reason(&self) -> Option<&str> {
         match self {

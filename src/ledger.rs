@@ -49,7 +49,9 @@ pub struct Record {
     pub intent_id: u64,
     /// The agent that authored the intent.
     pub agent: String,
-    /// The verdict label: `admit` / `reject` / `defer`.
+    /// What happened to the intent. A decision is `admit`, `defer` (held)
+    /// or `reject`; afterwards an admitted intent is `succeeded` or
+    /// `failed`, and a held one is `released` or `expired`.
     pub verdict: String,
     /// What the change was and why it got this verdict.
     pub evidence: Evidence,

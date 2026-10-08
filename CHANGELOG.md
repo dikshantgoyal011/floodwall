@@ -14,9 +14,72 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (FW-105)
 - `Display` for `Action` (`apply web`, `scale web to 5`, `destroy web`)
   and `Verdict::reason()`.
+- Scheduler stage between admission and the gate (FW-201). An admitted
+  intent is now *in flight*: the caller applies it and reports back with
+  `Floodwall::complete(key, Outcome, now)`, which is recorded in the
+  ledger as `succeeded` or `failed`. `Floodwall::in_flight`, `queued`,
+  `is_in_flight` and `clock` expose the plane's state. `IntentKey`
+  (agent + id) identifies an intent; `Intent::key()` returns it.
+- `Admission::waiting` (the queue in order) and `Admission::is_full`.
+- Wide-blast intents are serialized (FW-202). A `Global` intent waits for
+  everything in flight and then runs alone; `Region` intents run one at a
+  time and need their resource to themselves. A blocked wide intent keeps
+  what it is waiting for from lower-priority work behind it, so it cannot
+  be starved.
+- Narrow intents are partitioned by resource (FW-203): work on different
+  resources runs concurrently, and work on one resource runs one intent at
+  a time, highest priority first.
+- Conflict detection on `(resource, action)` (FW-204). A dispatched intent
+  claims its `(resource, action)` while in flight and for a conflict
+  window after it completes (`SchedulerConfig::with_conflict_window`,
+  default 10 ticks). Another agent's contradictory intent
+  (`Action::contradicts`) is deferred when its turn comes. The check
+  shows in every decision's breakdown as `conflict-window` and combines
+  deny-overrides with the gate, so a policy reject still wins.
+  `Floodwall::with_scheduler` sets the configuration.
+- Per-resource in-flight limits (FW-205):
+  `SchedulerConfig::with_default_limit(n)` and `with_limit(resource, n)`
+  let up to `n` narrow intents run on a resource at once (default 1). A
+  `Region` intent still needs its resource to itself. A limit of 0 is
+  refused, since it would block the resource forever.
+- Hold queue for deferred intents (FW-206). A `Defer` no longer drops the
+  intent: it is held (`Floodwall::held`, `is_held`) until a human acts.
+  `Floodwall::release(key, by, now)` sends it back to the queue, and on
+  its next evaluation its deferrals (policy defers and conflicts) are
+  waived; rejections and scheduling still apply, and it never runs
+  alongside another agent's contradictory change that is in flight.
+  `Floodwall::expire(key, by, now)` drops it. `HoldConfig` sets a
+  capacity (oldest evicted when full, default 1024) and an optional TTL;
+  expiries are reported in `TickReport::expired`. The ledger records
+  `released` and `expired` with who did it and why, and a released
+  decision's reason lists what was overridden (`Decision::released_by`).
+- Demo, README and site for v0.2 (FW-207). The demo follows a flood
+  through scheduling, conflicts, an operator working the hold queue, and
+  completions. The README's examples are compiled and run as doctests.
+- `tests/scheduler_invariants.rs`: 300 seeded random floods through the
+  public API, with random limits, conflict windows, hold capacities and
+  TTLs, a policy that changes over time, and random releases and
+  expiries. Checks exclusivity, limits, no overtaking, maximal passes,
+  conflicts against an independent model, that every live intent is in
+  exactly one place, that a released intent is never deferred again,
+  duplicate detection, ledger completeness, and that everything drains.
 
 ### Changed
 
+- **Breaking:** `Floodwall::tick()` is now `tick(now) -> TickReport`. One
+  call is a full pass over the queue that rules on every intent that may
+  start now, instead of popping a single intent. `TickReport::admitted()`
+  lists what was dispatched.
+- **Breaking:** `Rejected::Duplicate`: `Floodwall::submit` refuses an
+  intent whose key is already queued, in flight or held, before it
+  touches the agent's rate limit.
+- `Floodwall` keeps one clock across all its methods; a `now` earlier
+  than the latest tick seen is treated as that tick.
+- `Floodwall::new` adopts an `Admission` that already has intents
+  queued: they become live (their keys are refused as duplicates) and the
+  plane's clock starts at the controller's. It panics if two queued
+  intents share a key; `Floodwall::try_new` returns `DuplicateQueued`
+  instead.
 - `RateLimit::new` and `Admission::new` now panic on a limit that could
   never admit anything sensibly: a `burst` below `1.0` (which used to
   rate-limit every intent silently), or a NaN, infinite, or negative
