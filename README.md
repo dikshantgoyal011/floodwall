@@ -32,6 +32,7 @@ You cannot review your way out of that. You have to **govern throughput**: admit
 
 | Stage | Crate module | What it does |
 |-------|--------------|--------------|
+| **Identity** | [`keyring`](src/keyring.rs) / [`ed25519`](src/ed25519.rs) | Optional: with a keyring of agents' public keys, every intent must carry its agent's Ed25519 signature. Unsigned, unknown and forged intents are refused before they reach the queue or spend an agent's rate limit. |
 | **Admission** | [`admission`](src/admission.rs) | A per-agent token bucket caps how fast any one agent can push, so a single runaway loop cannot starve the fleet. A bounded priority queue orders what is waiting (highest priority first, FIFO within a priority) and applies backpressure once it is full. |
 | **Scheduler** | [`scheduler`](src/scheduler.rs) | Decides when each waiting intent may start. A `Global` change runs alone; `Region` changes run one at a time with their resource to themselves; narrow changes run in parallel across resources, up to a per-resource in-flight limit. A blocked intent keeps what it waits for from lower-priority work, so wide changes are never starved. Two agents' contradictory changes to one resource within a conflict window are deferred. |
 | **Gate** | [`gate`](src/gate.rs) / [`policy`](src/policy.rs) | A stack of policies, each a pure function from an intent to a verdict, composed with **deny-overrides**: the harshest verdict wins, so one `Reject` blocks a change no matter how many policies admit it. |
@@ -115,6 +116,34 @@ assert_eq!(report.decisions[0].verdict, Verdict::Admit);
 assert_eq!(report.decisions[0].released_by.as_deref(), Some("alice"));
 ```
 
+With a keyring, every agent signs its intents, and the ledger proves who asked for what:
+
+```rust
+# use floodwall::{Admission, Floodwall, Gate, Keyring, RateLimit, Rejected, SigningKey};
+# use floodwall::intent::{Action, AgentId, BlastRadius, Intent, Priority};
+// Each agent holds a signing key (seeded from a secure random source in
+// practice); the plane holds only their public keys.
+let deployer = SigningKey::from_seed(&[42; 32]);
+let keyring = Keyring::new().with("deployer", deployer.verifying_key());
+let mut plane = Floodwall::new(Admission::new(1024, RateLimit::new(8.0, 1.0)), Gate::new())
+    .with_keyring(keyring.clone());
+
+let intent = Intent::new(
+    1,
+    AgentId::new("deployer"),
+    Action::Scale { resource: "web".into(), replicas: 5 },
+    Priority::Normal,
+    BlastRadius::Service,
+);
+// Unsigned, or changed after signing: refused at the door.
+assert_eq!(plane.submit(intent.clone(), 0), Err(Rejected::Unsigned));
+plane.submit(intent.signed(&deployer), 0).unwrap();
+plane.tick(0);
+
+// An auditor with the public keys checks every record's authorship.
+assert_eq!(plane.ledger().verify_signatures(&keyring), Ok(1));
+```
+
 Writing your own policy is one trait method:
 
 ```rust
@@ -141,38 +170,40 @@ impl Policy for FreezeWindow {
 ```text
 $ cargo run --release
 
-floodwall demo - 4000 intents flung at the wall over 200 ticks, settled by tick 382
+floodwall demo - 4000 intents flung at the wall over 200 ticks, settled by tick 385
 
-  at the wall (admission control)
-    rate-limited   : 565
-    backpressure   : 2209
-    queued         : 1226
+  at the wall (signatures + admission control)
+    forged         : 102 refused (bad signature)
+    rate-limited   : 545
+    backpressure   : 2407
+    queued         : 946
 
   scheduler (what may run now)
-    peak in flight : 8 across 4 resources
-    region changes : 19, one at a time
-    global changes : 4, each alone
+    peak in flight : 7 across 4 resources
+    region changes : 26, one at a time
+    global changes : 6, each alone
 
   through the gate (policies + conflict check)
-    admitted       : 370
-    deferred       : 738 (399 contradicted another agent)
-    rejected       : 281
+    admitted       : 359
+    deferred       : 547 (318 contradicted another agent)
+    rejected       : 231
 
   hold queue (human in the loop)
-    released       : 163 (0 still rejected)
-    expired        : 297 by the operator, 278 by TTL or a full hold
+    released       : 191 (0 still rejected)
+    expired        : 194 by the operator, 162 by TTL or a full hold
 
   applied (reported back)
-    succeeded      : 347
-    failed         : 23
+    succeeded      : 330
+    failed         : 29
 
   ledger (tamper-evident)
-    records        : 2497
-    head digest    : 54e78d604c96a58535e184c6f72392c08d8a6d60b703219dd1b0205536eff28f
+    records        : 2043
+    head digest    : 189f5d551888eeae1379978c5662e54d7bb4b25323bdf871bbbecd5c0f84c3ca
     chain valid    : true
+    signatures     : all 2043 records signed by their agents
 ```
 
-Five agents (including a `chaos-monkey`) fling 4000 changes at the wall. Admission control turns most of the flood away. The scheduler runs what is left in parallel across resources while serializing region-wide and global changes, the gate and conflict check sort each change into admit / defer / reject, and an operator works the hold queue every 10 ticks. Every admitted change is applied and reported back, and the ledger comes out the other side with its chain intact.
+Five agents (including a `chaos-monkey`) fling 4000 changes at the wall. Admission control turns most of the flood away. The scheduler runs what is left in parallel across resources while serializing region-wide and global changes, the gate and conflict check sort each change into admit / defer / reject, and an operator works the hold queue every 10 ticks. Every admitted change is applied and reported back, and the ledger comes out the other side with its chain intact. Every agent signs its intents; the chaos monkey now and then forges one in the deployer's name, which is refused at the door, and every record left in the ledger verifies against the agents' public keys.
 
 ## Status
 
@@ -180,7 +211,7 @@ Five agents (including a `chaos-monkey`) fling 4000 changes at the wall. Admissi
 |-----|-------------------------------------------------------------------------|--------|
 | 0.1 | Intent model, per-agent token-bucket admission + bounded priority queue, deny-overrides policy gate, hash-chained ledger, end-to-end `Floodwall` | **shipped** |
 | 0.2 | Scheduler: wide-blast serialization, narrow work in parallel by resource, per-resource in-flight limits, conflict detection, hold queue with human release and expiry | **done** |
-| 0.3 | Cryptographic ledger (SHA-256 chain, signed records) + Merkle checkpoints | in progress |
+| 0.3 | Cryptographic ledger (SHA-256 chain, signed records) + Merkle checkpoints | in progress: SHA-256 chain and signed records done |
 | 0.4 | Persistence + replay: rebuild plane state from the ledger               |        |
 | 0.5 | Policy-as-code: declarative rules + a worked OPA-style example          |        |
 
@@ -188,7 +219,8 @@ See [GOALS.md](GOALS.md) for the full roadmap and [STATUS.md](STATUS.md) for cur
 
 ## Design notes
 
-- **Zero dependencies.** Everything here is `std`. The ledger is a SHA-256 hash chain; SHA-256 is implemented from scratch (ported from the sibling crate [`shunya`](https://github.com/protosphinx/shunya)) and checked against the FIPS 180-4 vectors and an independent implementation. The exact bytes each record digest covers are documented in [`ledger`](src/ledger.rs), so an auditor can recompute them.
+- **Zero dependencies.** Everything here is `std`. The ledger is a SHA-256 hash chain; SHA-256 is implemented from scratch (ported from the sibling crate [`shunya`](https://github.com/protosphinx/shunya)), and so are SHA-512 and Ed25519. Each is checked against its standard's test vectors (FIPS 180-4, RFC 8032) and against an independent implementation. The exact bytes each record digest and each signed intent cover are documented in [`ledger`](src/ledger.rs) and [`intent`](src/intent.rs), so an auditor can recompute them.
+- **Signing is not side-channel audited.** Verification only handles public data. Signing avoids secret-dependent branches where it is easy to, but agents holding long-lived production keys may prefer a vetted library: the signatures are standard Ed25519 and verify here all the same.
 - **No wall clock.** Time is a logical tick supplied by the caller, so the whole plane is deterministic and testable. Time never moves backwards: a tick earlier than the latest one seen is treated as the latest.
 - **You apply the changes.** floodwall decides; it does not execute. An admitted intent is in flight until you call `complete`, so report back even when a change fails or times out.
 - **`unsafe` is forbidden** at the crate level.

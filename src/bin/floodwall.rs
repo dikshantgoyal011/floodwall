@@ -4,16 +4,18 @@
 //! it all the way through: admission control, the scheduler running work
 //! in parallel while serializing wide changes, the policy gate and conflict
 //! check, an operator working the hold queue, changes completing (or
-//! failing), and the tamper-evident ledger at the end. Deterministic and
-//! dependency-free.
+//! failing), and the tamper-evident ledger at the end. Every agent signs
+//! its intents, and the chaos monkey now and then forges one in another
+//! agent's name. Deterministic and dependency-free.
 
 use std::collections::{BTreeMap, HashSet};
 
 use floodwall::intent::{Action, AgentId, BlastRadius, Intent, IntentKey, Priority};
 use floodwall::policy::{BlastNeedsPriority, NoGlobalDestroy, ResourceAllowlist};
+use floodwall::sha256::sha256;
 use floodwall::{
-    Admission, Floodwall, Gate, HoldConfig, Outcome, RateLimit, Rejected, SchedulerConfig, Verdict,
-    CONFLICT_CHECK,
+    Admission, Floodwall, Gate, HoldConfig, Keyring, Outcome, RateLimit, Rejected, SchedulerConfig,
+    SigningKey, Verdict, CONFLICT_CHECK,
 };
 
 /// A tiny xorshift PRNG so the demo is reproducible without pulling in `rand`.
@@ -37,6 +39,7 @@ impl Rng {
 #[derive(Default)]
 struct Tally {
     offered: u64,
+    forged: u64,
     rate_limited: u64,
     backpressure: u64,
     admitted: u64,
@@ -64,6 +67,18 @@ fn main() {
         "chaos-monkey",
     ];
     let resources = ["web", "api", "cache", "billing", "ledger-db"];
+    // Each agent's signing key, from a fixed seed so the demo is
+    // reproducible. Real agents use seeds from a secure random source.
+    let keys: Vec<SigningKey> = agents
+        .iter()
+        .map(|a| SigningKey::from_seed(&sha256(format!("floodwall-demo/{a}").as_bytes())))
+        .collect();
+    let keyring = agents
+        .iter()
+        .zip(&keys)
+        .fold(Keyring::new(), |ring, (a, k)| {
+            ring.with(*a, k.verifying_key())
+        });
 
     // Tight per-agent limit against a deliberately oversized flood, so rate
     // limiting and backpressure both bite. The fleet may act on the core
@@ -83,7 +98,8 @@ fn main() {
     let hold = HoldConfig::default().with_capacity(64).with_ttl(Some(40));
     let mut plane = Floodwall::new(admission, gate)
         .with_scheduler(scheduler)
-        .with_hold(hold);
+        .with_hold(hold)
+        .with_keyring(keyring.clone());
 
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
     let flood_ticks = 200u64;
@@ -113,7 +129,8 @@ fn main() {
         // Agents press intents against the wall.
         if now < flood_ticks {
             for _ in 0..per_tick {
-                let agent = AgentId::new(agents[rng.below(agents.len() as u64) as usize]);
+                let who = rng.below(agents.len() as u64) as usize;
+                let agent = AgentId::new(agents[who]);
                 let resource = resources[rng.below(resources.len() as u64) as usize].to_string();
                 let blast = match rng.below(20) {
                     0 => BlastRadius::Global,
@@ -138,14 +155,25 @@ fn main() {
                     },
                     _ => Action::Destroy { resource },
                 };
-                let intent = Intent::new(next_id, agent, action, priority, blast);
+                let mut intent = Intent::new(next_id, agent, action, priority, blast);
+                if agents[who] == "chaos-monkey" && rng.below(10) == 0 {
+                    // A forgery: claim to be the deployer, but sign with
+                    // the chaos monkey's own key.
+                    intent.agent = AgentId::new("deployer");
+                }
+                let intent = intent.signed(&keys[who]);
                 next_id += 1;
                 t.offered += 1;
                 match plane.submit(intent, now) {
                     Ok(()) => {}
+                    Err(Rejected::BadSignature) => t.forged += 1,
                     Err(Rejected::RateLimited) => t.rate_limited += 1,
                     Err(Rejected::Backpressure) => t.backpressure += 1,
-                    Err(Rejected::Duplicate) => unreachable!("every intent id is fresh"),
+                    Err(
+                        e @ (Rejected::Duplicate | Rejected::Unsigned | Rejected::UnknownAgent),
+                    ) => {
+                        unreachable!("fresh ids, all signed by known agents: {e:?}")
+                    }
                 }
             }
         }
@@ -226,13 +254,14 @@ fn main() {
         now += 1;
     }
 
-    let queued = t.offered - t.rate_limited - t.backpressure;
+    let queued = t.offered - t.forged - t.rate_limited - t.backpressure;
     let ledger = plane.ledger();
     println!(
         "floodwall demo - {} intents flung at the wall over {flood_ticks} ticks, settled by tick {now}\n",
         t.offered
     );
-    println!("  at the wall (admission control)");
+    println!("  at the wall (signatures + admission control)");
+    println!("    forged         : {} refused (bad signature)", t.forged);
     println!("    rate-limited   : {}", t.rate_limited);
     println!("    backpressure   : {}", t.backpressure);
     println!("    queued         : {queued}");
@@ -271,4 +300,8 @@ fn main() {
     println!("    records        : {}", ledger.len());
     println!("    head digest    : {}", ledger.head());
     println!("    chain valid    : {}", ledger.verify());
+    match ledger.verify_signatures(&keyring) {
+        Ok(n) => println!("    signatures     : all {n} records signed by their agents"),
+        Err(e) => println!("    signatures     : FAILED, {e}"),
+    }
 }

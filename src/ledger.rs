@@ -16,20 +16,36 @@
 //! so field boundaries are unambiguous (`"ab" + "c"` never hashes like
 //! `"a" + "bc"`).
 //!
-//! 1. the field `floodwall/ledger/record/v1` (domain separation, so a record
+//! 1. the field `floodwall/ledger/record/v2` (domain separation, so a record
 //!    digest is never mistaken for any other hash the crate computes);
 //! 2. `prev`: the previous record's digest, 32 bytes ([`Digest::GENESIS`],
 //!    all zeros, for the first record);
 //! 3. `seq` as a `u64`;
 //! 4. `intent_id` as a `u64`;
-//! 5. the fields `agent`, `verdict` and `evidence.action`, as UTF-8;
-//! 6. `evidence.reason`: the byte `0` if there is none, or the byte `1`
+//! 5. `intent_digest`: the byte `0` if there is none, or the byte `1`
+//!    followed by the 32-byte digest;
+//! 6. `signature`: the byte `0` if there is none, or the byte `1` followed
+//!    by the 64-byte signature;
+//! 7. the fields `agent`, `verdict` and `evidence.action`, as UTF-8;
+//! 8. `evidence.reason`: the byte `0` if there is none, or the byte `1`
 //!    followed by the reason as a field;
-//! 7. the number of `evidence.policies` as a `u64`, then for each, its name
+//! 9. the number of `evidence.policies` as a `u64`, then for each, its name
 //!    and its label as fields.
+//!
+//! # Signatures
+//!
+//! A record about an intent carries the intent's [digest](crate::Intent::digest)
+//! and, if the agent signed the intent, the agent's Ed25519 signature of that
+//! digest. Both are covered by the record's own digest. With the agents'
+//! public keys, [`Ledger::verify_signatures`] proves each agent authored the
+//! exact intents the ledger attributes to it: changing what an agent asked
+//! for, or claiming it asked for something it never signed, fails.
 
 use std::fmt;
 
+use crate::ed25519::Signature;
+use crate::intent::Intent;
+use crate::keyring::Keyring;
 use crate::sha256::Sha256;
 
 /// A SHA-256 digest: one record's fingerprint, or the head of the chain.
@@ -63,7 +79,7 @@ impl fmt::Debug for Digest {
     }
 }
 
-const RECORD_DOMAIN: &[u8] = b"floodwall/ledger/record/v1";
+const RECORD_DOMAIN: &[u8] = b"floodwall/ledger/record/v2";
 
 /// Feed one variable-length field: its length, then its bytes.
 fn field(h: &mut Sha256, bytes: &[u8]) {
@@ -89,6 +105,11 @@ pub struct Record {
     pub seq: u64,
     /// The intent that was ruled on.
     pub intent_id: u64,
+    /// The intent's [digest](crate::Intent::digest), for a record written
+    /// about an intent.
+    pub intent_digest: Option<Digest>,
+    /// The agent's signature of `intent_digest`, if the intent was signed.
+    pub signature: Option<Signature>,
     /// The agent that authored the intent.
     pub agent: String,
     /// What happened to the intent. A decision is `admit`, `defer` (held)
@@ -112,6 +133,20 @@ impl Record {
         h.update(self.prev.as_bytes());
         h.update(&self.seq.to_le_bytes());
         h.update(&self.intent_id.to_le_bytes());
+        match &self.intent_digest {
+            None => h.update(&[0]),
+            Some(d) => {
+                h.update(&[1]);
+                h.update(d.as_bytes());
+            }
+        }
+        match &self.signature {
+            None => h.update(&[0]),
+            Some(sig) => {
+                h.update(&[1]);
+                h.update(sig.as_bytes());
+            }
+        }
         field(&mut h, self.agent.as_bytes());
         field(&mut h, self.verdict.as_bytes());
         field(&mut h, self.evidence.action.as_bytes());
@@ -130,6 +165,45 @@ impl Record {
         Digest(h.finalize())
     }
 }
+
+/// What is wrong with a record's signature.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SignatureProblem {
+    /// The record is not about a specific intent, so there is nothing signed.
+    NoIntent,
+    /// The record's intent was not signed.
+    Unsigned,
+    /// The keyring has no key for the record's agent.
+    UnknownAgent,
+    /// The signature is not the agent's signature of the record's intent.
+    BadSignature,
+}
+
+/// [`Ledger::verify_signatures`] found a record whose authorship cannot be
+/// proven.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SignatureError {
+    /// The record's position in the chain.
+    pub seq: u64,
+    /// What is wrong with it.
+    pub problem: SignatureProblem,
+}
+
+impl fmt::Display for SignatureError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let problem = match self.problem {
+            SignatureProblem::NoIntent => "is not about a signed intent",
+            SignatureProblem::Unsigned => "is about an unsigned intent",
+            SignatureProblem::UnknownAgent => "names an agent with no key on the keyring",
+            SignatureProblem::BadSignature => {
+                "carries a signature that does not match its agent and intent"
+            }
+        };
+        write!(f, "record {} {problem}", self.seq)
+    }
+}
+
+impl std::error::Error for SignatureError {}
 
 /// An append-only, hash-chained log of decisions.
 pub struct Ledger {
@@ -157,6 +231,20 @@ impl Ledger {
         self.append_with(intent_id, agent, verdict, Evidence::default())
     }
 
+    /// Append what happened to `intent`, with its evidence, and return the
+    /// record just written. The record carries the intent's digest and
+    /// signature, so its authorship can be checked later.
+    pub fn append_intent(&mut self, intent: &Intent, verdict: &str, evidence: Evidence) -> &Record {
+        self.push(
+            intent.id,
+            Some(intent.digest()),
+            intent.signature,
+            intent.agent.as_str(),
+            verdict,
+            evidence,
+        )
+    }
+
     /// Append a decision together with its evidence and return the record
     /// just written. The evidence is covered by the digest, so editing it
     /// later breaks the chain just like editing the verdict.
@@ -167,9 +255,23 @@ impl Ledger {
         verdict: &str,
         evidence: Evidence,
     ) -> &Record {
+        self.push(intent_id, None, None, agent, verdict, evidence)
+    }
+
+    fn push(
+        &mut self,
+        intent_id: u64,
+        intent_digest: Option<Digest>,
+        signature: Option<Signature>,
+        agent: &str,
+        verdict: &str,
+        evidence: Evidence,
+    ) -> &Record {
         let mut record = Record {
             seq: self.records.len() as u64,
             intent_id,
+            intent_digest,
+            signature,
             agent: agent.to_string(),
             verdict: verdict.to_string(),
             evidence,
@@ -197,6 +299,29 @@ impl Ledger {
         prev == self.head
     }
 
+    /// Check every record's signature against the agents' public keys: each
+    /// record must carry an intent digest and a signature of it by the key
+    /// `keyring` holds for the record's agent. Returns how many records were
+    /// checked, or the first record that fails. This proves authorship; use
+    /// [`Ledger::verify`] for the chain itself.
+    pub fn verify_signatures(&self, keyring: &Keyring) -> Result<usize, SignatureError> {
+        for r in &self.records {
+            let fail = |problem| SignatureError {
+                seq: r.seq,
+                problem,
+            };
+            let digest = r.intent_digest.ok_or(fail(SignatureProblem::NoIntent))?;
+            let sig = r.signature.ok_or(fail(SignatureProblem::Unsigned))?;
+            let key = keyring
+                .get(&crate::intent::AgentId::new(r.agent.as_str()))
+                .ok_or(fail(SignatureProblem::UnknownAgent))?;
+            if !key.verify(digest.as_bytes(), &sig) {
+                return Err(fail(SignatureProblem::BadSignature));
+            }
+        }
+        Ok(self.records.len())
+    }
+
     /// The current head digest - a fingerprint of the entire history.
     pub fn head(&self) -> Digest {
         self.head
@@ -221,6 +346,8 @@ impl Ledger {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ed25519::SigningKey;
+    use crate::intent::{Action, AgentId, BlastRadius, Priority};
 
     #[test]
     fn empty_ledger_verifies() {
@@ -351,24 +478,85 @@ mod tests {
                 ..Evidence::default()
             },
         );
+        // A record about a signed intent, and one about an unsigned intent.
+        l.append_intent(
+            &signed_intent(),
+            "admit",
+            Evidence {
+                action: "apply web".into(),
+                ..Evidence::default()
+            },
+        );
+        l.append_intent(
+            &unsigned_intent(),
+            "succeeded",
+            Evidence {
+                action: "scale web to 3".into(),
+                ..Evidence::default()
+            },
+        );
         l
+    }
+
+    fn deployer_key() -> SigningKey {
+        SigningKey::from_seed(&[7; 32])
+    }
+
+    fn signed_intent() -> Intent {
+        Intent::new(
+            7,
+            AgentId::new("deployer"),
+            Action::Apply {
+                resource: "web".into(),
+                manifest: "v2".into(),
+            },
+            Priority::Urgent,
+            BlastRadius::Service,
+        )
+        .signed(&deployer_key())
+    }
+
+    fn unsigned_intent() -> Intent {
+        Intent::new(
+            8,
+            AgentId::new("autoscaler"),
+            Action::Scale {
+                resource: "web".into(),
+                replicas: 3,
+            },
+            Priority::Normal,
+            BlastRadius::Cell,
+        )
     }
 
     #[test]
     fn digests_follow_the_documented_encoding() {
         // Computed by an independent implementation (Node's crypto) written
-        // from the "Record encoding" section of this module's docs.
+        // from the "Record encoding" section of this module's docs and the
+        // "Signing" section of `Intent`'s, with Node's Ed25519 signature.
         let want = [
-            "889448ef23eff4b84a8dc25cc93bbf2bdf5fdf7ca3bd131e141830b6514bf0cc",
-            "303166f0ee828c061045efd2551c8e86b898f2cc72b87b9b46f392051af04abb",
-            "66ee43cc0244deecb45662a36ed39ff7c0ef4121ca361d13064b62d22c1157ca",
-            "25bd527b0e9175d8ce3d63b9c0321c93f5c42e9ef1a4dd65f5b8b81a11b0ea58",
+            "7a6771f4ee960f9a5fe1ebc497739dc56be2796637aadae8163cd85601e911af",
+            "a173989be6337d02b7e61b89ee26bd0a35dc091a4d50bf248ef8c4f0ce32cf32",
+            "42a5d402e0e778bb13e852befc5d1929393991ee41f6dec6a606c2005dae522e",
+            "312d24135327af062fdc660ce27a0ebc3a84fae9b3b7f6dbee6a085d6084d086",
+            "006b530eb9c1a079b0668a7646e282839145d59540ee26b401ea72fd51d2dd97",
+            "2af252fa07da44c62bc9f1cf9fa66a9e9eb6a28a19d718a406453a33fbd0105c",
         ];
         let l = reference_ledger();
         let got: Vec<String> = l.records().iter().map(|r| r.digest.to_string()).collect();
         assert_eq!(got, want);
-        assert_eq!(l.head().to_string(), want[3]);
+        assert_eq!(l.head().to_string(), want[5]);
         assert!(l.verify());
+        let signed = &l.records()[4];
+        assert_eq!(
+            signed.intent_digest.unwrap().to_string(),
+            "556b2fe4c7dd796f82d2ab8021bd546abc6e29ab4303f192ea18d4333fc36b9d"
+        );
+        assert_eq!(
+            signed.signature.unwrap().to_string(),
+            "2379a35c279cd1952912648e0d19951e1630a9c7e2e5edb3a5c25f0223c9edd5dd317afbd86ffa02710c89164276dcd65aea84a351c7c39d9bfba89b4a532105"
+        );
+        assert_eq!(l.records()[5].signature, None);
     }
 
     #[test]
@@ -378,8 +566,127 @@ mod tests {
         let l = reference_ledger();
         assert_eq!(l.records()[0].prev, Digest::GENESIS);
         let d = l.records()[0].digest;
-        assert_eq!(d.as_bytes()[0], 0x88);
+        assert_eq!(d.as_bytes()[0], 0x7a);
         assert_eq!(format!("{d:?}"), format!("Digest({d})"));
+    }
+
+    /// A ledger whose every record is about an intent signed by its agent.
+    fn signed_ledger() -> (Ledger, Keyring) {
+        let autoscaler = SigningKey::from_seed(&[8; 32]);
+        let keyring = Keyring::new()
+            .with("deployer", deployer_key().verifying_key())
+            .with("autoscaler", autoscaler.verifying_key());
+        let mut l = Ledger::new();
+        l.append_intent(&signed_intent(), "admit", Evidence::default());
+        l.append_intent(
+            &unsigned_intent().signed(&autoscaler),
+            "defer",
+            Evidence::default(),
+        );
+        l.append_intent(&signed_intent(), "succeeded", Evidence::default());
+        (l, keyring)
+    }
+
+    #[test]
+    fn signatures_verify_against_the_agents_public_keys() {
+        let (l, keyring) = signed_ledger();
+        assert!(l.verify());
+        assert_eq!(l.verify_signatures(&keyring), Ok(3));
+    }
+
+    #[test]
+    fn records_without_proof_of_authorship_fail_signature_checks() {
+        let (_, keyring) = signed_ledger();
+        let problem = |l: &Ledger| {
+            l.verify_signatures(&keyring)
+                .map_err(|e| (e.seq, e.problem))
+        };
+
+        // A record not about an intent, and one about an unsigned intent.
+        let reference = reference_ledger();
+        assert_eq!(problem(&reference), Err((0, SignatureProblem::NoIntent)));
+        let mut l = Ledger::new();
+        l.append_intent(&signed_intent(), "admit", Evidence::default());
+        l.append_intent(&unsigned_intent(), "admit", Evidence::default());
+        assert_eq!(problem(&l), Err((1, SignatureProblem::Unsigned)));
+
+        // An agent the auditor has no key for.
+        let mut l = Ledger::new();
+        let stranger = SigningKey::from_seed(&[9; 32]);
+        let mut intent = unsigned_intent();
+        intent.agent = AgentId::new("stranger");
+        l.append_intent(&intent.signed(&stranger), "admit", Evidence::default());
+        assert_eq!(problem(&l), Err((0, SignatureProblem::UnknownAgent)));
+    }
+
+    #[test]
+    fn a_signature_cannot_be_moved_or_its_intent_changed() {
+        let (l, keyring) = signed_ledger();
+        // Rewrite whole chains consistently, so verify() passes and only
+        // the signatures can tell.
+        let rechain = |mut records: Vec<Record>| {
+            let mut prev = Digest::GENESIS;
+            for r in &mut records {
+                r.prev = prev;
+                r.digest = r.compute_digest();
+                prev = r.digest;
+            }
+            Ledger {
+                records,
+                head: prev,
+            }
+        };
+        let bad = |l: &Ledger| {
+            assert!(l.verify(), "the rewritten chain is consistent");
+            l.verify_signatures(&keyring)
+                .map_err(|e| (e.seq, e.problem))
+        };
+
+        // Claim the deployer asked for something else.
+        let mut records = l.records.clone();
+        records[0].intent_digest = Some(unsigned_intent().digest());
+        assert_eq!(
+            bad(&rechain(records)),
+            Err((0, SignatureProblem::BadSignature))
+        );
+
+        // Move the deployer's signature onto the autoscaler's record.
+        let mut records = l.records.clone();
+        records[1].signature = records[0].signature;
+        assert_eq!(
+            bad(&rechain(records)),
+            Err((1, SignatureProblem::BadSignature))
+        );
+
+        // Attribute the deployer's signed intent to the autoscaler.
+        let mut records = l.records.clone();
+        records[2].agent = "autoscaler".into();
+        assert_eq!(
+            bad(&rechain(records)),
+            Err((2, SignatureProblem::BadSignature))
+        );
+
+        // And without rewriting the chain, any edit to the signature breaks
+        // the chain itself.
+        let mut records = l.records.clone();
+        records[0].signature.as_mut().unwrap().0[0] ^= 1;
+        let forged = Ledger {
+            records,
+            head: l.head,
+        };
+        assert!(!forged.verify());
+    }
+
+    #[test]
+    fn signature_errors_say_which_record_and_why() {
+        let e = SignatureError {
+            seq: 4,
+            problem: SignatureProblem::BadSignature,
+        };
+        assert_eq!(
+            e.to_string(),
+            "record 4 carries a signature that does not match its agent and intent"
+        );
     }
 
     /// A named way to tamper with one field of a record.

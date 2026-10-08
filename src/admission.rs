@@ -153,6 +153,15 @@ pub enum Rejected {
     /// flight, or held). Returned by [`Floodwall::submit`](crate::Floodwall::submit);
     /// [`Admission`] itself does not track identity.
     Duplicate,
+    /// The plane requires signed intents and this one carries no signature.
+    /// Returned by [`Floodwall::submit`](crate::Floodwall::submit) with a
+    /// keyring.
+    Unsigned,
+    /// The plane requires signed intents and has no key for this agent.
+    UnknownAgent,
+    /// The intent's signature is not its agent's signature of this intent:
+    /// it was signed by another key, or changed after signing.
+    BadSignature,
 }
 
 /// An intent's place in the queue. Keys sort in processing order: highest

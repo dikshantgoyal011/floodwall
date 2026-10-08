@@ -60,22 +60,27 @@
 //! ```
 
 pub mod admission;
+pub mod ed25519;
 pub mod gate;
 pub mod hold;
 pub mod intent;
+pub mod keyring;
 pub mod ledger;
 pub mod policy;
 pub mod scheduler;
 pub mod sha256;
+pub mod sha512;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 pub use admission::{Admission, InvalidRateLimit, RateLimit, Rejected};
+pub use ed25519::{InvalidKey, Signature, SigningKey, VerifyingKey};
 pub use gate::{Gate, GateDecision};
 pub use hold::{Held, HoldConfig, HoldError};
 pub use intent::{Intent, IntentKey};
-pub use ledger::{Evidence, Ledger, Record};
+pub use keyring::{AuthError, Keyring};
+pub use ledger::{Digest, Evidence, Ledger, Record, SignatureError, SignatureProblem};
 pub use policy::{Policy, Verdict};
 pub use scheduler::{InFlight, SchedulerConfig};
 
@@ -91,6 +96,10 @@ pub struct ReadmeDoctests;
 /// The name the scheduler's conflict check (see
 /// [`scheduler`](crate::scheduler#conflicts)) has in a decision's breakdown.
 pub const CONFLICT_CHECK: &str = "conflict-window";
+
+/// The name the signature check has in a decision's breakdown, when the
+/// plane has a [`Keyring`].
+pub const SIGNATURE_CHECK: &str = "agent-signature";
 
 /// The outcome of ruling on one intent: the intent itself, the combined
 /// verdict, and the per-policy breakdown that produced it.
@@ -199,6 +208,10 @@ pub struct Floodwall {
     /// Every intent that is queued, in flight, or held. An intent key can
     /// only be live once, so a resubmitted duplicate is refused.
     live: HashSet<IntentKey>,
+    /// With a keyring, every intent must be signed by its agent's key.
+    keyring: Option<Keyring>,
+    /// Live intents already checked against the current keyring.
+    authenticated: HashSet<IntentKey>,
     clock: u64,
 }
 
@@ -243,7 +256,30 @@ impl Floodwall {
             hold: Hold::new(HoldConfig::default()),
             released: HashMap::new(),
             live,
+            keyring: None,
+            authenticated: HashSet::new(),
         })
+    }
+
+    /// Require every intent to be signed by its agent's key on `keyring`
+    /// (see [`Intent`](crate::Intent#signing)). [`Floodwall::submit`]
+    /// refuses an unsigned or badly signed intent, or one from an agent
+    /// with no key, before it touches the queue or the agent's rate limit.
+    /// An intent that reached the queue another way (adopted from a
+    /// populated [`Admission`], or queued before the keyring changed) is
+    /// checked when it is ruled on, and rejected if it fails; the check
+    /// shows in the breakdown as [`SIGNATURE_CHECK`]. Ledger records carry
+    /// each intent's signature, so [`Ledger::verify_signatures`] can prove
+    /// authorship later.
+    pub fn with_keyring(mut self, keyring: Keyring) -> Self {
+        self.keyring = Some(keyring);
+        self.authenticated.clear();
+        self
+    }
+
+    /// The keyring in use, if signatures are required.
+    pub fn keyring(&self) -> Option<&Keyring> {
+        self.keyring.as_ref()
     }
 
     /// Use `config` for the hold queue. A lower capacity or TTL takes
@@ -281,20 +317,39 @@ impl Floodwall {
 
     /// Offer an intent to the wall at logical time `now`.
     ///
-    /// Refused with [`Rejected::Duplicate`] if an intent with the same
-    /// [`IntentKey`] is already queued, in flight, or held, and otherwise with
-    /// [`Rejected::Backpressure`] or [`Rejected::RateLimited`] by admission.
-    /// A duplicate is caught first, so it does not use the agent's rate
-    /// allowance.
+    /// With a keyring, an intent that is not signed by its agent's key is
+    /// refused first, with [`Rejected::Unsigned`], [`Rejected::UnknownAgent`]
+    /// or [`Rejected::BadSignature`]: an unauthenticated caller learns
+    /// nothing about the queue and cannot spend an agent's rate allowance.
+    /// Then an intent whose [`IntentKey`] is already queued, in flight or
+    /// held is refused with [`Rejected::Duplicate`], before the rate limit
+    /// is touched. Last, admission may refuse it with
+    /// [`Rejected::Backpressure`] or [`Rejected::RateLimited`].
     pub fn submit(&mut self, intent: Intent, now: u64) -> Result<(), Rejected> {
         let now = self.advance(now);
+        if let Some(keyring) = &self.keyring {
+            keyring.authenticate(&intent).map_err(|e| match e {
+                AuthError::Unsigned => Rejected::Unsigned,
+                AuthError::UnknownAgent => Rejected::UnknownAgent,
+                AuthError::BadSignature => Rejected::BadSignature,
+            })?;
+        }
         let key = intent.key();
         if self.live.contains(&key) {
             return Err(Rejected::Duplicate);
         }
         self.admission.submit(intent, now)?;
+        if self.keyring.is_some() {
+            self.authenticated.insert(key.clone());
+        }
         self.live.insert(key);
         Ok(())
+    }
+
+    /// Stop tracking an intent that is done: rejected, completed or expired.
+    fn forget(&mut self, key: &IntentKey) {
+        self.live.remove(key);
+        self.authenticated.remove(key);
     }
 
     /// One scheduling pass at logical time `now`: first expire held
@@ -359,6 +414,20 @@ impl Floodwall {
     fn decide(&mut self, intent: Intent, now: u64, report: &mut TickReport) {
         let key = intent.key();
         let GateDecision { mut breakdown, .. } = self.gate.evaluate(&intent);
+        if let Some(keyring) = &self.keyring {
+            let signature = if self.authenticated.contains(&key) {
+                Verdict::Admit
+            } else {
+                match keyring.authenticate(&intent) {
+                    Ok(()) => {
+                        self.authenticated.insert(key.clone());
+                        Verdict::Admit
+                    }
+                    Err(e) => Verdict::Reject(e.to_string()),
+                }
+            };
+            breakdown.push((SIGNATURE_CHECK.to_string(), signature));
+        }
         let conflict = match self.scheduler.conflict(&intent, now) {
             Some(reason) => Verdict::Defer(reason),
             None => Verdict::Admit,
@@ -388,7 +457,7 @@ impl Floodwall {
                 self.expire_evicted(evicted, report);
             }
             Verdict::Reject(_) => {
-                self.live.remove(&key);
+                self.forget(&key);
             }
         }
         report.decisions.push(Decision {
@@ -415,7 +484,7 @@ impl Floodwall {
 
     /// Record a held intent's expiry and forget it.
     fn expire_held(&mut self, held: Held, reason: String, report: &mut TickReport) {
-        self.live.remove(&held.intent.key());
+        self.forget(&held.intent.key());
         self.record(&held.intent, "expired", Some(reason), Vec::new());
         report.expired.push(held);
     }
@@ -459,7 +528,7 @@ impl Floodwall {
             .hold
             .take(key)
             .ok_or_else(|| HoldError::NotHeld(key.clone()))?;
-        self.live.remove(key);
+        self.forget(key);
         self.record(
             &held.intent,
             "expired",
@@ -483,7 +552,7 @@ impl Floodwall {
             .scheduler
             .finish(key, now)
             .ok_or_else(|| NotInFlight(key.clone()))?;
-        self.live.remove(key);
+        self.forget(key);
         let reason = match &outcome {
             Outcome::Succeeded => None,
             Outcome::Failed(why) => Some(why.clone()),
@@ -504,8 +573,7 @@ impl Floodwall {
             reason,
             policies,
         };
-        self.ledger
-            .append_with(intent.id, intent.agent.as_str(), label, evidence);
+        self.ledger.append_intent(intent, label, evidence);
     }
 
     /// How many intents are waiting at the wall.
@@ -1431,5 +1499,188 @@ mod tests {
             populated(0, vec![scale(1, "web"), scale(1, "web")]),
             Gate::new(),
         );
+    }
+
+    // Signed intents (FW-302).
+
+    fn bot_key() -> SigningKey {
+        SigningKey::from_seed(&[1; 32])
+    }
+
+    fn other_key() -> SigningKey {
+        SigningKey::from_seed(&[2; 32])
+    }
+
+    fn keyring() -> Keyring {
+        Keyring::new()
+            .with("bot", bot_key().verifying_key())
+            .with("other", other_key().verifying_key())
+    }
+
+    fn signed_plane() -> Floodwall {
+        plane().with_keyring(keyring())
+    }
+
+    #[test]
+    fn a_keyring_admits_signed_intents_and_the_ledger_proves_who_sent_them() {
+        let mut p = signed_plane();
+        assert!(p.keyring().is_some());
+        let intent = scale(1, "web").signed(&bot_key());
+        let digest = intent.digest();
+        p.submit(intent, 0).unwrap();
+        let report = p.tick(0);
+        assert_eq!(verdicts(&report), ["admit"]);
+        // The signature check shows in the breakdown, before the conflict
+        // check.
+        let names: Vec<&str> = report.decisions[0]
+            .breakdown
+            .iter()
+            .map(|(n, _)| n.as_str())
+            .collect();
+        assert_eq!(names[names.len() - 2..], [SIGNATURE_CHECK, CONFLICT_CHECK]);
+        p.complete(&IntentKey::new("bot", 1), Outcome::Succeeded, 1)
+            .unwrap();
+        // Both records carry the intent's digest and signature.
+        for r in p.ledger().records() {
+            assert_eq!(r.intent_digest, Some(digest));
+            assert!(r.signature.is_some());
+        }
+        assert_eq!(p.ledger().verify_signatures(&keyring()), Ok(2));
+    }
+
+    #[test]
+    fn a_keyring_refuses_unsigned_unknown_and_forged_intents() {
+        let mut p = signed_plane();
+        assert_eq!(p.submit(scale(1, "web"), 0), Err(Rejected::Unsigned));
+        let mut stranger = scale(2, "web");
+        stranger.agent = AgentId::new("stranger");
+        assert_eq!(
+            p.submit(stranger.signed(&bot_key()), 0),
+            Err(Rejected::UnknownAgent)
+        );
+        // Another agent signing in bot's name.
+        assert_eq!(
+            p.submit(scale(3, "web").signed(&other_key()), 0),
+            Err(Rejected::BadSignature)
+        );
+        // Changed after signing.
+        let mut tampered = scale(4, "web").signed(&bot_key());
+        tampered.priority = Priority::Pager;
+        assert_eq!(p.submit(tampered, 0), Err(Rejected::BadSignature));
+        // Nothing reached the queue or the ledger.
+        assert_eq!(p.pending(), 0);
+        assert!(p.ledger().is_empty());
+    }
+
+    #[test]
+    fn forgeries_are_refused_before_duplicates_and_rate_limits() {
+        let admission = Admission::new(16, RateLimit::new(1.0, 0.0));
+        let mut p = Floodwall::new(admission, Gate::new()).with_keyring(keyring());
+        p.submit(scale(1, "web").signed(&bot_key()), 0).unwrap();
+        // A forgery reusing a live key is refused as a forgery: it learns
+        // nothing about what is queued.
+        assert_eq!(
+            p.submit(scale(1, "web").signed(&other_key()), 0),
+            Err(Rejected::BadSignature)
+        );
+        // Forgeries in other's name do not spend other's only token.
+        let mut forged = scale(1, "web");
+        forged.agent = AgentId::new("other");
+        for _ in 0..3 {
+            assert_eq!(
+                p.submit(forged.clone().signed(&bot_key()), 0),
+                Err(Rejected::BadSignature)
+            );
+        }
+        assert_eq!(p.submit(forged.signed(&other_key()), 0), Ok(()));
+    }
+
+    #[test]
+    fn an_adopted_unsigned_intent_is_rejected_when_ruled_on() {
+        // Intents queued in Admission directly never went through submit.
+        let admission = populated(0, vec![scale(1, "web"), scale(2, "api").signed(&bot_key())]);
+        let mut p = Floodwall::new(admission, Gate::new()).with_keyring(keyring());
+        let report = p.tick(0);
+        assert_eq!(verdicts(&report), ["reject", "admit"]);
+        let rejected = &report.decisions[0];
+        assert_eq!(rejected.verdict.reason(), Some("the intent is not signed"));
+        assert!(rejected
+            .breakdown
+            .iter()
+            .any(|(n, v)| n == SIGNATURE_CHECK && matches!(v, Verdict::Reject(_))));
+        // The rejection is recorded, unsigned; the admitted one is signed.
+        let records = p.ledger().records();
+        assert_eq!(records[0].verdict, "reject");
+        assert_eq!(records[0].signature, None);
+        assert!(records[1].signature.is_some());
+        // An auditor sees exactly which record has no proof of authorship.
+        assert_eq!(
+            p.ledger().verify_signatures(&keyring()).map_err(|e| e.seq),
+            Err(0)
+        );
+    }
+
+    #[test]
+    fn a_new_keyring_rechecks_what_is_already_queued() {
+        let mut p = signed_plane();
+        p.submit(scale(1, "web").signed(&bot_key()), 0).unwrap();
+        // Bot's key is rotated before the intent is ruled on.
+        let rotated = Keyring::new().with("bot", other_key().verifying_key());
+        let mut p = p.with_keyring(rotated);
+        let report = p.tick(0);
+        assert_eq!(verdicts(&report), ["reject"]);
+        assert_eq!(
+            report.decisions[0].verdict.reason(),
+            Some("the signature is not the agent's signature of this intent")
+        );
+    }
+
+    #[test]
+    fn signed_intents_keep_their_proof_through_hold_and_release() {
+        let mut p = signed_plane();
+        let key = off_list(1).key();
+        p.submit(off_list(1).signed(&bot_key()), 0).unwrap();
+        assert_eq!(verdicts(&p.tick(0)), ["defer"]);
+        p.release(&key, "alice", 1).unwrap();
+        assert_eq!(verdicts(&p.tick(1)), ["admit"]);
+        p.complete(&key, Outcome::Succeeded, 2).unwrap();
+        p.submit(off_list(2).signed(&bot_key()), 3).unwrap();
+        p.tick(3);
+        p.expire(&off_list(2).key(), "alice", 4).unwrap();
+        let labels: Vec<&str> = p
+            .ledger()
+            .records()
+            .iter()
+            .map(|r| r.verdict.as_str())
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "defer",
+                "released",
+                "admit",
+                "succeeded",
+                "defer",
+                "expired"
+            ]
+        );
+        assert_eq!(p.ledger().verify_signatures(&keyring()), Ok(6));
+        assert!(p.ledger().verify());
+    }
+
+    #[test]
+    fn without_a_keyring_signatures_are_optional_and_unchecked() {
+        let mut p = plane();
+        assert!(p.keyring().is_none());
+        p.submit(scale(1, "web"), 0).unwrap();
+        // Even a signature from an unknown key is just carried along.
+        p.submit(scale(2, "api").signed(&other_key()), 0).unwrap();
+        let report = p.tick(0);
+        assert_eq!(verdicts(&report), ["admit", "admit"]);
+        assert!(report.decisions[0]
+            .breakdown
+            .iter()
+            .all(|(n, _)| n != SIGNATURE_CHECK));
+        assert!(p.ledger().records()[1].signature.is_some());
     }
 }

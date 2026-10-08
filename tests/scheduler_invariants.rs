@@ -14,10 +14,12 @@ use std::sync::Arc;
 
 use floodwall::intent::{Action, AgentId, BlastRadius, Intent, IntentKey, Priority};
 use floodwall::policy::{BlastNeedsPriority, NoGlobalDestroy, Policy, ResourceAllowlist};
+use floodwall::sha256::sha256;
 use floodwall::{
     Admission, Floodwall, Gate, HoldConfig, HoldError, Outcome, RateLimit, Rejected,
     SchedulerConfig, Verdict, CONFLICT_CHECK,
 };
+use floodwall::{Keyring, SigningKey};
 
 /// A tiny xorshift PRNG, so every seed is reproducible.
 struct Rng(u64);
@@ -214,6 +216,8 @@ struct Coverage {
     adopted: usize,
     /// Resubmissions refused because the key was an adopted intent's.
     adopted_duplicates_refused: usize,
+    forgeries_refused: usize,
+    signed_records: usize,
 }
 
 /// Nothing behind a blocked intent in the queue took what it waits for.
@@ -272,7 +276,30 @@ fn check_hold(plane: &Floodwall, model: &Model, seed: u64) {
     assert!(since.is_sorted(), "seed {seed}: hold is not oldest first");
 }
 
+/// Each agent's signing key, derived from its name.
+fn key_of(agent: &str) -> SigningKey {
+    SigningKey::from_seed(&sha256(format!("invariants/{agent}").as_bytes()))
+}
+
 fn run(seed: u64, cov: &mut Coverage) {
+    run_with(seed, cov, false);
+}
+
+/// One flood. With `signed`, every agent signs its intents, now and then
+/// one is forged in another agent's name, and the plane has a keyring.
+fn run_with(seed: u64, cov: &mut Coverage, signed: bool) {
+    let keys: HashMap<&str, SigningKey> = AGENTS.iter().map(|a| (*a, key_of(a))).collect();
+    let keyring = AGENTS.iter().fold(Keyring::new(), |ring, a| {
+        ring.with(*a, keys[a].verifying_key())
+    });
+    let sign = |intent: Intent| {
+        if signed {
+            let key = &keys[intent.agent.as_str()];
+            intent.signed(key)
+        } else {
+            intent
+        }
+    };
     let mut rng = Rng::new(seed);
     let ban = Arc::new(AtomicBool::new(false));
     let gate = Gate::new()
@@ -297,7 +324,7 @@ fn run(seed: u64, cov: &mut Coverage) {
             let agent = *rng.pick(&AGENTS);
             let id = next_id.entry(agent).or_insert(0);
             *id += 1;
-            let intent = random_intent(&mut rng, agent, *id);
+            let intent = sign(random_intent(&mut rng, agent, *id));
             let key = intent.key();
             if admission.submit(intent, start).is_ok() {
                 cov.adopted += 1;
@@ -312,6 +339,9 @@ fn run(seed: u64, cov: &mut Coverage) {
     let mut plane = Floodwall::new(admission, gate)
         .with_scheduler(random_config(&mut rng))
         .with_hold(hold);
+    if signed {
+        plane = plane.with_keyring(keyring.clone());
+    }
     let window = plane.scheduler_config().conflict_window();
     assert_eq!(
         plane.clock(),
@@ -338,9 +368,26 @@ fn run(seed: u64, cov: &mut Coverage) {
                     *id += 1;
                     *id
                 };
-                let intent = random_intent(&mut rng, agent, id);
+                let mut intent = sign(random_intent(&mut rng, agent, id));
+                let forged = signed && rng.chance(10);
+                if forged {
+                    // Signed in another agent's name.
+                    let other = AGENTS
+                        [(AGENTS.iter().position(|a| *a == agent).unwrap() + 1) % AGENTS.len()];
+                    intent = intent.signed(&keys[other]);
+                }
                 let key = intent.key();
-                match plane.submit(intent, now) {
+                let result = plane.submit(intent, now);
+                if forged {
+                    assert_eq!(
+                        result,
+                        Err(Rejected::BadSignature),
+                        "seed {seed}: forgery accepted"
+                    );
+                    cov.forgeries_refused += 1;
+                    continue;
+                }
+                match result {
                     Ok(()) => assert!(model.live.insert(key), "seed {seed}: accepted a live key"),
                     Err(Rejected::Duplicate) => {
                         cov.duplicates_refused += 1;
@@ -350,6 +397,11 @@ fn run(seed: u64, cov: &mut Coverage) {
                         assert!(model.live.contains(&key), "seed {seed}: false duplicate")
                     }
                     Err(Rejected::RateLimited | Rejected::Backpressure) => {}
+                    Err(
+                        e @ (Rejected::Unsigned | Rejected::UnknownAgent | Rejected::BadSignature),
+                    ) => {
+                        panic!("seed {seed}: genuine intent refused with {e:?}")
+                    }
                 }
             }
         }
@@ -521,6 +573,14 @@ fn run(seed: u64, cov: &mut Coverage) {
         "seed {seed}: one record per decision, completion, release and expiry"
     );
     assert!(plane.ledger().verify(), "seed {seed}: ledger chain broken");
+    if signed {
+        assert_eq!(
+            plane.ledger().verify_signatures(&keyring),
+            Ok(plane.ledger().len()),
+            "seed {seed}: a record without proof of authorship"
+        );
+        cov.signed_records += plane.ledger().len();
+    }
 }
 
 #[test]
@@ -548,4 +608,21 @@ fn scheduler_invariants_hold_across_random_floods() {
     assert!(cov.expired_by_human > 100, "{cov:?}");
     assert!(cov.adopted > 1_000, "{cov:?}");
     assert!(cov.adopted_duplicates_refused > 10, "{cov:?}");
+}
+
+#[test]
+fn signed_floods_keep_every_record_attributable() {
+    // Ed25519 is slow in debug builds, so a handful of seeds; each still
+    // exercises adoption, scheduling, holds, releases and expiries.
+    let mut cov = Coverage::default();
+    for seed in 1000..1006 {
+        run_with(seed, &mut cov, true);
+    }
+    eprintln!("{cov:#?}");
+    assert!(cov.forgeries_refused > 10, "{cov:?}");
+    assert!(cov.signed_records > 500, "{cov:?}");
+    assert!(
+        cov.released > 0 && cov.expired_by_tick + cov.expired_by_human > 0,
+        "{cov:?}"
+    );
 }

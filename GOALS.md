@@ -77,7 +77,10 @@ independent model).
 - **FW-301** ✓ Replace FNV-1a with a SHA-256 chain (reuse the from-scratch
   primitive from `shunya`). The record encoding is documented in
   `src/ledger.rs` and pinned by digests from an independent implementation.
-- **FW-302** Per-record signatures keyed by agent identity.
+- **FW-302** ✓ Per-record signatures keyed by agent identity. Agents sign
+  intents with Ed25519 (with SHA-512, from scratch); the plane checks them
+  against a keyring at submit, and every record carries the signature so
+  `Ledger::verify_signatures` proves authorship with public keys alone.
 - **FW-303** Periodic Merkle checkpoints so a verifier can audit a suffix
   without replaying from genesis.
 - **FW-304** *(new)* A plain export format (JSON Lines) so auditors can
