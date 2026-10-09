@@ -62,6 +62,10 @@ GitHub Pages) describes the scheduler and hold queue.
 
 ## Known gaps
 
+- A retired agent key (kept for audits after a rotation) verifies any of
+  its agent's records, because records do not yet carry the time they were
+  written (FW-404).
+
 - An intent the caller never completes holds its place forever (FW-906).
 - The `by` in a release or expiry is free text, not a verified identity
   (FW-907).

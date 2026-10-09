@@ -9,7 +9,7 @@ use std::path::Path;
 
 use floodwall::export::keys_json;
 use floodwall::intent::{Action, AgentId, BlastRadius, Intent, Priority};
-use floodwall::{Evidence, Keyring, Ledger, SigningKey};
+use floodwall::{Keyring, Ledger, SigningKey};
 
 #[test]
 fn write_an_edge_case_export_for_the_independent_verifier() {
@@ -63,11 +63,8 @@ fn write_an_edge_case_export_for_the_independent_verifier() {
         ledger.append_intent(
             &intent,
             ["admit", "defer", "reject"][who],
-            Evidence {
-                action: actions[who].to_string(),
-                reason: reasons[who].clone(),
-                policies,
-            },
+            reasons[who].clone(),
+            policies,
         );
     }
     ledger.checkpoint(); // size 8

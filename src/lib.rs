@@ -85,6 +85,7 @@ pub use hold::{Held, HoldConfig, HoldError};
 pub use intent::{Intent, IntentKey};
 pub use keyring::{AuthError, Keyring};
 pub use ledger::{Digest, Evidence, Ledger, Record, SignatureError, SignatureProblem};
+pub use merkle::FrontierFull;
 pub use policy::{Policy, Verdict};
 pub use scheduler::{InFlight, SchedulerConfig};
 
@@ -572,12 +573,7 @@ impl Floodwall {
         reason: Option<String>,
         policies: Vec<(String, String)>,
     ) {
-        let evidence = Evidence {
-            action: intent.action.to_string(),
-            reason,
-            policies,
-        };
-        self.ledger.append_intent(intent, label, evidence);
+        self.ledger.append_intent(intent, label, reason, policies);
     }
 
     /// How many intents are waiting at the wall.
@@ -1569,8 +1565,8 @@ mod tests {
             .unwrap();
         // Both records carry the intent's digest and signature.
         for r in p.ledger().records() {
-            assert_eq!(r.intent_digest, Some(digest));
-            assert!(r.signature.is_some());
+            assert_eq!(r.intent_digest(), Some(digest));
+            assert!(r.signature().is_some());
         }
         assert_eq!(p.ledger().verify_signatures(&keyring()), Ok(2));
     }
@@ -1638,8 +1634,8 @@ mod tests {
         // The rejection is recorded, unsigned; the admitted one is signed.
         let records = p.ledger().records();
         assert_eq!(records[0].verdict, "reject");
-        assert_eq!(records[0].signature, None);
-        assert!(records[1].signature.is_some());
+        assert_eq!(records[0].signature(), None);
+        assert!(records[1].signature().is_some());
         // An auditor sees exactly which record has no proof of authorship.
         assert_eq!(
             p.ledger().verify_signatures(&keyring()).map_err(|e| e.seq),
@@ -1708,7 +1704,7 @@ mod tests {
             .breakdown
             .iter()
             .all(|(n, _)| n != SIGNATURE_CHECK));
-        assert!(p.ledger().records()[1].signature.is_some());
+        assert!(p.ledger().records()[1].signature().is_some());
     }
 
     // Checkpoints (FW-303).

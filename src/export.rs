@@ -101,9 +101,9 @@ fn record_line(r: &Record) -> String {
         ",\"seq\":{},\"intent_id\":\"{}\",\"intent_digest\":",
         r.seq, r.intent_id
     ));
-    json_opt_str(&mut s, r.intent_digest.map(|d| d.to_string()).as_deref());
+    json_opt_str(&mut s, r.intent_digest().map(|d| d.to_string()).as_deref());
     s.push_str(",\"signature\":");
-    json_opt_str(&mut s, r.signature.map(|sig| sig.to_string()).as_deref());
+    json_opt_str(&mut s, r.signature().map(|sig| sig.to_string()).as_deref());
     s.push_str(",\"agent\":");
     json_str(&mut s, &r.agent);
     s.push_str(",\"verdict\":");
@@ -235,7 +235,6 @@ mod tests {
     use super::*;
     use crate::ed25519::SigningKey;
     use crate::intent::{Action, AgentId, BlastRadius, Intent, Priority};
-    use crate::ledger::Evidence;
 
     fn export(l: &Ledger) -> String {
         let mut out = Vec::new();
@@ -277,14 +276,11 @@ mod tests {
         l.append_intent(
             &intent,
             "defer",
-            Evidence {
-                action: "apply web".into(),
-                reason: Some("line one\nline two".into()),
-                policies: vec![
-                    ("allow".into(), "admit".into()),
-                    ("conflict-window".into(), "defer".into()),
-                ],
-            },
+            Some("line one\nline two".into()),
+            vec![
+                ("allow".into(), "admit".into()),
+                ("conflict-window".into(), "defer".into()),
+            ],
         );
         l.append(3, "ops", "released");
         let text = export(&l);
