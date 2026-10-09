@@ -289,6 +289,15 @@ mod tests {
             ..first.clone()
         };
         assert!(l.records_after(&beyond).is_none());
+        // Sizes that do not fit a 32-bit usize must not wrap round to a
+        // small offset there (review on PR #14).
+        for size in [1u64 << 32, (1u64 << 32) + 5, u64::MAX] {
+            let huge = Checkpoint {
+                size,
+                ..first.clone()
+            };
+            assert!(l.records_after(&huge).is_none(), "size {size}");
+        }
     }
 
     #[test]

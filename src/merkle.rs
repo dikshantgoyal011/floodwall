@@ -123,6 +123,19 @@ pub fn verify_inclusion(
     s == 0 && r == *root
 }
 
+/// [`Frontier::try_push`] on a frontier that already holds `u64::MAX`
+/// leaves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrontierFull;
+
+impl std::fmt::Display for FrontierFull {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the Merkle frontier already holds u64::MAX leaves")
+    }
+}
+
+impl std::error::Error for FrontierFull {}
+
 /// The roots of the perfect subtrees covering a tree's leaves, largest
 /// (leftmost) first: one per set bit of the size. Enough to append leaves
 /// and compute the root without the leaves themselves.
@@ -155,7 +168,22 @@ impl Frontier {
     }
 
     /// Append a leaf holding `data`.
+    ///
+    /// # Panics
+    ///
+    /// Panics, leaving the frontier unchanged, if it already holds
+    /// `u64::MAX` leaves; [`Frontier::try_push`] returns an error instead.
     pub fn push(&mut self, data: &Digest) {
+        if let Err(e) = self.try_push(data) {
+            panic!("{e}");
+        }
+    }
+
+    /// Append a leaf holding `data`, or return [`FrontierFull`] without
+    /// changing anything if the frontier already holds `u64::MAX` leaves (as
+    /// one rebuilt with [`Frontier::from_parts`] can).
+    pub fn try_push(&mut self, data: &Digest) -> Result<(), FrontierFull> {
+        let next = self.size.checked_add(1).ok_or(FrontierFull)?;
         let mut node = leaf_hash(data.as_bytes());
         // Each trailing one bit of the old size is a subtree of the same
         // height as the new node: merge with it.
@@ -166,7 +194,8 @@ impl Frontier {
             s >>= 1;
         }
         self.peaks.push(node);
-        self.size += 1;
+        self.size = next;
+        Ok(())
     }
 
     /// The Merkle root, the same as [`root`] over all the leaves.
@@ -282,6 +311,31 @@ mod tests {
 
     fn nu_of(n: usize) -> u64 {
         n as u64
+    }
+
+    #[test]
+    fn a_full_frontier_refuses_to_grow_and_stays_unchanged() {
+        // Review repro on PR #14: a frontier imported at u64::MAX leaves.
+        let mut full = Frontier::from_parts(u64::MAX, vec![Digest([1; 32]); 64]).unwrap();
+        let before = full.clone();
+        assert_eq!(full.try_push(&Digest([2; 32])), Err(FrontierFull));
+        assert_eq!(full, before, "a refused append changes nothing");
+        assert_eq!(
+            FrontierFull.to_string(),
+            "the Merkle frontier already holds u64::MAX leaves"
+        );
+        // One below full still takes the last leaf: no merges, 64 peaks.
+        let mut almost = Frontier::from_parts(u64::MAX - 1, vec![Digest([1; 32]); 63]).unwrap();
+        assert_eq!(almost.try_push(&Digest([2; 32])), Ok(()));
+        assert_eq!((almost.size(), almost.peaks().len()), (u64::MAX, 64));
+        assert_eq!(almost.try_push(&Digest([3; 32])), Err(FrontierFull));
+    }
+
+    #[test]
+    #[should_panic(expected = "already holds u64::MAX leaves")]
+    fn push_panics_on_a_full_frontier() {
+        let mut full = Frontier::from_parts(u64::MAX, vec![Digest([1; 32]); 64]).unwrap();
+        full.push(&Digest([2; 32]));
     }
 
     #[test]

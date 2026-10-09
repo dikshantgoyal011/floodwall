@@ -417,7 +417,7 @@ impl Ledger {
     /// [`audit_suffix`](crate::checkpoint::audit_suffix). `None` if the
     /// checkpoint covers more records than the ledger has.
     pub fn records_after(&self, checkpoint: &Checkpoint) -> Option<&[Record]> {
-        self.records.get(checkpoint.size as usize..)
+        self.records.get(usize::try_from(checkpoint.size).ok()?..)
     }
 
     /// An inclusion proof that record `seq` is in the Merkle tree over the

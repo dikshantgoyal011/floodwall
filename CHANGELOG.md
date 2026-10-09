@@ -68,7 +68,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Merkle checkpoints (FW-303). `floodwall::merkle` builds RFC 6962
   Merkle trees over record digests (`root`, `inclusion_proof`,
-  `verify_inclusion`, and an incremental `Frontier`).
+  `verify_inclusion`, and an incremental `Frontier`, whose `try_push`
+  refuses to grow past `u64::MAX` leaves with `FrontierFull`, leaving it
+  unchanged).
   `Ledger::with_checkpoints(n)` cuts a `Checkpoint` (size, chain head,
   Merkle root, frontier) every `n` records, `Ledger::with_signer(key)`
   signs each with the plane's key, and `Ledger::checkpoint` /

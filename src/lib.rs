@@ -84,6 +84,7 @@ pub use hold::{Held, HoldConfig, HoldError};
 pub use intent::{Intent, IntentKey};
 pub use keyring::{AuthError, Keyring};
 pub use ledger::{Digest, Evidence, Ledger, Record, SignatureError, SignatureProblem};
+pub use merkle::FrontierFull;
 pub use policy::{Policy, Verdict};
 pub use scheduler::{InFlight, SchedulerConfig};
 
