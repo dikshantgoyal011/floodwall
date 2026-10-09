@@ -9,7 +9,10 @@
 //! Verification follows RFC 8032 §5.1.7 in its cofactorless form, the same
 //! check OpenSSL makes: `S` must be below `L`, the public key must decode
 //! to a curve point, and `[S]B - [k]A` must encode to exactly the `R` in the
-//! signature. Results match Node's `crypto` (OpenSSL) on the RFC 8032
+//! signature. On top of that, a public key must not be a weak, small-order
+//! point: for those, one fixed signature verifies every message, so
+//! [`VerifyingKey::from_bytes`] refuses them and they can never be enrolled
+//! to sign intents. No properly generated key is ever small-order. Results match Node's `crypto` (OpenSSL) on the RFC 8032
 //! vectors, 64 random keys and messages, and malformed inputs, in the tests
 //! at the bottom of this file.
 //!
@@ -272,6 +275,15 @@ impl Point {
         }
     }
 
+    /// Whether `[8]self` is the identity, i.e. the point has order 1, 2,
+    /// 4 or 8.
+    fn has_small_order(self) -> bool {
+        let p2 = self.add(self);
+        let p4 = p2.add(p2);
+        let p8 = p4.add(p4);
+        p8.x.is_zero() && p8.y.equals(p8.z)
+    }
+
     fn neg(self) -> Point {
         Point {
             x: self.x.neg(),
@@ -516,22 +528,37 @@ pub struct VerifyingKey {
     point: Point,
 }
 
-/// A public key's 32 bytes do not encode a curve point.
+/// A public key's 32 bytes do not encode a curve point, or encode a weak
+/// one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct InvalidKey;
+pub enum InvalidKey {
+    /// The bytes are not the encoding of a point on the curve.
+    NotAPoint,
+    /// The point has small order (it is one of the eight points of order
+    /// dividing 8). A fixed signature verifies every message for such a
+    /// key, so it is refused.
+    Weak,
+}
 
 impl fmt::Display for InvalidKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("the bytes are not a valid Ed25519 public key")
+        f.write_str(match self {
+            InvalidKey::NotAPoint => "the bytes are not a valid Ed25519 public key",
+            InvalidKey::Weak => "the public key is a weak, small-order point",
+        })
     }
 }
 
 impl std::error::Error for InvalidKey {}
 
 impl VerifyingKey {
-    /// Decode a public key, refusing bytes that are not a curve point.
+    /// Decode a public key, refusing bytes that are not a curve point and
+    /// weak, small-order points.
     pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, InvalidKey> {
-        let point = Point::from_bytes(bytes).ok_or(InvalidKey)?;
+        let point = Point::from_bytes(bytes).ok_or(InvalidKey::NotAPoint)?;
+        if point.has_small_order() {
+            return Err(InvalidKey::Weak);
+        }
         Ok(Self {
             bytes: *bytes,
             point,
@@ -861,19 +888,84 @@ mod tests {
         let mut p = [0xff; 32];
         p[0] = 0xed;
         p[31] = 0x7f;
-        assert_eq!(VerifyingKey::from_bytes(&p).err(), Some(InvalidKey));
+        let not_a_point = Some(InvalidKey::NotAPoint);
+        assert_eq!(VerifyingKey::from_bytes(&p).err(), not_a_point);
         // y = 2 has no x on the curve.
         let mut two = [0u8; 32];
         two[0] = 2;
-        assert_eq!(VerifyingKey::from_bytes(&two).err(), Some(InvalidKey));
+        assert_eq!(VerifyingKey::from_bytes(&two).err(), not_a_point);
         // y = 1 with the sign bit set is "negative zero".
         let mut neg_zero = [0u8; 32];
         neg_zero[0] = 1;
         neg_zero[31] = 0x80;
-        assert_eq!(VerifyingKey::from_bytes(&neg_zero).err(), Some(InvalidKey));
+        assert_eq!(VerifyingKey::from_bytes(&neg_zero).err(), not_a_point);
         assert_eq!(
-            InvalidKey.to_string(),
+            InvalidKey::NotAPoint.to_string(),
             "the bytes are not a valid Ed25519 public key"
+        );
+        assert_eq!(
+            InvalidKey::Weak.to_string(),
+            "the public key is a weak, small-order point"
+        );
+    }
+
+    /// The canonical encodings of the eight points of order dividing 8.
+    const SMALL_ORDER: [&str; 8] = [
+        "0100000000000000000000000000000000000000000000000000000000000000",
+        "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "0000000000000000000000000000000000000000000000000000000000000080",
+        "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+        "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+        "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+        "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+    ];
+
+    #[test]
+    fn weak_small_order_keys_are_refused() {
+        for enc in SMALL_ORDER {
+            let bytes = unhex(enc);
+            // Each really is a curve point of small order...
+            let point = Point::from_bytes(&bytes).expect(enc);
+            assert!(point.has_small_order(), "{enc}");
+            // ...and is refused as a key.
+            assert_eq!(
+                VerifyingKey::from_bytes(&bytes).err(),
+                Some(InvalidKey::Weak),
+                "{enc}"
+            );
+        }
+        // No generated key is weak, and B itself is not.
+        assert!(!base_point().has_small_order());
+        for seed in 0..32u8 {
+            let key = SigningKey::from_seed(&[seed; 32]).verifying_key();
+            assert!(VerifyingKey::from_bytes(key.as_bytes()).is_ok());
+        }
+    }
+
+    #[test]
+    fn why_weak_keys_must_be_refused() {
+        // Review repro on PR #13: with the identity point as the public key,
+        // the signature R = identity, S = 0 satisfies [S]B = R + [k]A for
+        // every message. Built directly here, bypassing from_bytes, it
+        // "verifies" anything.
+        let identity = unhex(SMALL_ORDER[0]);
+        let weak = VerifyingKey {
+            bytes: identity,
+            point: Point::from_bytes(&identity).unwrap(),
+        };
+        let mut forged = [0u8; 64];
+        forged[0] = 1;
+        let forged = Signature(forged);
+        assert!(weak.verify(b"destroy everything", &forged));
+        assert!(weak.verify(b"anything at all", &forged));
+        // A real key rejects the same signature, and the weak key cannot be
+        // created through the public API.
+        let real = SigningKey::from_seed(&[5; 32]).verifying_key();
+        assert!(!real.verify(b"destroy everything", &forged));
+        assert_eq!(
+            VerifyingKey::from_bytes(&identity).err(),
+            Some(InvalidKey::Weak)
         );
     }
 

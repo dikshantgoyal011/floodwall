@@ -22,10 +22,11 @@
 //!    all zeros, for the first record);
 //! 3. `seq` as a `u64`;
 //! 4. `intent_id` as a `u64`;
-//! 5. `intent_digest`: the byte `0` if there is none, or the byte `1`
-//!    followed by the 32-byte digest;
-//! 6. `signature`: the byte `0` if there is none, or the byte `1` followed
-//!    by the 64-byte signature;
+//! 5. the intent's [digest](crate::Intent::digest): the byte `0` if the
+//!    record is not about an intent, or the byte `1` followed by the 32-byte
+//!    digest of [`Record::intent`];
+//! 6. the intent's signature: the byte `0` if there is none, or the byte `1`
+//!    followed by the 64-byte signature;
 //! 7. the fields `agent`, `verdict` and `evidence.action`, as UTF-8;
 //! 8. `evidence.reason`: the byte `0` if there is none, or the byte `1`
 //!    followed by the reason as a field;
@@ -34,12 +35,18 @@
 //!
 //! # Signatures
 //!
-//! A record about an intent carries the intent's [digest](crate::Intent::digest)
-//! and, if the agent signed the intent, the agent's Ed25519 signature of that
-//! digest. Both are covered by the record's own digest. With the agents'
-//! public keys, [`Ledger::verify_signatures`] proves each agent authored the
-//! exact intents the ledger attributes to it: changing what an agent asked
-//! for, or claiming it asked for something it never signed, fails.
+//! A record about an intent stores the intent itself ([`Record::intent`]),
+//! as the agent signed it. The record's `intent_id`, `agent` and
+//! `evidence.action` are taken from that intent, never supplied separately,
+//! and [`Ledger::verify`] rejects a record whose fields disagree with its
+//! intent. The intent's digest and signature are covered by the record's own
+//! digest.
+//!
+//! With the agents' public keys, [`Ledger::verify_signatures`] recomputes
+//! each stored intent's digest and checks the agent's signature of it. So a
+//! verified record proves its agent asked for exactly the change the record
+//! shows: changing what an agent asked for, attributing it to another agent,
+//! or claiming it asked for something it never signed, all fail.
 
 use std::fmt;
 
@@ -105,11 +112,10 @@ pub struct Record {
     pub seq: u64,
     /// The intent that was ruled on.
     pub intent_id: u64,
-    /// The intent's [digest](crate::Intent::digest), for a record written
-    /// about an intent.
-    pub intent_digest: Option<Digest>,
-    /// The agent's signature of `intent_digest`, if the intent was signed.
-    pub signature: Option<Signature>,
+    /// The intent itself, as its agent submitted (and signed) it, for a
+    /// record written about an intent. When present, `intent_id`, `agent`
+    /// and `evidence.action` must agree with it.
+    pub intent: Option<Intent>,
     /// The agent that authored the intent.
     pub agent: String,
     /// What happened to the intent. A decision is `admit`, `defer` (held)
@@ -133,14 +139,14 @@ impl Record {
         h.update(self.prev.as_bytes());
         h.update(&self.seq.to_le_bytes());
         h.update(&self.intent_id.to_le_bytes());
-        match &self.intent_digest {
+        match self.intent_digest() {
             None => h.update(&[0]),
             Some(d) => {
                 h.update(&[1]);
                 h.update(d.as_bytes());
             }
         }
-        match &self.signature {
+        match self.signature() {
             None => h.update(&[0]),
             Some(sig) => {
                 h.update(&[1]);
@@ -164,6 +170,27 @@ impl Record {
         }
         Digest(h.finalize())
     }
+
+    /// The digest of the record's intent, if it is about one.
+    pub fn intent_digest(&self) -> Option<Digest> {
+        self.intent.as_ref().map(Intent::digest)
+    }
+
+    /// The agent's signature of the record's intent, if it signed it.
+    pub fn signature(&self) -> Option<Signature> {
+        self.intent.as_ref().and_then(|i| i.signature)
+    }
+
+    /// Whether the record's `intent_id`, `agent` and `evidence.action` are
+    /// the ones its intent gives. Always true for a record not about an
+    /// intent.
+    pub fn agrees_with_intent(&self) -> bool {
+        self.intent.as_ref().is_none_or(|i| {
+            self.intent_id == i.id
+                && self.agent == i.agent.as_str()
+                && self.evidence.action == i.action.to_string()
+        })
+    }
 }
 
 /// What is wrong with a record's signature.
@@ -175,6 +202,8 @@ pub enum SignatureProblem {
     Unsigned,
     /// The keyring has no key for the record's agent.
     UnknownAgent,
+    /// The record's intent id, agent or action disagrees with its intent.
+    Mismatch,
     /// The signature is not the agent's signature of the record's intent.
     BadSignature,
 }
@@ -195,6 +224,7 @@ impl fmt::Display for SignatureError {
             SignatureProblem::NoIntent => "is not about a signed intent",
             SignatureProblem::Unsigned => "is about an unsigned intent",
             SignatureProblem::UnknownAgent => "names an agent with no key on the keyring",
+            SignatureProblem::Mismatch => "shows a different request from the intent it holds",
             SignatureProblem::BadSignature => {
                 "carries a signature that does not match its agent and intent"
             }
@@ -231,14 +261,26 @@ impl Ledger {
         self.append_with(intent_id, agent, verdict, Evidence::default())
     }
 
-    /// Append what happened to `intent`, with its evidence, and return the
-    /// record just written. The record carries the intent's digest and
-    /// signature, so its authorship can be checked later.
-    pub fn append_intent(&mut self, intent: &Intent, verdict: &str, evidence: Evidence) -> &Record {
+    /// Append what happened to `intent`, with the verdict's reason and each
+    /// policy's verdict, and return the record just written. The record
+    /// stores the intent, signature and all, and takes its intent id, agent
+    /// and action summary from it, so what the record shows is exactly what
+    /// the agent asked for.
+    pub fn append_intent(
+        &mut self,
+        intent: &Intent,
+        verdict: &str,
+        reason: Option<String>,
+        policies: Vec<(String, String)>,
+    ) -> &Record {
+        let evidence = Evidence {
+            action: intent.action.to_string(),
+            reason,
+            policies,
+        };
         self.push(
             intent.id,
-            Some(intent.digest()),
-            intent.signature,
+            Some(intent.clone()),
             intent.agent.as_str(),
             verdict,
             evidence,
@@ -255,14 +297,13 @@ impl Ledger {
         verdict: &str,
         evidence: Evidence,
     ) -> &Record {
-        self.push(intent_id, None, None, agent, verdict, evidence)
+        self.push(intent_id, None, agent, verdict, evidence)
     }
 
     fn push(
         &mut self,
         intent_id: u64,
-        intent_digest: Option<Digest>,
-        signature: Option<Signature>,
+        intent: Option<Intent>,
         agent: &str,
         verdict: &str,
         evidence: Evidence,
@@ -270,8 +311,7 @@ impl Ledger {
         let mut record = Record {
             seq: self.records.len() as u64,
             intent_id,
-            intent_digest,
-            signature,
+            intent,
             agent: agent.to_string(),
             verdict: verdict.to_string(),
             evidence,
@@ -286,12 +326,16 @@ impl Ledger {
 
     /// Recompute the chain from genesis and confirm nothing has been
     /// altered: every record is at its position, links to the one before
-    /// it, and has the digest its contents give, and the last digest is the
-    /// head.
+    /// it, agrees with the intent it holds, and has the digest its contents
+    /// give, and the last digest is the head.
     pub fn verify(&self) -> bool {
         let mut prev = Digest::GENESIS;
         for (i, r) in self.records.iter().enumerate() {
-            if r.seq != i as u64 || r.prev != prev || r.compute_digest() != r.digest {
+            if r.seq != i as u64
+                || r.prev != prev
+                || !r.agrees_with_intent()
+                || r.compute_digest() != r.digest
+            {
                 return false;
             }
             prev = r.digest;
@@ -299,23 +343,30 @@ impl Ledger {
         prev == self.head
     }
 
-    /// Check every record's signature against the agents' public keys: each
-    /// record must carry an intent digest and a signature of it by the key
-    /// `keyring` holds for the record's agent. Returns how many records were
-    /// checked, or the first record that fails. This proves authorship; use
-    /// [`Ledger::verify`] for the chain itself.
+    /// Check every record's authorship against the agents' public keys:
+    /// each record must hold an intent, agree with it (the same intent id,
+    /// agent and action), and carry a signature of that intent's recomputed
+    /// digest by one of the keys `keyring` holds for the agent, current or
+    /// retired (see [`Keyring::with_retired`]). Returns how many records
+    /// were checked, or the first record that fails. This proves
+    /// authorship; use [`Ledger::verify`] for the chain itself.
     pub fn verify_signatures(&self, keyring: &Keyring) -> Result<usize, SignatureError> {
         for r in &self.records {
             let fail = |problem| SignatureError {
                 seq: r.seq,
                 problem,
             };
-            let digest = r.intent_digest.ok_or(fail(SignatureProblem::NoIntent))?;
-            let sig = r.signature.ok_or(fail(SignatureProblem::Unsigned))?;
-            let key = keyring
-                .get(&crate::intent::AgentId::new(r.agent.as_str()))
-                .ok_or(fail(SignatureProblem::UnknownAgent))?;
-            if !key.verify(digest.as_bytes(), &sig) {
+            let intent = r.intent.as_ref().ok_or(fail(SignatureProblem::NoIntent))?;
+            let sig = intent.signature.ok_or(fail(SignatureProblem::Unsigned))?;
+            if !r.agrees_with_intent() {
+                return Err(fail(SignatureProblem::Mismatch));
+            }
+            let mut keys = keyring.audit_keys(&intent.agent).peekable();
+            if keys.peek().is_none() {
+                return Err(fail(SignatureProblem::UnknownAgent));
+            }
+            let digest = intent.digest();
+            if !keys.any(|key| key.verify(digest.as_bytes(), &sig)) {
                 return Err(fail(SignatureProblem::BadSignature));
             }
         }
@@ -479,22 +530,10 @@ mod tests {
             },
         );
         // A record about a signed intent, and one about an unsigned intent.
-        l.append_intent(
-            &signed_intent(),
-            "admit",
-            Evidence {
-                action: "apply web".into(),
-                ..Evidence::default()
-            },
-        );
-        l.append_intent(
-            &unsigned_intent(),
-            "succeeded",
-            Evidence {
-                action: "scale web to 3".into(),
-                ..Evidence::default()
-            },
-        );
+        // Their action summaries ("apply web", "scale web to 3") come from
+        // the intents themselves.
+        l.append_intent(&signed_intent(), "admit", None, vec![]);
+        l.append_intent(&unsigned_intent(), "succeeded", None, vec![]);
         l
     }
 
@@ -548,15 +587,19 @@ mod tests {
         assert_eq!(l.head().to_string(), want[5]);
         assert!(l.verify());
         let signed = &l.records()[4];
+        assert_eq!(signed.intent.as_ref(), Some(&signed_intent()));
+        assert_eq!(signed.evidence.action, "apply web");
         assert_eq!(
-            signed.intent_digest.unwrap().to_string(),
+            signed.intent_digest().unwrap().to_string(),
             "556b2fe4c7dd796f82d2ab8021bd546abc6e29ab4303f192ea18d4333fc36b9d"
         );
         assert_eq!(
-            signed.signature.unwrap().to_string(),
+            signed.signature().unwrap().to_string(),
             "2379a35c279cd1952912648e0d19951e1630a9c7e2e5edb3a5c25f0223c9edd5dd317afbd86ffa02710c89164276dcd65aea84a351c7c39d9bfba89b4a532105"
         );
-        assert_eq!(l.records()[5].signature, None);
+        assert_eq!(l.records()[5].signature(), None);
+        assert_eq!(l.records()[5].evidence.action, "scale web to 3");
+        assert_eq!(l.records()[0].intent_digest(), None);
     }
 
     #[test]
@@ -577,13 +620,14 @@ mod tests {
             .with("deployer", deployer_key().verifying_key())
             .with("autoscaler", autoscaler.verifying_key());
         let mut l = Ledger::new();
-        l.append_intent(&signed_intent(), "admit", Evidence::default());
+        l.append_intent(&signed_intent(), "admit", None, vec![]);
         l.append_intent(
             &unsigned_intent().signed(&autoscaler),
             "defer",
-            Evidence::default(),
+            Some("resource 'web' is busy".into()),
+            vec![("conflict-window".into(), "defer".into())],
         );
-        l.append_intent(&signed_intent(), "succeeded", Evidence::default());
+        l.append_intent(&signed_intent(), "succeeded", None, vec![]);
         (l, keyring)
     }
 
@@ -606,8 +650,8 @@ mod tests {
         let reference = reference_ledger();
         assert_eq!(problem(&reference), Err((0, SignatureProblem::NoIntent)));
         let mut l = Ledger::new();
-        l.append_intent(&signed_intent(), "admit", Evidence::default());
-        l.append_intent(&unsigned_intent(), "admit", Evidence::default());
+        l.append_intent(&signed_intent(), "admit", None, vec![]);
+        l.append_intent(&unsigned_intent(), "admit", None, vec![]);
         assert_eq!(problem(&l), Err((1, SignatureProblem::Unsigned)));
 
         // An agent the auditor has no key for.
@@ -615,7 +659,7 @@ mod tests {
         let stranger = SigningKey::from_seed(&[9; 32]);
         let mut intent = unsigned_intent();
         intent.agent = AgentId::new("stranger");
-        l.append_intent(&intent.signed(&stranger), "admit", Evidence::default());
+        l.append_intent(&intent.signed(&stranger), "admit", None, vec![]);
         assert_eq!(problem(&l), Err((0, SignatureProblem::UnknownAgent)));
     }
 
@@ -642,9 +686,13 @@ mod tests {
                 .map_err(|e| (e.seq, e.problem))
         };
 
-        // Claim the deployer asked for something else.
+        // Claim the deployer asked for something else: same summary, but a
+        // different manifest than the one it signed.
         let mut records = l.records.clone();
-        records[0].intent_digest = Some(unsigned_intent().digest());
+        records[0].intent.as_mut().unwrap().action = Action::Apply {
+            resource: "web".into(),
+            manifest: "v3".into(),
+        };
         assert_eq!(
             bad(&rechain(records)),
             Err((0, SignatureProblem::BadSignature))
@@ -652,15 +700,18 @@ mod tests {
 
         // Move the deployer's signature onto the autoscaler's record.
         let mut records = l.records.clone();
-        records[1].signature = records[0].signature;
+        let deployer_sig = records[0].signature();
+        records[1].intent.as_mut().unwrap().signature = deployer_sig;
         assert_eq!(
             bad(&rechain(records)),
             Err((1, SignatureProblem::BadSignature))
         );
 
-        // Attribute the deployer's signed intent to the autoscaler.
+        // Attribute the deployer's signed intent to the autoscaler, record
+        // and intent alike.
         let mut records = l.records.clone();
         records[2].agent = "autoscaler".into();
+        records[2].intent.as_mut().unwrap().agent = AgentId::new("autoscaler");
         assert_eq!(
             bad(&rechain(records)),
             Err((2, SignatureProblem::BadSignature))
@@ -669,12 +720,92 @@ mod tests {
         // And without rewriting the chain, any edit to the signature breaks
         // the chain itself.
         let mut records = l.records.clone();
-        records[0].signature.as_mut().unwrap().0[0] ^= 1;
+        records[0]
+            .intent
+            .as_mut()
+            .unwrap()
+            .signature
+            .as_mut()
+            .unwrap()
+            .0[0] ^= 1;
         let forged = Ledger {
             records,
             head: l.head,
         };
         assert!(!forged.verify());
+    }
+
+    #[test]
+    fn a_record_cannot_show_a_different_request_from_its_intent() {
+        // Review repro on PR #13: a valid signed Scale(web, 5) recorded as
+        // "destroy database". append_intent no longer takes a separate
+        // action, so the record shows what was signed...
+        let key = deployer_key();
+        let scale = Intent::new(
+            1,
+            AgentId::new("deployer"),
+            Action::Scale {
+                resource: "web".into(),
+                replicas: 5,
+            },
+            Priority::Normal,
+            BlastRadius::Service,
+        )
+        .signed(&key);
+        let mut l = Ledger::new();
+        let r = l.append_intent(&scale, "admit", None, vec![]);
+        assert_eq!(r.evidence.action, "scale web to 5");
+        assert_eq!((r.intent_id, r.agent.as_str()), (1, "deployer"));
+        let keyring = Keyring::new().with("deployer", key.verifying_key());
+        assert_eq!(l.verify_signatures(&keyring), Ok(1));
+
+        // ...and a record rewritten to disagree with its intent, even with a
+        // consistent chain and the original valid signature, fails both
+        // checks: the action, the agent or the intent id.
+        let edits: [fn(&mut Record); 3] = [
+            |r| r.evidence.action = "destroy database".into(),
+            |r| r.agent = "autoscaler".into(),
+            |r| r.intent_id = 2,
+        ];
+        for edit in edits {
+            let mut records = l.records.clone();
+            edit(&mut records[0]);
+            records[0].digest = records[0].compute_digest();
+            let forged = Ledger {
+                head: records[0].digest,
+                records,
+            };
+            assert!(!forged.records[0].agrees_with_intent());
+            assert!(!forged.verify());
+            assert_eq!(
+                forged.verify_signatures(&keyring).map_err(|e| e.problem),
+                Err(SignatureProblem::Mismatch)
+            );
+        }
+    }
+
+    #[test]
+    fn retired_keys_verify_earlier_records_but_never_new_ones() {
+        let old = deployer_key();
+        let new = SigningKey::from_seed(&[70; 32]);
+        let mut l = Ledger::new();
+        l.append_intent(&signed_intent(), "admit", None, vec![]);
+        let mut later = signed_intent();
+        later.id = 8;
+        l.append_intent(&later.clone().signed(&new), "admit", None, vec![]);
+
+        // After rotating to the new key, the first record needs the old one.
+        let rotated = Keyring::new().with("deployer", new.verifying_key());
+        assert_eq!(
+            l.verify_signatures(&rotated)
+                .map_err(|e| (e.seq, e.problem)),
+            Err((0, SignatureProblem::BadSignature))
+        );
+        let with_history = rotated.with_retired("deployer", old.verifying_key());
+        assert_eq!(l.verify_signatures(&with_history), Ok(2));
+        // A retired key does not authenticate new submissions.
+        assert!(with_history.authenticate(&signed_intent()).is_err());
+        assert!(with_history.authenticate(&later.signed(&new)).is_ok());
     }
 
     #[test]
@@ -686,6 +817,14 @@ mod tests {
         assert_eq!(
             e.to_string(),
             "record 4 carries a signature that does not match its agent and intent"
+        );
+        let e = SignatureError {
+            seq: 2,
+            problem: SignatureProblem::Mismatch,
+        };
+        assert_eq!(
+            e.to_string(),
+            "record 2 shows a different request from the intent it holds"
         );
     }
 

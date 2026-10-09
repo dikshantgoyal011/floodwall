@@ -7,6 +7,22 @@
 //! check every signature in a ledger
 //! ([`Ledger::verify_signatures`](crate::Ledger::verify_signatures)). A
 //! keyring holds only public keys, so it can be shared freely.
+//!
+//! # Rotating keys
+//!
+//! An agent has one current key, which alone can sign new intents. To
+//! rotate, [`insert`](Keyring::insert) the new key and keep the old one with
+//! [`with_retired`](Keyring::with_retired): a retired key never
+//! authenticates a submission, but still verifies the agent's earlier
+//! records in an audit, so a whole-history audit spans the rotation. Leave a
+//! compromised key out altogether. Records do not yet carry the time they
+//! were written (FW-404), so an audit cannot tell whether a record predates
+//! a rotation: a retired key verifies any of its agent's records.
+//!
+//! Keys are checked when they are created
+//! ([`VerifyingKey::from_bytes`]): weak, small-order keys, for which one
+//! fixed signature verifies every message, are refused, so they can never
+//! be enrolled.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -37,10 +53,11 @@ impl fmt::Display for AuthError {
 
 impl std::error::Error for AuthError {}
 
-/// Each agent's public key.
+/// Each agent's current public key, and any retired ones.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Keyring {
     keys: BTreeMap<AgentId, VerifyingKey>,
+    retired: BTreeMap<AgentId, Vec<VerifyingKey>>,
 }
 
 impl Keyring {
@@ -49,33 +66,55 @@ impl Keyring {
         Self::default()
     }
 
-    /// Add or replace `agent`'s key. Builder style.
+    /// Add or replace `agent`'s current key. Builder style.
     pub fn with(mut self, agent: impl Into<String>, key: VerifyingKey) -> Self {
         self.insert(agent, key);
         self
     }
 
-    /// Add or replace `agent`'s key, returning the key it replaced.
+    /// Add or replace `agent`'s current key, returning the key it replaced.
+    /// The replaced key is dropped; keep it with
+    /// [`Keyring::with_retired`] if earlier records still need it.
     pub fn insert(&mut self, agent: impl Into<String>, key: VerifyingKey) -> Option<VerifyingKey> {
         self.keys.insert(AgentId::new(agent), key)
     }
 
-    /// `agent`'s key, if it has one.
+    /// Keep `key` as one of `agent`'s retired keys: accepted when auditing
+    /// the agent's records, never for a new submission. Builder style.
+    pub fn with_retired(mut self, agent: impl Into<String>, key: VerifyingKey) -> Self {
+        let keys = self.retired.entry(AgentId::new(agent)).or_default();
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+        self
+    }
+
+    /// `agent`'s current key, if it has one.
     pub fn get(&self, agent: &AgentId) -> Option<&VerifyingKey> {
         self.keys.get(agent)
     }
 
-    /// How many agents have keys.
+    /// Every key that may have signed `agent`'s records: the current one
+    /// first, then the retired ones in the order they were added.
+    pub fn audit_keys<'a>(&'a self, agent: &AgentId) -> impl Iterator<Item = &'a VerifyingKey> {
+        self.keys
+            .get(agent)
+            .into_iter()
+            .chain(self.retired.get(agent).into_iter().flatten())
+    }
+
+    /// How many agents have a current key.
     pub fn len(&self) -> usize {
         self.keys.len()
     }
 
-    /// Whether no agent has a key.
+    /// Whether no agent has a current key.
     pub fn is_empty(&self) -> bool {
         self.keys.is_empty()
     }
 
-    /// Check that `intent` is signed by its agent's key.
+    /// Check that `intent` is signed by its agent's current key. Retired keys
+    /// do not count here.
     pub fn authenticate(&self, intent: &Intent) -> Result<(), AuthError> {
         if intent.signature.is_none() {
             return Err(AuthError::Unsigned);
