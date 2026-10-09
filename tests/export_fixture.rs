@@ -2,7 +2,8 @@
 //! the independent verifier (`tools/verify-ledger.mjs`) to check in CI:
 //! the largest intent id, non-ASCII names, quotes, backslashes, newlines and
 //! control characters in text, empty and missing fields, signed intents and
-//! signed checkpoints, including one at size 0.
+//! signed checkpoints, including one at size 0, and an agent whose records
+//! were signed by a key it has since rotated away from.
 
 use std::fs;
 use std::path::Path;
@@ -18,12 +19,16 @@ fn write_an_edge_case_export_for_the_independent_verifier() {
     let keys: Vec<SigningKey> = (0..agent_names.len())
         .map(|i| SigningKey::from_seed(&[10 + i as u8; 32]))
         .collect();
+    // "bot" has rotated to a new key since signing: its records verify
+    // only with its retired key.
     let keyring = agent_names
         .iter()
         .zip(&keys)
         .fold(Keyring::new(), |ring, (name, key)| {
             ring.with(*name, key.verifying_key())
-        });
+        })
+        .with("bot", SigningKey::from_seed(&[99; 32]).verifying_key())
+        .with_retired("bot", keys[2].verifying_key());
 
     let mut ledger = Ledger::new().with_checkpoints(3).with_signer(plane.clone());
     ledger.checkpoint(); // size 0
@@ -92,5 +97,9 @@ fn write_an_edge_case_export_for_the_independent_verifier() {
 
     let text = String::from_utf8(whole).unwrap();
     assert!(text.contains("\"intent_id\":\"18446744073709551615\""));
+    assert!(keys_json(&keyring, None).contains(&format!(
+        "\"retired\":{{\"bot\":[\"{}\"]}}",
+        keys[2].verifying_key()
+    )));
     assert_eq!(text.lines().count(), 1 + 8 + 4); // header, records, checkpoints 0/3/6/8
 }

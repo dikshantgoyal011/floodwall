@@ -184,7 +184,7 @@ ok: 2043 records from genesis; 8 checkpoints; head 189f5d55…
 ok: 2043 agent signatures and every checkpoint signature verified
 ```
 
-[`tools/verify-ledger.mjs`](tools/verify-ledger.mjs) is an independent implementation using only Node's standard library. It recomputes every record digest, checks every link, Merkle root and frontier, and with the public keys checks every agent and checkpoint signature. A suffix export (`Ledger::export_jsonl_from(checkpoint)`) is checked from that checkpoint alone. CI runs it on every change.
+[`tools/verify-ledger.mjs`](tools/verify-ledger.mjs) is an independent implementation using only Node's standard library. It refuses anything not written exactly in the documented format, recomputes every record and intent digest, checks every link, Merkle root and frontier and that every record shows the intent it holds, and with the public keys (current and retired) checks every agent and checkpoint signature. A suffix export (`Ledger::export_jsonl_from(checkpoint)`) is checked from that checkpoint alone. CI runs it on every change.
 
 Writing your own policy is one trait method:
 

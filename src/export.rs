@@ -2,10 +2,11 @@
 //! own tooling.
 //!
 //! [`Ledger::export_jsonl`] writes [JSON Lines](https://jsonlines.org): one
-//! JSON object per line, UTF-8, `\n` line endings. Every object has a
-//! `"type"`. Digests, signatures and keys are lowercase hex. Numbers that
-//! can exceed 2^53 (and so are not exact in every JSON parser) are written
-//! as decimal strings; counts are plain numbers.
+//! JSON object per line, UTF-8, `\n` line endings, with exactly the keys
+//! shown below. Every object has a `"type"`. Digests, signatures and keys
+//! are lowercase hex. Integers that can exceed 2^53 (and so are not exact in
+//! every JSON parser) are written as decimal strings; counts and replica
+//! numbers are plain numbers.
 //!
 //! **Header**, always the first line:
 //!
@@ -18,15 +19,31 @@
 //! `from` is how many records precede the export: 0 for a whole ledger, or
 //! the size of the checkpoint a suffix export starts from.
 //!
-//! **Record**, one per ledger record, in order (fields as in
-//! [`Record`]; `intent_id` is a string):
+//! **Record**, one per ledger record, in order (fields as in [`Record`]):
 //!
 //! ```text
-//! {"type":"record","seq":0,"intent_id":"7","intent_digest":"<hex>"|null,
-//!  "signature":"<hex>"|null,"agent":"deployer","verdict":"admit",
+//! {"type":"record","seq":0,"intent_id":"7","agent":"deployer","verdict":"admit",
 //!  "action":"apply web","reason":"..."|null,"policies":[["name","label"],...],
-//!  "prev":"<hex>","digest":"<hex>"}
+//!  "intent":<intent>|null,"prev":"<hex>","digest":"<hex>"}
 //! ```
+//!
+//! `intent` is the intent the record is about, as its agent signed it:
+//!
+//! ```text
+//! {"id":"7","agent":"deployer",
+//!  "action":{"kind":"apply","resource":"web","manifest":"v2"}
+//!          |{"kind":"scale","resource":"web","replicas":5}
+//!          |{"kind":"destroy","resource":"web"},
+//!  "priority":"bulk"|"normal"|"urgent"|"pager",
+//!  "blast_radius":"cell"|"service"|"region"|"global",
+//!  "signature":"<hex>"|null}
+//! ```
+//!
+//! A record with an intent must agree with it: the same `intent_id` (its
+//! `id`) and `agent`, and an `action` that is its action's summary:
+//! `apply <resource>`, `scale <resource> to <replicas>` or
+//! `destroy <resource>`. The record digest covers the intent's digest and
+//! signature (see [`crate::ledger`]).
 //!
 //! **Checkpoint**, placed right after the record that completes it (a
 //! checkpoint of size 0 right after the header), fields as in
@@ -37,20 +54,23 @@
 //!  "frontier":["<hex>",...],"signature":"<hex>"|null}
 //! ```
 //!
-//! A suffix export ([`Ledger::export_jsonl_from`]) starts with the trusted
-//! checkpoint, then the records after it, so a verifier starts from that
-//! checkpoint's head and frontier instead of from genesis.
+//! Checkpoint sizes strictly increase through a file. A suffix export
+//! ([`Ledger::export_jsonl_from`]) starts with the trusted checkpoint, then
+//! the records after it, so a verifier starts from that checkpoint's head
+//! and frontier instead of from genesis.
 //!
 //! With the record, intent and checkpoint encodings documented in
 //! [`crate::ledger`], [`crate::Intent`] and [`Checkpoint::digest`], this is
 //! everything needed to recompute and check every digest, link, Merkle root
-//! and signature. `tools/verify-ledger.mjs` in the repository does so with
-//! nothing but Node's standard library.
+//! and signature, and that every record shows what its agent signed.
+//! `tools/verify-ledger.mjs` in the repository does so with nothing but
+//! Node's standard library.
 
 use std::io::{self, Write};
 
 use crate::checkpoint::Checkpoint;
 use crate::ed25519::VerifyingKey;
+use crate::intent::{Action, BlastRadius, Intent, Priority};
 use crate::keyring::Keyring;
 use crate::ledger::{Digest, Ledger, Record};
 use crate::merkle::Frontier;
@@ -95,16 +115,51 @@ fn header(from: u64) -> String {
     )
 }
 
-fn record_line(r: &Record) -> String {
-    let mut s = String::from("{\"type\":\"record\"");
+fn intent_json(s: &mut String, i: &Intent) {
+    s.push_str(&format!("{{\"id\":\"{}\",\"agent\":", i.id));
+    json_str(s, i.agent.as_str());
+    s.push_str(",\"action\":{\"kind\":");
+    match &i.action {
+        Action::Apply { resource, manifest } => {
+            s.push_str("\"apply\",\"resource\":");
+            json_str(s, resource);
+            s.push_str(",\"manifest\":");
+            json_str(s, manifest);
+        }
+        Action::Scale { resource, replicas } => {
+            s.push_str("\"scale\",\"resource\":");
+            json_str(s, resource);
+            s.push_str(&format!(",\"replicas\":{replicas}"));
+        }
+        Action::Destroy { resource } => {
+            s.push_str("\"destroy\",\"resource\":");
+            json_str(s, resource);
+        }
+    }
+    let priority = match i.priority {
+        Priority::Bulk => "bulk",
+        Priority::Normal => "normal",
+        Priority::Urgent => "urgent",
+        Priority::Pager => "pager",
+    };
+    let blast = match i.blast_radius {
+        BlastRadius::Cell => "cell",
+        BlastRadius::Service => "service",
+        BlastRadius::Region => "region",
+        BlastRadius::Global => "global",
+    };
     s.push_str(&format!(
-        ",\"seq\":{},\"intent_id\":\"{}\",\"intent_digest\":",
-        r.seq, r.intent_id
+        "}},\"priority\":\"{priority}\",\"blast_radius\":\"{blast}\",\"signature\":"
     ));
-    json_opt_str(&mut s, r.intent_digest().map(|d| d.to_string()).as_deref());
-    s.push_str(",\"signature\":");
-    json_opt_str(&mut s, r.signature().map(|sig| sig.to_string()).as_deref());
-    s.push_str(",\"agent\":");
+    json_opt_str(s, i.signature.map(|sig| sig.to_string()).as_deref());
+    s.push('}');
+}
+
+fn record_line(r: &Record) -> String {
+    let mut s = format!(
+        "{{\"type\":\"record\",\"seq\":{},\"intent_id\":\"{}\",\"agent\":",
+        r.seq, r.intent_id
+    );
     json_str(&mut s, &r.agent);
     s.push_str(",\"verdict\":");
     json_str(&mut s, &r.verdict);
@@ -123,8 +178,13 @@ fn record_line(r: &Record) -> String {
         json_str(&mut s, label);
         s.push(']');
     }
+    s.push_str("],\"intent\":");
+    match &r.intent {
+        Some(i) => intent_json(&mut s, i),
+        None => s.push_str("null"),
+    }
     s.push_str(&format!(
-        "],\"prev\":\"{}\",\"digest\":\"{}\"}}",
+        ",\"prev\":\"{}\",\"digest\":\"{}\"}}",
         r.prev, r.digest
     ));
     s
@@ -150,7 +210,7 @@ impl Ledger {
     /// that completes it.
     pub fn export_jsonl<W: Write>(&self, out: &mut W) -> io::Result<()> {
         writeln!(out, "{}", header(0))?;
-        self.write_from(0, out)
+        self.write_from(0, false, out)
     }
 
     /// Write what follows `from` as JSON Lines: a header, `from` itself,
@@ -169,21 +229,24 @@ impl Ledger {
         }
         writeln!(out, "{}", header(from.size))?;
         writeln!(out, "{}", checkpoint_line(from))?;
-        self.write_from(from.size, out)
+        self.write_from(from.size, true, out)
     }
 
-    /// Records from `start` on, with the stored checkpoints that fall after
-    /// `start` (or at it, for a whole-ledger export from 0).
-    fn write_from<W: Write>(&self, start: u64, out: &mut W) -> io::Result<()> {
+    /// Records from `start` on, with the stored checkpoints among them. A
+    /// checkpoint at `start` itself is written only when the export is not
+    /// already anchored there (a whole-ledger export's genesis checkpoint),
+    /// so no checkpoint is ever written twice.
+    fn write_from<W: Write>(&self, start: u64, anchored: bool, out: &mut W) -> io::Result<()> {
         let mut checkpoints = self
             .checkpoints()
             .iter()
-            .filter(|c| c.size > start || (start == 0 && c.size == 0))
+            .filter(|c| c.size > start || (!anchored && c.size == start))
             .peekable();
         while let Some(c) = checkpoints.next_if(|c| c.size == start) {
             writeln!(out, "{}", checkpoint_line(c))?;
         }
-        for r in &self.records()[start as usize..] {
+        let start = usize::try_from(start).map_err(|_| io::ErrorKind::InvalidInput)?;
+        for r in self.records().get(start..).unwrap_or_default() {
             writeln!(out, "{}", record_line(r))?;
             while let Some(c) = checkpoints.next_if(|c| c.size == r.seq + 1) {
                 writeln!(out, "{}", checkpoint_line(c))?;
@@ -194,7 +257,10 @@ impl Ledger {
 
     /// Whether `c` describes this ledger at `c.size` records.
     fn matches(&self, c: &Checkpoint) -> bool {
-        let Some(records) = self.records().get(..c.size as usize) else {
+        let Some(records) = usize::try_from(c.size)
+            .ok()
+            .and_then(|n| self.records().get(..n))
+        else {
             return false;
         };
         let head = records.last().map_or(Digest::GENESIS, |r| r.digest);
@@ -207,10 +273,12 @@ impl Ledger {
 }
 
 /// The public keys an auditor needs, as JSON: the plane's checkpoint key
-/// (or `null`) and each agent's key.
+/// (or `null`), each agent's current key, and any retired keys (see
+/// [`Keyring::with_retired`]).
 ///
 /// ```text
-/// {"plane":"<hex>"|null,"agents":{"deployer":"<hex>",...}}
+/// {"plane":"<hex>"|null,"agents":{"deployer":"<hex>",...},
+///  "retired":{"deployer":["<hex>",...],...}}
 /// ```
 ///
 /// Hand it to auditors separately from the export: keys taken from the
@@ -225,6 +293,15 @@ pub fn keys_json(keyring: &Keyring, plane: Option<&VerifyingKey>) -> String {
         }
         json_str(&mut s, agent.as_str());
         s.push_str(&format!(":\"{key}\""));
+    }
+    s.push_str("},\"retired\":{");
+    for (i, (agent, keys)) in keyring.retired().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        json_str(&mut s, agent.as_str());
+        let keys: Vec<String> = keys.iter().map(|k| format!("\"{k}\"")).collect();
+        s.push_str(&format!(":[{}]", keys.join(",")));
     }
     s.push_str("}}");
     s
@@ -290,22 +367,73 @@ mod tests {
             lines[1],
             format!(
                 "{{\"type\":\"record\",\"seq\":0,\"intent_id\":\"18446744073709551615\",\
-                 \"intent_digest\":\"{}\",\"signature\":\"{}\",\"agent\":\"depl\\\"oyer\",\
-                 \"verdict\":\"defer\",\"action\":\"apply web\",\
+                 \"agent\":\"depl\\\"oyer\",\"verdict\":\"defer\",\"action\":\"apply web\",\
                  \"reason\":\"line one\\nline two\",\
                  \"policies\":[[\"allow\",\"admit\"],[\"conflict-window\",\"defer\"]],\
+                 \"intent\":{{\"id\":\"18446744073709551615\",\"agent\":\"depl\\\"oyer\",\
+                 \"action\":{{\"kind\":\"apply\",\"resource\":\"web\",\"manifest\":\"v2\"}},\
+                 \"priority\":\"urgent\",\"blast_radius\":\"service\",\"signature\":\"{}\"}},\
                  \"prev\":\"{}\",\"digest\":\"{}\"}}",
-                intent.digest(),
                 intent.signature.unwrap(),
                 Digest::GENESIS,
                 r.digest
             )
         );
         // Absent values are null, an empty policy list is [].
-        assert!(lines[2].contains("\"intent_digest\":null,\"signature\":null"));
-        assert!(lines[2].contains("\"reason\":null,\"policies\":[]"));
+        assert!(lines[2].contains("\"reason\":null,\"policies\":[],\"intent\":null,"));
         assert!(text.ends_with('\n'));
         assert!(!text.contains('\r'));
+    }
+
+    #[test]
+    fn an_intent_is_written_as_its_agent_signed_it() {
+        let line = |action, priority, blast_radius, key: Option<&SigningKey>| {
+            let mut intent = Intent::new(7, AgentId::new("bot"), action, priority, blast_radius);
+            if let Some(key) = key {
+                intent = intent.signed(key);
+            }
+            let mut s = String::new();
+            intent_json(&mut s, &intent);
+            s
+        };
+        assert_eq!(
+            line(
+                Action::Scale {
+                    resource: "api".into(),
+                    replicas: u32::MAX
+                },
+                Priority::Bulk,
+                BlastRadius::Cell,
+                None
+            ),
+            "{\"id\":\"7\",\"agent\":\"bot\",\
+             \"action\":{\"kind\":\"scale\",\"resource\":\"api\",\"replicas\":4294967295},\
+             \"priority\":\"bulk\",\"blast_radius\":\"cell\",\"signature\":null}"
+        );
+        assert_eq!(
+            line(
+                Action::Destroy {
+                    resource: "d\"b".into()
+                },
+                Priority::Pager,
+                BlastRadius::Global,
+                None
+            ),
+            "{\"id\":\"7\",\"agent\":\"bot\",\
+             \"action\":{\"kind\":\"destroy\",\"resource\":\"d\\\"b\"},\
+             \"priority\":\"pager\",\"blast_radius\":\"global\",\"signature\":null}"
+        );
+        let key = SigningKey::from_seed(&[4; 32]);
+        let signed = line(
+            Action::Destroy {
+                resource: "db".into(),
+            },
+            Priority::Normal,
+            BlastRadius::Region,
+            Some(&key),
+        );
+        assert!(signed.contains("\"priority\":\"normal\",\"blast_radius\":\"region\""));
+        assert!(!signed.contains("\"signature\":null"));
     }
 
     #[test]
@@ -373,6 +501,45 @@ mod tests {
     }
 
     #[test]
+    fn a_suffix_export_from_genesis_writes_genesis_once() {
+        let mut l = Ledger::new().with_checkpoints(2);
+        l.checkpoint(); // size 0, stored
+        for i in 0..3 {
+            l.append(i, "bot", "admit");
+        }
+        let genesis = l.checkpoints()[0].clone();
+        assert_eq!(genesis.size, 0);
+        let mut out = Vec::new();
+        l.export_jsonl_from(&genesis, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert_eq!(
+            types(&text),
+            [
+                "header",
+                "checkpoint",
+                "record",
+                "record",
+                "checkpoint",
+                "record"
+            ]
+        );
+        assert_eq!(text.matches("\"size\":0,").count(), 1);
+        // The whole-ledger export still carries the stored genesis checkpoint.
+        assert_eq!(export(&l).matches("\"size\":0,").count(), 1);
+        // With nothing after it, the suffix is just the header and anchor.
+        let mut empty = Ledger::new();
+        empty.checkpoint();
+        let mut out = Vec::new();
+        empty
+            .export_jsonl_from(&empty.checkpoints()[0].clone(), &mut out)
+            .unwrap();
+        assert_eq!(
+            types(&String::from_utf8(out).unwrap()),
+            ["header", "checkpoint"]
+        );
+    }
+
+    #[test]
     fn a_suffix_export_refuses_a_checkpoint_from_elsewhere() {
         let mut l = Ledger::new().with_checkpoints(2);
         for i in 0..4 {
@@ -412,11 +579,21 @@ mod tests {
         let ring = Keyring::new().with("b-agent", b).with("a\"agent", a);
         assert_eq!(
             keys_json(&ring, Some(&plane)),
-            format!("{{\"plane\":\"{plane}\",\"agents\":{{\"a\\\"agent\":\"{a}\",\"b-agent\":\"{b}\"}}}}")
+            format!(
+                "{{\"plane\":\"{plane}\",\"agents\":{{\"a\\\"agent\":\"{a}\",\"b-agent\":\"{b}\"}},\
+                 \"retired\":{{}}}}"
+            )
         );
         assert_eq!(
             keys_json(&Keyring::new(), None),
-            "{\"plane\":null,\"agents\":{}}"
+            "{\"plane\":null,\"agents\":{},\"retired\":{}}"
         );
+        // Retired keys are listed so an audit spans a rotation.
+        let rotated = ring
+            .with_retired("b-agent", a)
+            .with_retired("b-agent", plane);
+        assert!(keys_json(&rotated, None).ends_with(&format!(
+            "\"retired\":{{\"b-agent\":[\"{a}\",\"{plane}\"]}}}}"
+        )));
     }
 }

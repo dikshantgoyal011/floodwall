@@ -24,13 +24,14 @@ a trusted checkpoint without replaying from genesis, or prove a single
 record with a logarithmic inclusion proof. The whole ledger, or the part
 after a checkpoint, exports as JSON Lines, and an independent verifier
 using only Node's standard library (`tools/verify-ledger.mjs`) checks every
-digest, link, Merkle root and signature in CI.
+digest, link, Merkle root and signature, and that every record shows the
+intent its agent signed, in CI.
 
 Still zero dependencies (SHA-256, SHA-512 and Ed25519 are from scratch)
-and pinned to Rust 1.95. 165 unit tests, 9 doctests (including the README
+and pinned to Rust 1.95. 173 unit tests, 9 doctests (including the README
 examples), a randomized invariant test (300 seeded floods plus 6 signed
 ones, each ending in checkpoint audits), an edge-case export fixture, and
-8 tamper tests of the independent verifier; fmt + clippy (`-D warnings`)
+16 tamper tests of the independent verifier; fmt + clippy (`-D warnings`)
 clean.
 
 The floodwall.ai site (React + Vite in `site/`, built into `docs/` for

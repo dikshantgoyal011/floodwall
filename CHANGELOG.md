@@ -71,12 +71,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `Ledger::export_jsonl_from(checkpoint)` writes only what follows a
   trusted checkpoint, and refuses a checkpoint that does not match the
   ledger. The format is documented in `floodwall::export` (u64 values
-  that can exceed 2^53, like `intent_id`, are decimal strings).
-  `export::keys_json` writes the public keys an auditor needs, and
-  `Keyring::iter` lists them. The demo takes `--export DIR`.
-  `tools/verify-ledger.mjs` is an independent verifier using only Node's
-  standard library; CI runs it on the demo's export and on an edge-case
-  fixture, plus tamper tests.
+  that can exceed 2^53, like `intent_id`, are decimal strings). Each
+  record carries the intent it is about, as its agent signed it, so an
+  auditor can recompute the intent's digest and check that the record
+  shows that request. Checkpoint sizes strictly increase: a suffix export
+  from a size-0 checkpoint writes it once. `export::keys_json` writes the
+  public keys an auditor needs, retired ones included, and
+  `Keyring::iter` / `Keyring::retired` list them. The demo takes
+  `--export DIR`. `tools/verify-ledger.mjs` is an independent verifier
+  using only Node's standard library. It refuses anything that is not
+  exactly the documented format (unknown or missing fields, other types,
+  number or string spellings, duplicate keys, invalid UTF-8), a suffix
+  export that ends before its starting checkpoint, a repeated checkpoint,
+  and a keys file that is given but is not a valid keys object or holds a
+  key floodwall would refuse (a weak one, say); only leaving the keys
+  file out means checking hashes alone. CI runs it on the demo's export
+  and on an edge-case fixture (including an agent that rotated its key),
+  plus tamper tests.
 - Merkle checkpoints (FW-303). `floodwall::merkle` builds RFC 6962
   Merkle trees over record digests (`root`, `inclusion_proof`,
   `verify_inclusion`, and an incremental `Frontier`, whose `try_push`
