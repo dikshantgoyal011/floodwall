@@ -110,7 +110,10 @@ independent model).
 
 ## v0.5 - policy as code
 
-- **FW-501** Declarative policy format so rules are data, not Rust.
+- **FW-501** ✓ Declarative policy format so rules are data, not Rust.
+  `floodwall::rules`: a small rules language (`reject`/`defer` "reason"
+  `when` condition), type-checked when read, and `Gate::with_rules`;
+  `policies/standard.rules` writes the built-in policies in it.
 - **FW-502** A worked OPA/Rego-style example evaluated at the gate.
 - **FW-503** Policy bundles versioned and recorded in the ledger alongside
   verdicts.

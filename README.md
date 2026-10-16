@@ -239,6 +239,38 @@ impl Policy for FreezeWindow {
 }
 ```
 
+Or write policies as data, in a small rules language, and load them at the gate without touching Rust:
+
+```rust
+use floodwall::{Admission, Floodwall, Gate, RateLimit, Verdict};
+use floodwall::intent::{Action, AgentId, BlastRadius, Intent, Priority};
+
+let rules = r#"
+format 1
+
+policy "freeze-billing" {
+  reject "billing is frozen until the audit closes"
+    when resource matches "billing*" and kind != scale
+  defer "{agent} may only scale billing with a human's say-so"
+    when resource matches "billing*" and agent != "autoscaler"
+}
+"#;
+let gate = Gate::new().with_rules(rules).unwrap();
+let mut plane = Floodwall::new(Admission::new(64, RateLimit::new(8.0, 1.0)), gate);
+let intent = Intent::new(
+    1,
+    AgentId::new("deployer"),
+    Action::Apply { resource: "billing-eu".into(), manifest: "v2".into() },
+    Priority::Normal,
+    BlastRadius::Service,
+);
+plane.submit(intent, 0).unwrap();
+let report = plane.tick(0);
+assert_eq!(report.decisions[0].verdict, Verdict::Reject("billing is frozen until the audit closes".into()));
+```
+
+Rules test an intent's agent, resource, manifest, kind, replicas, priority and blast radius, with comparisons, lists, `*` patterns, `not`, `and` and `or`; a file that mistypes a field or a value is refused with its line and column. [`policies/standard.rules`](policies/standard.rules) writes the built-in policies this way, and the tests check it rules exactly as they do. The format is documented in [`src/rules.rs`](src/rules.rs).
+
 ## Demo
 
 ```text
@@ -292,7 +324,7 @@ Five agents (including a `chaos-monkey`) fling 4000 changes at the wall. Admissi
 | 0.2 | Scheduler: wide-blast serialization, narrow work in parallel by resource, per-resource in-flight limits, conflict detection, hold queue with human release and expiry | **done** |
 | 0.3 | Cryptographic ledger: SHA-256 chain, Ed25519-signed records, signed Merkle checkpoints, JSON Lines export with an independent verifier | **done** |
 | 0.4 | Persistence + replay: a durable ledger on disk, then rebuilding plane state from it | in progress |
-| 0.5 | Policy-as-code: declarative rules + a worked OPA-style example          |        |
+| 0.5 | Policy-as-code: declarative rules + a worked OPA-style example          | in progress |
 
 See [GOALS.md](GOALS.md) for the full roadmap and [STATUS.md](STATUS.md) for current state.
 

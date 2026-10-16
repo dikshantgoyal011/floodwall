@@ -38,7 +38,7 @@ of its own, checks it from genesis, and discards only a last line a crash
 left unfinished; any other bad line is refused and the file left alone.
 
 Still zero dependencies (SHA-256, SHA-512, Ed25519 and the JSON reader are
-from scratch) and pinned to Rust 1.95. 200 unit tests, 11 doctests
+from scratch) and pinned to Rust 1.95. 209 unit tests, 12 doctests
 (including the README examples), a randomized invariant test (300 seeded
 floods plus 6 signed ones, each ending in checkpoint audits), an edge-case
 export fixture that is also kept on disk, and 17 tamper tests of the
@@ -49,6 +49,9 @@ GitHub Pages) describes the scheduler and hold queue.
 
 ## Recently shipped
 
+- **FW-501** - policies as data: a small, type-checked rules language
+  (`floodwall::rules`, `Gate::with_rules`), in which
+  `policies/standard.rules` writes the built-in policies.
 - **FW-401** - a durable, append-only ledger on disk: `Ledger::create` and
   `Ledger::open`, a file that is the ledger's own JSON Lines export,
   every decision synced before it is reported, a lock against a second
