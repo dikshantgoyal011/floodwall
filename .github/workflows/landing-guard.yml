@@ -1,0 +1,31 @@
+name: landing guard
+
+# The public landing page stays as users see it today. A pull request that
+# changes its sources (the list is in tools/site-guard.mjs) fails here until
+# a maintainer adds the landing-change-approved label, once the change has
+# been signed off. Kept out of ci.yml so that adding or removing a label
+# re-runs only this check.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  landing-sources:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The PR's base and head, to diff from their merge base.
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: landing sources unchanged, or approved
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: node tools/site-guard.mjs landing --base "$BASE_SHA" --head "$HEAD_SHA"

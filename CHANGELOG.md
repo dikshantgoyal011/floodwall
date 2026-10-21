@@ -63,6 +63,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   conflicts against an independent model, that every live intent is in
   exactly one place, that a released intent is never deferred again,
   duplicate detection, ledger completeness, and that everything drains.
+- `tools/site-guard.mjs`, so the public landing page stays as it is and
+  the console stays out of search. A pull request that changes a landing
+  page source fails the `landing guard` workflow until a maintainer adds
+  the `landing-change-approved` label. `npm run check` now also checks
+  the built site: no noindex tag on the landing page and nothing of the
+  console's loaded from it, a static robots noindex tag on every console
+  page, and no console URL in the sitemap.
 
 ### Changed
 

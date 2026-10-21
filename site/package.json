@@ -7,8 +7,9 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run test && npm run build",
-    "test": "node --test crate-stats.test.mjs"
+    "check": "npm run typecheck && npm run test && npm run build && npm run guard",
+    "guard": "node ../tools/site-guard.mjs built",
+    "test": "node --test crate-stats.test.mjs ../tools/site-guard.test.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.1.1",
