@@ -7,6 +7,9 @@ import { readCrateStats } from "./crate-stats.mjs";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   publicDir: "public",
+  resolve: {
+    alias: { "@": path.resolve(__dirname, "src") },
+  },
   define: {
     // Throws, failing the build, if Cargo.toml cannot be parsed.
     __CRATE_STATS__: JSON.stringify(readCrateStats(path.resolve(__dirname, ".."))),

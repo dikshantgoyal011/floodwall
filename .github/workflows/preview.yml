@@ -1,0 +1,66 @@
+name: preview
+
+# Builds the site from the `preview` branch and publishes it to GitHub
+# Pages at preview.floodwall.ai. The live site (floodwall.ai) is served from
+# main's docs/ elsewhere and is not touched by this workflow.
+
+on:
+  push:
+    branches: [preview]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-preview
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: install
+        run: npm --prefix site ci
+      - name: check
+        run: npm --prefix site run typecheck && npm --prefix site run test
+      # Build outside docs/ so the committed live build is never involved.
+      - name: build
+        run: npm --prefix site run build -- --outDir ../preview-dist
+      # Keep the preview out of search engines: every page carries a
+      # noindex tag. robots.txt still allows crawling on purpose: a crawler
+      # blocked by robots.txt never sees the tag and can index the bare URL.
+      - name: mark as preview
+        run: |
+          d=preview-dist
+          rm -f "$d/CNAME" "$d/sitemap.xml"
+          printf 'User-agent: *\nAllow: /\n' > "$d/robots.txt"
+          sed -i 's#<head>#<head>\n    <meta name="robots" content="noindex, nofollow" />#' "$d/index.html"
+          grep -q 'name="robots" content="noindex, nofollow"' "$d/index.html"
+          # Client-side routes (the console) load from the SPA fallback.
+          cp "$d/index.html" "$d/404.html"
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: preview-dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

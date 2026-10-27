@@ -1,0 +1,330 @@
+/* The site's one stylesheet: Tailwind, the design tokens, and the few
+ * global rules no single element owns. Everything else is utilities in the
+ * markup. */
+
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* Build-time helpers, not markup: keep their words out of the class scan. */
+@source not "../crate-stats.mjs";
+@source not "../crate-stats.test.mjs";
+/* Browser hooks and helpers, no markup: words like "resize" would emit stray utilities. */
+@source not "./hooks";
+@source not "./helpers";
+/* The console's <table> markup would otherwise emit a stray .table utility. */
+@source not inline("table");
+
+/* ------------------------------------------------------------ Variants */
+
+/* Hover as plain :hover, touch screens included, as the site has always had it. */
+@custom-variant hover (&:hover);
+
+/* The site is laid out desktop-first: each variant applies at its width and
+ * below. They are declared widest first so a narrower one wins. */
+@custom-variant tablet (@media (max-width: 980px));
+@custom-variant console-narrow (@media (max-width: 860px));
+@custom-variant mobile (@media (max-width: 700px));
+@custom-variant tiny (@media (max-width: 360px));
+
+/* -------------------------------------------------------------- Tokens */
+
+@theme {
+  --color-paper: #f7fbff;
+  --color-ink: #080b0d;
+  --color-ink-soft: #4e5961;
+  --color-muted: #667078;
+  --color-quiet: #6f6f6f;
+  --color-line: rgba(8, 11, 13, 0.12);
+  --color-bay-deep: #2f6e89;
+  --color-bridge: #e86d4e;
+  --color-signal: #a8d884;
+  --color-gold: #e0a93b;
+  /* One tint scale for interactive surfaces on light backgrounds. */
+  --color-tint-hover: rgba(8, 11, 13, 0.05);
+  --color-tint-active: rgba(8, 11, 13, 0.08);
+  /* Text and rules on the dark Gate and Ledger panels. */
+  --color-panel-text: rgba(255, 255, 255, 0.76);
+  --color-panel-dim: rgba(255, 255, 255, 0.64);
+  --color-panel-line: rgba(255, 255, 255, 0.12);
+  /* Gate verdicts. */
+  --color-admit: var(--color-signal);
+  --color-defer: #e0c36c;
+  --color-reject: #ff8b72;
+  /* The console's surfaces and status tones. */
+  --color-surface: #fff;
+  --color-subtle: #f2f6f9;
+  --color-good: #2f7a3e;
+  --color-good-soft: #e6f4e3;
+  --color-warn: #8a5a0b;
+  --color-warn-soft: #fbf0d9;
+  --color-bad: #b23c22;
+  --color-bad-soft: #fbe6df;
+  --color-info: var(--color-bay-deep);
+  --color-info-soft: #e1f1f8;
+
+  --font-display: "Instrument Serif", Georgia, serif;
+  --font-body: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  /* The site's type scale. Sizes set font-size only: line height is set
+   * where it is meant to change. */
+  --text-*: initial;
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-base: 16px;
+  --text-lg: 18px;
+  --text-title: 20px;
+  --text-xl: 24px;
+  --text-2xl: 30px;
+  --text-display-md: clamp(32px, 3.6vw, 48px);
+  --text-display-lg: clamp(40px, 5.5vw, 72px);
+  --text-display-xl: clamp(52px, 7vw, 112px);
+  --leading-body: 1.65;
+
+  /* The site is sized in px, so spacing and radii stay put when a visitor
+   * changes the browser's default font size; Tailwind's own are in rem. */
+  --spacing: 4px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+
+  --container-content: 1160px;
+  --spacing-gutter: clamp(16px, 4vw, 32px);
+  --spacing-header: 72px;
+  --spacing-section: clamp(56px, 7vw, 88px);
+  --spacing-card: 28px;
+  --spacing-card-lg: 40px;
+
+  --radius-control: 10px;
+  --radius-row: 16px;
+  --radius-card: 24px;
+  --radius-pill: 999px;
+  --shadow-card: 0 24px 80px rgba(47, 110, 137, 0.12);
+
+  /* Layered backgrounds, used with bg-(image:--image-*) or [background:...]. */
+  --image-hero:
+    linear-gradient(180deg, rgba(247, 251, 255, 0.96), rgba(247, 251, 255, 0.62) 46%, var(--color-paper) 100%),
+    radial-gradient(ellipse at 24% 16%, rgba(184, 227, 244, 0.64), transparent 34%);
+  --image-hero-veil:
+    linear-gradient(
+      180deg,
+      var(--color-paper) 0%,
+      rgba(247, 251, 255, 0.98) 34%,
+      rgba(247, 251, 255, 0.72) 50%,
+      rgba(247, 251, 255, 0.16) 70%,
+      rgba(247, 251, 255, 0.32) 100%
+    ),
+    linear-gradient(90deg, rgba(247, 251, 255, 0.94), rgba(247, 251, 255, 0.62) 42%, rgba(247, 251, 255, 0.12));
+  --image-hero-fog:
+    radial-gradient(ellipse at 22% 50%, rgba(255, 255, 255, 0.86), transparent 42%),
+    radial-gradient(ellipse at 62% 54%, rgba(184, 227, 244, 0.42), transparent 46%),
+    radial-gradient(ellipse at 84% 44%, rgba(232, 109, 78, 0.14), transparent 34%);
+  --image-bay-lights:
+    radial-gradient(circle, rgba(224, 169, 59, 0.82) 0 1.4px, transparent 1.9px),
+    radial-gradient(circle, rgba(115, 169, 66, 0.5) 0 1px, transparent 1.6px),
+    radial-gradient(circle, rgba(47, 110, 137, 0.38) 0 1.2px, transparent 1.8px);
+  --image-panel:
+    linear-gradient(180deg, rgba(8, 11, 13, 0.9), rgba(18, 38, 48, 0.92));
+  --image-panel-grid:
+    linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  /* The footer's whole background, poster photo placed and sized within it. */
+  --background-footer:
+    radial-gradient(ellipse at 72% 72%, rgba(232, 109, 78, 0.2), transparent 34%),
+    linear-gradient(180deg, rgba(247, 251, 255, 0.94) 0%, rgba(215, 232, 241, 0.68) 30%, rgba(127, 185, 207, 0.34) 100%),
+    url("/footer-sf-poster.jpg") center 58% / cover no-repeat,
+    linear-gradient(180deg, var(--color-paper) 0%, #d7e8f1 30%, #7fb9cf 100%);
+  --image-footer-wash:
+    linear-gradient(0deg, rgba(247, 251, 255, 0.86) 0, rgba(247, 251, 255, 0.5) 64px, transparent 160px),
+    linear-gradient(
+      180deg,
+      rgba(247, 251, 255, 0.96) 0%,
+      rgba(247, 251, 255, 0.7) 30%,
+      rgba(247, 251, 255, 0.18) 58%,
+      rgba(31, 82, 96, 0.32) 100%
+    ),
+    linear-gradient(
+      90deg,
+      rgba(247, 251, 255, 0.94),
+      rgba(247, 251, 255, 0.52) 42%,
+      rgba(247, 251, 255, 0.08) 68%,
+      rgba(12, 52, 67, 0.28)
+    );
+  --image-footer-grid:
+    linear-gradient(rgba(8, 11, 13, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(8, 11, 13, 0.1) 1px, transparent 1px);
+  --image-footer-fog:
+    radial-gradient(ellipse at 20% 48%, rgba(255, 255, 255, 0.8), transparent 44%),
+    radial-gradient(ellipse at 56% 58%, rgba(255, 255, 255, 0.54), transparent 48%),
+    radial-gradient(ellipse at 84% 46%, rgba(184, 227, 244, 0.5), transparent 38%);
+
+  /* Motion. Headline lines rise in turn; the bay scenes drift and glow. */
+  --animate-fade-rise: fade-rise 0.8s ease-out both;
+  --animate-fade-rise-2: fade-rise 0.8s 0.2s ease-out both;
+  --animate-fade-rise-3: fade-rise 0.8s 0.4s ease-out both;
+  --animate-fog-drift: fog-drift 34s ease-in-out infinite alternate;
+  --animate-fog-drift-slow: fog-drift 46s ease-in-out infinite alternate-reverse;
+  --animate-footer-fog: fog-drift 44s ease-in-out infinite alternate;
+  --animate-bridge-glow: bridge-glow 8s ease-in-out infinite;
+  --animate-bridge-glow-slow: bridge-glow 9s ease-in-out infinite;
+  --animate-twinkle: twinkle 5.5s steps(3, end) infinite;
+
+  @keyframes fade-rise {
+    from {
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes fog-drift {
+    from {
+      transform: translate3d(-5%, -3px, 0) scaleX(1.02);
+    }
+    to {
+      transform: translate3d(5%, 5px, 0) scaleX(1.08);
+    }
+  }
+
+  @keyframes twinkle {
+    0%,
+    100% {
+      opacity: 0.18;
+    }
+    50% {
+      opacity: 0.42;
+    }
+  }
+
+  @keyframes bridge-glow {
+    0%,
+    100% {
+      opacity: 0.18;
+      transform: translate3d(0, 0, 0);
+    }
+    50% {
+      opacity: 0.34;
+      transform: translate3d(8px, -3px, 0);
+    }
+  }
+}
+
+/* ---------------------------------------------------------------- Base */
+
+@layer base {
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-bay-deep);
+    outline-offset: 3px;
+  }
+
+  /* Sections take focus programmatically after a nav jump; no ring for that. */
+  [tabindex="-1"]:focus {
+    outline: none;
+  }
+
+  ::selection {
+    background: var(--color-bridge);
+    color: #fff;
+  }
+
+  /* Phones get a shorter header and tighter cards. */
+  @media (max-width: 700px) {
+    :root {
+      --spacing-header: 64px;
+      --spacing-card: 24px;
+      --spacing-card-lg: 24px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation: none !important;
+      transition-duration: 0s !important;
+    }
+  }
+
+  /* shadcn parts (each has a data-slot) rule and ring in the theme's border
+   * color rather than currentColor. Scoped to them, not *, so the landing
+   * page keeps its own defaults. */
+  :where([data-slot], [data-slot] *) {
+    @apply border-border outline-ring/50;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+/* --------------------------------------------------------------- shadcn */
+
+/* The components in components/ui (shadcn on Base UI) are themed with the
+ * semantic names below, each pointing at one of the site's tokens, so the
+ * console's shadcn parts share the landing page's palette. */
+
+/* The site has no dark theme; this keeps shadcn's dark: styles off unless a
+ * .dark ancestor asks for them, instead of following the OS setting. */
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: var(--color-surface);
+  --foreground: var(--color-ink);
+  --card: var(--color-surface);
+  --card-foreground: var(--color-ink);
+  --popover: var(--color-surface);
+  --popover-foreground: var(--color-ink);
+  --primary: var(--color-ink);
+  --primary-foreground: #fff;
+  --secondary: var(--color-subtle);
+  --secondary-foreground: var(--color-ink);
+  --muted: var(--color-tint-hover);
+  --muted-foreground: var(--color-muted);
+  --accent: var(--color-subtle);
+  --accent-foreground: var(--color-ink);
+  --destructive: var(--color-bad);
+  --border: var(--color-line);
+  --input: var(--color-line);
+  --ring: var(--color-bay-deep);
+  --radius: 8px;
+}
+
+@theme inline {
+  --font-heading: var(--font-body);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  /* The site's --color-muted is a text color (text-muted). shadcn's muted is
+   * a surface tint, so it takes the background namespace: bg-muted reads it,
+   * text-muted still reads the site's grey. */
+  --background-color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  /* --radius-lg and --radius-xl stay the site's own (8px, 12px), set above. */
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
