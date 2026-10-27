@@ -6,7 +6,8 @@ Task ids refer to [GOALS.md](GOALS.md).
 
 v0.3 is done: the ledger can be trusted, and audited, by someone who does
 not trust whoever holds it. v0.4 has begun: the ledger can be kept on
-disk (FW-401). An `Intent` flows through `Admission`
+disk (FW-401). So has v0.5: policies can be written as data, in a small
+rules language (FW-501). An `Intent` flows through `Admission`
 (per-agent token bucket + bounded priority queue with backpressure) into
 the scheduler, which starts only what may run now: a `Global` change
 alone, `Region` changes one at a time with their resource to themselves,
@@ -76,6 +77,9 @@ GitHub Pages) describes the scheduler and hold queue.
   scheduler and hold state from a reopened ledger (FW-402, FW-405), so a
   restarted plane can carry on where it stopped, the tick on every record
   (FW-404), and a replay property test (FW-403).
+- **v0.5 policy as code** - FW-502 and FW-503: a worked OPA-style example
+  evaluated at the gate, and policy bundles versioned and recorded in the
+  ledger alongside verdicts.
 
 ## Known gaps
 

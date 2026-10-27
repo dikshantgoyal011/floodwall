@@ -108,7 +108,7 @@ independent model).
   conflict claims, held intents, pending releases) from the ledger, not
   just admission state.
 
-## v0.5 - policy as code
+## v0.5 - policy as code ◦ in progress
 
 - **FW-501** ✓ Declarative policy format so rules are data, not Rust.
   `floodwall::rules`: a small rules language (`reject`/`defer` "reason"
