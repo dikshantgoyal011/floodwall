@@ -73,6 +73,7 @@ pub mod ledger;
 pub mod merkle;
 pub mod policy;
 pub mod replay;
+pub mod rules;
 pub mod scheduler;
 pub mod sha256;
 pub mod sha512;

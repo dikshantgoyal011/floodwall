@@ -1,0 +1,26 @@
+format 1
+
+# The built-in policies (src/policy.rs), written as rules. A gate built
+# from this file rules exactly as one built from NoGlobalDestroy,
+# BlastNeedsPriority and ResourceAllowlist::new(["web", "api", "cache"]):
+# the tests in src/rules.rs check every combination.
+
+# Never let an agent destroy something global without a human.
+policy "no-global-destroy" {
+  reject "destructive global change requires human sign-off"
+    when blast_radius == global and destructive
+}
+
+# Wide changes must carry real urgency.
+policy "blast-needs-priority" {
+  reject "{blast_radius} blast radius needs priority >= urgent, got {priority}"
+    when blast_radius >= region and priority < urgent
+  reject "service blast radius needs priority >= normal, got {priority}"
+    when blast_radius == service and priority < normal
+}
+
+# Only the core services; anything else waits for a human to extend the list.
+policy "resource-allowlist" {
+  defer "resource '{resource}' is not on the allowlist"
+    when resource not in ["web", "api", "cache"]
+}

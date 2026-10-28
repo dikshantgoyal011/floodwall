@@ -9,7 +9,8 @@ not trust whoever holds it. v0.4 is done too: the ledger can be kept on
 disk (FW-401), every record carries the tick it was written at (FW-404),
 and a restarted plane picks up exactly where it left off by replaying its
 ledger (FW-402, FW-405), which a property test checks over random floods
-and restarts (FW-403). An `Intent` flows through `Admission`
+and restarts (FW-403). v0.5 has begun: policies can be written as data,
+in a small rules language (FW-501). An `Intent` flows through `Admission`
 (per-agent token bucket + bounded priority queue with backpressure) into
 the scheduler, which starts only what may run now: a `Global` change
 alone, `Region` changes one at a time with their resource to themselves,
@@ -41,7 +42,7 @@ of its own, checks it from genesis, and discards only a last line a crash
 left unfinished; any other bad line is refused and the file left alone.
 
 Still zero dependencies (SHA-256, SHA-512, Ed25519 and the JSON reader are
-from scratch) and pinned to Rust 1.95. 217 unit tests, 12 doctests
+from scratch) and pinned to Rust 1.95. 227 unit tests, 13 doctests
 (including the README examples), a randomized invariant test (300 seeded
 floods plus 6 signed ones, each ending in checkpoint audits), a replay
 property test (150 random floods plus 6 signed ones, with 300-odd
@@ -54,6 +55,9 @@ GitHub Pages) describes the scheduler and hold queue.
 
 ## Recently shipped
 
+- **FW-501** - policies as data: a small, type-checked rules language
+  (`floodwall::rules`, `Gate::with_rules`), in which
+  `policies/standard.rules` writes the built-in policies.
 - **FW-403** - a property test that replaying the record stream reproduces
   the live decisions: 150 random floods, each replayed whole and restarted
   at random points (from exports, from files, after crashes that cut a
@@ -86,9 +90,9 @@ GitHub Pages) describes the scheduler and hold queue.
 
 ## Next up
 
-- **v0.5 policy as code** - FW-501 to FW-503: declarative rules evaluated
-  by the gate, a worked OPA-style example, and policy bundles versioned
-  and recorded in the ledger alongside verdicts.
+- **v0.5 policy as code** - FW-502 and FW-503: a worked OPA-style example
+  evaluated at the gate, and policy bundles versioned and recorded in the
+  ledger alongside verdicts.
 
 ## Known gaps
 

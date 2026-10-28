@@ -8,6 +8,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Policies as data (FW-501). `floodwall::rules` reads a small declarative
+  rules language: named policies, each a list of `reject "reason" when
+  <condition>` and `defer "reason" when <condition>` rules, with
+  conditions over an intent's agent, resource, manifest, kind, replicas,
+  priority and blast radius (comparisons, `in`/`not in` lists, `*`
+  patterns, `destructive`, `not`/`and`/`or`, parentheses) and reasons
+  that name its fields (`{resource}`, `{agent}`, ...). A policy's verdict
+  is the harshest of its rules that hold, with the first one's reason.
+  Files are checked when read: unknown fields, values of the wrong type,
+  orderings of unordered fields, duplicate or reserved policy names and
+  other mistakes are a `ParseError` with the line and column. `rules::parse`
+  returns `RulePolicy`s, which are `Policy`s like any other, and
+  `Gate::with_rules` adds a whole file to a gate. Zero dependencies.
+  `policies/standard.rules` writes the built-in policies as rules, and a
+  test checks it rules exactly as they do on every combination of action,
+  priority and blast radius.
 - `ledger::Evidence`: each `Record` now carries the action summary, the
   verdict's reason, and every policy's verdict, all covered by the
   digest. `Ledger::append_with` records it; `Floodwall::tick` fills it in.
