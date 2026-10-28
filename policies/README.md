@@ -7,14 +7,16 @@ floodwall's gate can load its policies from a rules file instead of Rust (see [`
 | [`production.rules`](production.rules) | The guardrails in this walkthrough, released as the policy bundle `production`, revision `2026.10.28-1`. |
 | [`standard.rules`](standard.rules) | The crate's built-in policies (`NoGlobalDestroy`, `BlastNeedsPriority`, `ResourceAllowlist`), written as rules. |
 
-Load either one into a gate:
+Rules are data, so a plane reads them when it starts, from wherever they are released:
 
 ```rust
 use floodwall::Gate;
 
-let gate = Gate::new()
-    .with_rules(include_str!("production.rules"))
-    .expect("the file parses");
+fn gate() -> Result<Gate, Box<dyn std::error::Error>> {
+    let rules = std::fs::read_to_string("policies/production.rules")?;
+    // A mistake in the file is a ParseError naming its line and column.
+    Ok(Gate::new().with_rules(&rules)?)
+}
 ```
 
 ## The input
