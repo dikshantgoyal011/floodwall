@@ -82,6 +82,63 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- A property test that replaying the record stream reproduces the live
+  decisions (FW-403): `tests/replay_property.rs` floods 150 randomly
+  configured planes (and 6 signed ones), checks every tick's report is
+  exactly what it recorded, replays each whole ledger on a new plane,
+  restarts the same flood at random points (from an export, from a file,
+  and after a crash that cut a tick short) and requires every call's
+  result, the final state and the final ledger to match the flood run
+  straight through, and changes one decision in each ledger (re-hashing
+  the chain) to require the replay to refuse it at exactly that record.
+  It found that a restart lost clock moves no record shows, which
+  `Floodwall::resume`'s `now` fixes.
+- A plane picks up where it left off after a restart (FW-402, FW-405).
+  `Floodwall::resume(ledger, now)` replays a plane's ledger on a newly built
+  plane with the same configuration: it makes the same calls at the same
+  ticks and checks each one writes exactly the record the ledger holds,
+  so the queue and its order, every agent's rate-limit bucket, what is in
+  flight and since when, every conflict claim, what is held and why, and
+  pending releases all come back as they were. A plane built differently,
+  or a ledger holding a decision the plane would not have made, is refused
+  with `ResumeError::Diverged` at the first record that comes out
+  differently (saying what differs); records no plane writes are
+  `ResumeError::Unreplayable`. A tick a crash cut short is finished.
+  With a keyring, every intent in the ledger must be signed by its agent
+  (current or retired key), or resuming fails with
+  `ResumeError::Unauthenticated`: a ledger's hashes alone prove nothing
+  about who asked. Pending intents are checked again against the current
+  keyring when next ruled on, so a retired key never authorizes new work.
+  `now` is the tick the plane restarts at (the latest tick it
+  was given, or later): a call that recorded nothing still moved the
+  clock, which the ledger cannot show.
+  - **Breaking:** every intent that gets into the queue is now recorded,
+    as `queued` (`QUEUED`), and synced before `submit` returns, so an
+    accepted intent is not lost if the plane stops before ruling on it.
+    Ledgers have one more record per accepted intent.
+  - A rate-limited attempt no longer changes the agent's bucket: the
+    refill is only kept with the token it pays for, so a bucket depends
+    only on the intents that got in (which the ledger records), and is the
+    same floating-point sum however many attempts came between.
+  - `Floodwall::with_ledger` points to `resume` for a ledger with records.
+  - The demo's `--ledger FILE` restarts the plane from its file halfway
+    through the flood; CI checks the ledger is the same bytes as a run
+    without the restart.
+- **Breaking:** every ledger record carries the logical tick it was
+  written at (FW-404): `Record::tick`, covered by the digest under record
+  encoding `floodwall/ledger/record/v3` (the tick follows `seq`). The
+  ledger keeps a clock that only moves forward (`Ledger::clock`,
+  `Ledger::advance_clock`); a `Floodwall` keeps it at the plane's own
+  clock, so every decision, release, expiry and outcome shows when it
+  happened. `Floodwall::with_ledger` brings whichever of the two clocks is
+  behind up to the other, so they never disagree. `Ledger::verify`,
+  `Ledger::open` and `Ledger::read_jsonl` refuse a record whose tick is
+  earlier than the one before it. The JSON Lines export writes `"tick"`
+  as a decimal string after `"seq"` (a tick can exceed 2^53) and names
+  record encoding v3 in its header;
+  `tools/verify-ledger.mjs` checks both, and the edge-case fixture has
+  ticks past 2^53. The reference digests are pinned again from an
+  independent implementation of v3.
 - Durable, append-only ledger on disk (FW-401). `Ledger::create(path)`
   starts a ledger in a new file and `Ledger::open(path)` picks it up again
   after a restart or crash; the file is the ledger's JSON Lines export,

@@ -15,8 +15,8 @@
 //     parsers can read it differently: no duplicate keys, no other number
 //     or string spellings);
 //   - every record is at the next position, links to the one before it,
-//     has the digest its fields give, and shows the intent it holds: the
-//     same intent id, agent and action;
+//     is at a tick no earlier than it, has the digest its fields give, and
+//     shows the intent it holds: the same intent id, agent and action;
 //   - every checkpoint matches the records so far: chain head, RFC 6962
 //     Merkle root, and frontier; and checkpoint sizes strictly increase;
 //   - with KEYS.json ({"plane": hex|null, "agents": {name: hex},
@@ -114,8 +114,9 @@ function checkIntent(i, what) {
 }
 
 function checkRecord(r) {
-  fields(r, ["type", "seq", "intent_id", "agent", "verdict", "action", "reason", "policies", "intent", "prev", "digest"], "the record");
+  fields(r, ["type", "seq", "tick", "intent_id", "agent", "verdict", "action", "reason", "policies", "intent", "prev", "digest"], "the record");
   count(r.seq, "seq");
+  decimalU64(r.tick, "tick");
   decimalU64(r.intent_id, "intent_id");
   for (const k of ["agent", "verdict", "action"]) string(r[k], k);
   nullOr(string)(r.reason, "reason");
@@ -147,7 +148,7 @@ const HEADER = {
   from: null,
   hash: "sha256",
   merkle: "rfc6962",
-  record_encoding: "floodwall/ledger/record/v2",
+  record_encoding: "floodwall/ledger/record/v3",
   intent_encoding: "floodwall/intent/v1",
   checkpoint_encoding: "floodwall/checkpoint/v1",
 };
@@ -214,14 +215,15 @@ function summary(a) {
   }
 }
 
-// The record encoding (src/ledger.rs, "Record encoding", v2).
+// The record encoding (src/ledger.rs, "Record encoding", v3).
 export function recordDigest(r) {
   checkRecord(r);
   return hex(
     sha256(
-      field("floodwall/ledger/record/v2"),
+      field("floodwall/ledger/record/v3"),
       unhex(r.prev, 32, "prev"),
       u64(r.seq),
+      u64(BigInt(r.tick)),
       u64(BigInt(r.intent_id)),
       optional(r.intent === null ? null : intentDigest(r.intent)),
       optional(r.intent?.signature ? unhex(r.intent.signature, 64, "signature") : null),
@@ -340,6 +342,8 @@ export function verifyLedger(text, keys = null) {
   let prev = GENESIS;
   let frontier = new Frontier();
   let lastCheckpoint = null;
+  // The tick of the record before, once there is one in the file.
+  let lastTick = null;
   let records = 0;
   let checkpoints = 0;
   let signatures = 0;
@@ -391,6 +395,9 @@ export function verifyLedger(text, keys = null) {
       if (obj.type === "record") {
         if (obj.seq !== seq) fail(`expected record ${seq}, found ${obj.seq}`);
         if (obj.prev !== prev) fail(`record ${seq} does not link to the record before it`);
+        if (lastTick !== null && BigInt(obj.tick) < lastTick) {
+          fail(`record ${seq} is at tick ${obj.tick}, before the record before it (tick ${lastTick})`);
+        }
         if (recordDigest(obj) !== obj.digest) fail(`record ${seq} does not match its digest`);
         const intent = obj.intent;
         if (intent !== null && (obj.intent_id !== intent.id || obj.agent !== intent.agent || obj.action !== summary(intent.action))) {
@@ -407,6 +414,7 @@ export function verifyLedger(text, keys = null) {
         }
         frontier.push(Buffer.from(obj.digest, "hex"));
         prev = obj.digest;
+        lastTick = BigInt(obj.tick);
         seq += 1;
         records += 1;
       } else {

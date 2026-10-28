@@ -26,17 +26,21 @@ jobs:
       # that the export is enough to audit the ledger without this crate.
       # The demo also keeps its ledger on disk, and the edge-case test keeps
       # its ledger on disk too: each file must be its export, byte for byte,
-      # and verify the same way.
+      # and verify the same way. The demo restarts its plane from the file
+      # halfway through; its ledger must be the same bytes as a run without
+      # the restart.
       - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: verify exports independently
         run: |
           cargo run --release -- --export target/audit --ledger target/audit/durable.jsonl
+          cargo run --release -- --export target/audit-plain
           node tools/verify-ledger.mjs target/audit/ledger.jsonl target/audit/keys.json
           node tools/verify-ledger.mjs target/audit/ledger-suffix.jsonl target/audit/keys.json
           node tools/verify-ledger.mjs target/audit/durable.jsonl target/audit/keys.json
           cmp target/audit/ledger.jsonl target/audit/durable.jsonl
+          cmp target/audit-plain/ledger.jsonl target/audit/durable.jsonl
           node tools/verify-ledger.mjs target/export-fixture/edge.jsonl target/export-fixture/keys.json
           node tools/verify-ledger.mjs target/export-fixture/edge-suffix.jsonl target/export-fixture/keys.json
           node tools/verify-ledger.mjs target/export-fixture/durable.jsonl target/export-fixture/keys.json

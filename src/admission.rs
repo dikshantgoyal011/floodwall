@@ -116,14 +116,22 @@ impl Bucket {
         }
     }
 
+    /// Take a token at `now` if the bucket, refilled to `now`, has one. A
+    /// refused attempt leaves the bucket exactly as it was: the refill is
+    /// only kept with the token it pays for. So the bucket depends only on
+    /// the intents that got in (each recorded in the ledger), not on
+    /// attempts that were turned away, and refilling once over many ticks
+    /// is the same floating-point sum however many attempts came between.
     fn try_take(&mut self, limit: RateLimit, now: u64) -> bool {
-        if now > self.last {
+        let tokens = if now > self.last {
             let elapsed = (now - self.last) as f64;
-            self.tokens = (self.tokens + elapsed * limit.refill_per_tick).min(limit.burst);
-            self.last = now;
-        }
-        if self.tokens >= 1.0 {
-            self.tokens -= 1.0;
+            (self.tokens + elapsed * limit.refill_per_tick).min(limit.burst)
+        } else {
+            self.tokens
+        };
+        if tokens >= 1.0 {
+            self.tokens = tokens - 1.0;
+            self.last = self.last.max(now);
             true
         } else {
             false
@@ -384,6 +392,43 @@ mod tests {
             a.submit(intent_for("bot", 5, Priority::Normal), 1),
             Err(Rejected::RateLimited)
         );
+    }
+
+    #[test]
+    fn refused_attempts_leave_the_bucket_alone() {
+        // Ten refills of 0.1 summed one at a time come to 0.9999999999999999,
+        // short of a token; one refill over ten ticks is exactly 1.0. A
+        // bucket that kept each refused attempt's refill would turn the
+        // eleventh intent away; this one admits it either way.
+        let limit = RateLimit::new(1.0, 0.1);
+        let mut probed = Admission::new(100, limit);
+        let mut quiet = Admission::new(100, limit);
+        for a in [&mut probed, &mut quiet] {
+            a.submit(intent_for("bot", 0, Priority::Normal), 0).unwrap();
+        }
+        for (n, now) in (1..10).enumerate() {
+            assert_eq!(
+                probed.submit(intent_for("bot", 100 + n as u64, Priority::Normal), now),
+                Err(Rejected::RateLimited)
+            );
+        }
+        assert_eq!(
+            (0..10).map(|_| 0.1).sum::<f64>(),
+            0.9999999999999999,
+            "why it matters"
+        );
+        for a in [&mut probed, &mut quiet] {
+            assert_eq!(a.submit(intent_for("bot", 1, Priority::Normal), 10), Ok(()));
+            assert_eq!(
+                a.submit(intent_for("bot", 2, Priority::Normal), 10),
+                Err(Rejected::RateLimited)
+            );
+        }
+        let bucket = |a: &Admission| {
+            let b = &a.buckets[&AgentId::new("bot")];
+            (b.tokens.to_bits(), b.last)
+        };
+        assert_eq!(bucket(&probed), bucket(&quiet));
     }
 
     #[test]

@@ -131,6 +131,7 @@ struct Model {
     /// Intents released from hold and not yet ruled on again.
     released: HashSet<IntentKey>,
     /// Ledger records the plane should have written, by kind.
+    arrivals: usize,
     decisions: usize,
     completions: usize,
     releases: usize,
@@ -400,7 +401,10 @@ fn run_with(seed: u64, cov: &mut Coverage, signed: bool) {
                     continue;
                 }
                 match result {
-                    Ok(()) => assert!(model.live.insert(key), "seed {seed}: accepted a live key"),
+                    Ok(()) => {
+                        assert!(model.live.insert(key), "seed {seed}: accepted a live key");
+                        model.arrivals += 1;
+                    }
                     Err(Rejected::Duplicate) => {
                         cov.duplicates_refused += 1;
                         if adopted.contains(&key) {
@@ -581,8 +585,8 @@ fn run_with(seed: u64, cov: &mut Coverage, signed: bool) {
     );
     assert_eq!(
         plane.ledger().len(),
-        model.decisions + model.completions + model.releases + model.expiries,
-        "seed {seed}: one record per decision, completion, release and expiry"
+        model.arrivals + model.decisions + model.completions + model.releases + model.expiries,
+        "seed {seed}: one record per arrival, decision, completion, release and expiry"
     );
     assert!(plane.ledger().verify(), "seed {seed}: ledger chain broken");
     if signed {

@@ -90,6 +90,38 @@ test("an edited record is caught, even with its own digest fixed", () => {
   fails(rehashed, null, /record 11 does not link to the record before it/);
 });
 
+test("every record is at a tick no earlier than the one before it", () => {
+  // The demo's ticks rise, so its last record is later than the first.
+  const recs = recordLines(whole);
+  const [last, r] = recs.at(-1);
+  const first = BigInt(recs[0][1].tick);
+  assert.ok(BigInt(r.tick) > first);
+  // Its tick is covered by its digest...
+  fails(edit(whole, last, (o) => (o.tick = String(BigInt(o.tick) + 1n))), null, /does not match its digest/);
+  // ...and moving it back before the record before it, with the digest
+  // recomputed to match, is still refused. (It is the last record, so no
+  // later link gives it away.)
+  const before = BigInt(recs.at(-2)[1].tick);
+  assert.ok(before > 0n);
+  const back = edit(whole, last, (o) => {
+    o.tick = String(before - 1n);
+    o.digest = recordDigest(o);
+  });
+  fails(back, null, new RegExp(`record ${r.seq} is at tick ${before - 1n}, before the record before it \\(tick ${before}\\)`));
+  // The same tick as the record before is fine.
+  const same = edit(whole, last, (o) => {
+    o.tick = String(before);
+    o.digest = recordDigest(o);
+  });
+  assert.throws(() => verifyLedger(same, null), /checkpoint .* has the wrong head|wrong Merkle root/);
+  // Ticks past 2^53 are exact: the fixture has some, and they verify.
+  const big = recordLines(edge).filter(([, o]) => BigInt(o.tick) > 2n ** 53n);
+  assert.ok(big.length > 0);
+  assert.ok(verifyLedger(edge, edgeKeys));
+  const [b] = big[0];
+  fails(editText(edge, b, (l) => l.replace(/"tick":"(\d+)"/, (_, t) => `"tick":${t}`)), null, /tick is not a u64 written as a decimal string/);
+});
+
 test("a record must show the request its intent holds", () => {
   const [i, r] = recordLines(whole)[12];
   const rehash = (change) =>

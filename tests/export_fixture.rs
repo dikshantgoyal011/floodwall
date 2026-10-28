@@ -1,6 +1,7 @@
 //! Writes an export full of edge cases to `target/export-fixture/`, for
 //! the independent verifier (`tools/verify-ledger.mjs`) to check in CI:
-//! the largest intent id, non-ASCII names, quotes, backslashes, newlines and
+//! the largest intent id, ticks beyond 2^53 and repeated ticks, non-ASCII
+//! names, quotes, backslashes, newlines and
 //! control characters in text, empty and missing fields, signed intents and
 //! signed checkpoints, including one at size 0, and an agent whose records
 //! were signed by a key it has since rotated away from. The same ledger is
@@ -45,6 +46,8 @@ fn fill(ledger: &mut Ledger) {
         Some("control \u{1} \u{1f} and \u{7f}, unicode 🦀, backslash \\ quote \"".into()),
     ];
     for i in 0..8u64 {
+        // Ticks 0, 0, 2, 2, then past 2^53 (exact only as a string).
+        ledger.advance_clock(if i < 4 { i / 2 * 2 } else { (1 << 60) + i });
         let who = (i % 3) as usize;
         let intent = Intent::new(
             if i == 0 { u64::MAX } else { i },

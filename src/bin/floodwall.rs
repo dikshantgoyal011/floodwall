@@ -14,8 +14,11 @@
 //! (`keys.json`). `node tools/verify-ledger.mjs` verifies them.
 //!
 //! `floodwall --ledger FILE` keeps the ledger on disk as the demo runs
-//! (FILE must not exist yet), then reopens it and checks it from genesis.
-//! The file is the same bytes as `ledger.jsonl`.
+//! (FILE must not exist yet). Halfway through the flood it stops the plane
+//! and starts a new one from the file, as after a crash, and the rest of the
+//! run is exactly as it would have been; at the end it reopens the file and
+//! checks it from genesis. The file is the same bytes as `ledger.jsonl`,
+//! with or without `--ledger`.
 
 use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File};
@@ -96,6 +99,34 @@ fn arguments() -> (Option<PathBuf>, Option<PathBuf>) {
     (export, ledger)
 }
 
+/// When `--ledger` restarts the plane from its file.
+const RESTART_AT: u64 = 100;
+
+/// The demo's plane, without its ledger. A restarted plane must be built
+/// exactly the same way.
+fn build_plane(keyring: &Keyring) -> Floodwall {
+    // Tight per-agent limit against a deliberately oversized flood, so rate
+    // limiting and backpressure both bite. The fleet may act on the core
+    // services freely; touching "billing" or "ledger-db" is held for a
+    // human (deferred, not rejected).
+    let admission = Admission::new(512, RateLimit::new(8.0, 2.0));
+    let gate = Gate::new()
+        .with(NoGlobalDestroy)
+        .with(BlastNeedsPriority)
+        .with(ResourceAllowlist::new(["web", "api", "cache"]));
+    // Two narrow changes per resource at a time, but the ledger database
+    // takes one at a time. Contradictions within 5 ticks are deferred.
+    let scheduler = SchedulerConfig::default()
+        .with_default_limit(2)
+        .with_limit("ledger-db", 1)
+        .with_conflict_window(5);
+    let hold = HoldConfig::default().with_capacity(64).with_ttl(Some(40));
+    Floodwall::new(admission, gate)
+        .with_scheduler(scheduler)
+        .with_hold(hold)
+        .with_keyring(keyring.clone())
+}
+
 fn main() {
     let (export_dir, ledger_file) = arguments();
     let agents = [
@@ -121,22 +152,6 @@ fn main() {
             ring.with(*a, k.verifying_key())
         });
 
-    // Tight per-agent limit against a deliberately oversized flood, so rate
-    // limiting and backpressure both bite. The fleet may act on the core
-    // services freely; touching "billing" or "ledger-db" is held for a
-    // human (deferred, not rejected).
-    let admission = Admission::new(512, RateLimit::new(8.0, 2.0));
-    let gate = Gate::new()
-        .with(NoGlobalDestroy)
-        .with(BlastNeedsPriority)
-        .with(ResourceAllowlist::new(["web", "api", "cache"]));
-    // Two narrow changes per resource at a time, but the ledger database
-    // takes one at a time. Contradictions within 5 ticks are deferred.
-    let scheduler = SchedulerConfig::default()
-        .with_default_limit(2)
-        .with_limit("ledger-db", 1)
-        .with_conflict_window(5);
-    let hold = HoldConfig::default().with_capacity(64).with_ttl(Some(40));
     // In memory, or on disk with every decision synced before it is
     // reported.
     let ledger = match &ledger_file {
@@ -152,13 +167,12 @@ fn main() {
                 })
         }
     };
-    let mut plane = Floodwall::new(admission, gate)
-        .with_scheduler(scheduler)
-        .with_hold(hold)
-        .with_keyring(keyring.clone())
-        // A signed checkpoint every 256 records, so the ledger can be
-        // audited from any checkpoint without replaying it from genesis.
+    // A signed checkpoint every 256 records, so the ledger can be audited
+    // from any checkpoint without replaying it from genesis.
+    let mut plane = build_plane(&keyring)
         .with_ledger(ledger.with_checkpoints(256).with_signer(plane_key.clone()));
+    // What the plane held when --ledger restarted it.
+    let mut restarted = None;
 
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
     let flood_ticks = 200u64;
@@ -170,6 +184,39 @@ fn main() {
 
     let mut now = 0u64;
     loop {
+        // With --ledger, stop the plane halfway through the flood and start a
+        // new one from its file, as after a crash.
+        if let (Some(path), RESTART_AT) = (&ledger_file, now) {
+            let held = (
+                plane.pending(),
+                plane.in_flight().count(),
+                plane.held().count(),
+            );
+            drop(plane); // closes the file
+            let ledger = Ledger::open(path)
+                .map(|l| l.with_checkpoints(256).with_signer(plane_key.clone()))
+                .unwrap_or_else(|e| {
+                    eprintln!("reopening {} failed: {e}", path.display());
+                    process::exit(1);
+                });
+            plane = build_plane(&keyring)
+                .resume(ledger, now)
+                .unwrap_or_else(|e| {
+                    eprintln!("restarting from {} failed: {e}", path.display());
+                    process::exit(1);
+                });
+            let resumed = (
+                plane.pending(),
+                plane.in_flight().count(),
+                plane.held().count(),
+            );
+            assert_eq!(
+                resumed, held,
+                "the restarted plane holds what the old one did"
+            );
+            restarted = Some(held);
+        }
+
         // Changes that finish applying report back.
         let finished: Vec<IntentKey> = due.remove(&now).unwrap_or_default();
         for key in finished {
@@ -441,10 +488,19 @@ fn main() {
         let (len, head) = (plane.ledger().len(), plane.ledger().head());
         drop(plane);
         match Ledger::open(&path) {
-            Ok(reopened) if reopened.len() == len && reopened.head() == head => println!(
-                "  on disk at {}: reopened and checked from genesis, {len} records, same head",
-                path.display()
-            ),
+            Ok(reopened) if reopened.len() == len && reopened.head() == head => {
+                if let Some((queued, in_flight, held)) = restarted {
+                    println!(
+                        "  restarted at tick {RESTART_AT} from {}: {queued} queued, \
+                         {in_flight} in flight and {held} held, picked up from the file",
+                        path.display()
+                    );
+                }
+                println!(
+                    "  on disk at {}: reopened and checked from genesis, {len} records, same head",
+                    path.display()
+                )
+            }
             Ok(reopened) => {
                 eprintln!(
                     "{} reopened with {} records and head {}, not {len} and {head}",

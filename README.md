@@ -140,8 +140,9 @@ assert_eq!(plane.submit(intent.clone(), 0), Err(Rejected::Unsigned));
 plane.submit(intent.signed(&deployer), 0).unwrap();
 plane.tick(0);
 
-// An auditor with the public keys checks every record's authorship.
-assert_eq!(plane.ledger().verify_signatures(&keyring), Ok(1));
+// An auditor with the public keys checks every record's authorship: its
+// arrival in the queue, and the decision.
+assert_eq!(plane.ledger().verify_signatures(&keyring), Ok(2));
 ```
 
 Checkpoints let an auditor pick up from where they last checked, with only the new records:
@@ -151,7 +152,7 @@ Checkpoints let an auditor pick up from where they last checked, with only the n
 # use floodwall::intent::{Action, AgentId, BlastRadius, Intent, Priority};
 let plane_key = SigningKey::from_seed(&[7; 32]);
 let mut plane = Floodwall::new(Admission::new(1024, RateLimit::new(8.0, 1.0)), Gate::new())
-    .with_ledger(Ledger::new().with_checkpoints(2).with_signer(plane_key.clone()));
+    .with_ledger(Ledger::new().with_checkpoints(4).with_signer(plane_key.clone()));
 for id in 0..5 {
     let intent = Intent::new(
         id,
@@ -162,48 +163,52 @@ for id in 0..5 {
     );
     plane.submit(intent, 0).unwrap();
 }
-plane.tick(0); // five decisions recorded: checkpoints at 2 and 4
-let latest = plane.checkpoint(); // and one now, at 5
+plane.tick(0); // five arrivals and five decisions: checkpoints at 4 and 8
+let latest = plane.checkpoint(); // and one now, at 10
 
-// The auditor already trusted the checkpoint at 2. They check the three
+// The auditor already trusted the checkpoint at 4. They check the six
 // records after it, and nothing before it.
 let trusted = plane.ledger().checkpoints()[0].clone();
 let suffix = plane.ledger().records_after(&trusted).unwrap();
-assert_eq!(suffix.len(), 3);
+assert_eq!(suffix.len(), 6);
 assert!(audit_suffix(&trusted, &latest, suffix, Some(&plane_key.verifying_key())).is_ok());
 ```
 
 ### Keeping the ledger on disk
 
-`Ledger::create(path)` starts a ledger in a new file and `Ledger::open(path)` picks it up after a restart or a crash. The file is the ledger's own JSON Lines export (below), written as it grows. Every decision is written and synced before the call that made it returns, a second writer is locked out, and a crash mid-write costs only the unfinished last line:
+`Ledger::create(path)` starts a ledger in a new file, and `Floodwall::resume` picks a plane up again from it after a restart or a crash. The file is the ledger's own JSON Lines export (below), written as it grows. Every intent that gets in and every decision is written and synced before the call that made it returns, a second writer is locked out, and a crash mid-write costs only the unfinished last line:
 
 ```rust
 # use floodwall::{Admission, Floodwall, Gate, Ledger, RateLimit};
 # use floodwall::intent::{Action, AgentId, BlastRadius, Intent, Priority};
 let path = std::env::temp_dir().join(format!("floodwall-readme-{}.jsonl", std::process::id()));
 # let _ = std::fs::remove_file(&path);
-let mut plane = Floodwall::new(Admission::new(1024, RateLimit::new(8.0, 1.0)), Gate::new())
-    .with_ledger(Ledger::create(&path).unwrap());
-let intent = Intent::new(
-    1,
+// Build the plane the same way every time it starts.
+let plane = || Floodwall::new(Admission::new(1024, RateLimit::new(8.0, 1.0)), Gate::new());
+let scale = |id, resource: &str| Intent::new(
+    id,
     AgentId::new("deployer"),
-    Action::Scale { resource: "web".into(), replicas: 3 },
+    Action::Scale { resource: resource.into(), replicas: 3 },
     Priority::Normal,
     BlastRadius::Service,
 );
-plane.submit(intent, 0).unwrap();
-plane.tick(0); // the decision is on disk before tick returns
-let head = plane.ledger().head();
-drop(plane);
+let mut wall = plane().with_ledger(Ledger::create(&path).unwrap());
+wall.submit(scale(1, "web"), 0).unwrap();
+wall.tick(0); // in flight, and on disk before tick returns
+wall.submit(scale(2, "api"), 1).unwrap(); // queued, and on disk
+drop(wall); // the process stops
 
-// After a restart: the same ledger, read back and checked from genesis.
-let ledger = Ledger::open(&path).unwrap();
-assert_eq!((ledger.len(), ledger.head()), (1, head));
-# drop(ledger);
+// After the restart: the ledger is read back, checked from genesis, and
+// replayed, so the plane holds exactly what it held before. It restarts at
+// tick 1, the last tick it was given.
+let wall = plane().resume(Ledger::open(&path).unwrap(), 1).unwrap();
+assert_eq!(wall.in_flight().count(), 1);
+assert_eq!(wall.pending(), 1);
+# drop(wall);
 # std::fs::remove_file(&path).unwrap();
 ```
 
-A plane resuming its queue and in-flight work from a reopened ledger comes next (FW-402); for now a reopened ledger can be audited, exported and appended to.
+The replay makes the same calls, at the same ticks, and checks each one writes exactly the record the ledger holds, so the queue, every agent's rate limit, what is in flight, every conflict claim, and everything held come back as they were. A plane built differently, or a ledger with a decision the plane would not have made, is refused at the first record that comes out differently. The demo shows it with `cargo run --release -- --ledger audit/durable.jsonl`: it restarts the plane from the file halfway through the flood, and its ledger comes out the same, byte for byte, as a run without the restart.
 
 ### Auditing with your own tools
 
@@ -212,11 +217,11 @@ The ledger exports as [JSON Lines](src/export.rs): a header, then every record a
 ```text
 $ cargo run --release -- --export audit/      # the demo writes ledger.jsonl, ledger-suffix.jsonl and keys.json
 $ node tools/verify-ledger.mjs audit/ledger.jsonl audit/keys.json
-ok: 2043 records from genesis; 8 checkpoints; head 189f5d55…
-ok: 2043 agent signatures and every checkpoint signature verified
+ok: 2989 records from genesis; 12 checkpoints; head 42d73075…
+ok: 2989 agent signatures and every checkpoint signature verified
 ```
 
-[`tools/verify-ledger.mjs`](tools/verify-ledger.mjs) is an independent implementation using only Node's standard library. It refuses anything not written exactly in the documented format, recomputes every record and intent digest, checks every link, Merkle root and frontier and that every record shows the intent it holds, and with the public keys (current and retired) checks every agent and checkpoint signature. A suffix export (`Ledger::export_jsonl_from(checkpoint)`) is checked from that checkpoint alone. A ledger file on disk is checked the same way: `cargo run --release -- --ledger audit/durable.jsonl` keeps the demo's ledger on disk, and the file is the same bytes as `ledger.jsonl`. CI runs it on every change.
+[`tools/verify-ledger.mjs`](tools/verify-ledger.mjs) is an independent implementation using only Node's standard library. It refuses anything not written exactly in the documented format, recomputes every record and intent digest, checks every link, Merkle root and frontier and that every record shows the intent it holds, and with the public keys (current and retired) checks every agent and checkpoint signature. A suffix export (`Ledger::export_jsonl_from(checkpoint)`) is checked from that checkpoint alone. A ledger file on disk is checked the same way: it is the same bytes as `ledger.jsonl`. CI runs it on every change.
 
 Writing your own policy is one trait method:
 
@@ -303,15 +308,15 @@ floodwall demo - 4000 intents flung at the wall over 200 ticks, settled by tick 
     failed         : 29
 
   ledger (tamper-evident)
-    records        : 2043
-    head digest    : 189f5d551888eeae1379978c5662e54d7bb4b25323bdf871bbbecd5c0f84c3ca
+    records        : 2989
+    head digest    : 42d7307564cb7e580727285eac1f7cb088be88178f7eaeda5617a9ad77392d7b
     chain valid    : true
-    signatures     : all 2043 records signed by their agents
+    signatures     : all 2989 records signed by their agents
 
   checkpoints (audit without replaying)
-    checkpoints    : 8, all signed by the plane
-    suffix audit   : records 1792..2043 checked from the checkpoint at 1792: ok
-    inclusion      : record 681 proven in the latest root with 11 hashes: true
+    checkpoints    : 12, all signed by the plane
+    suffix audit   : records 2816..2989 checked from the checkpoint at 2816: ok
+    inclusion      : record 996 proven in the latest root with 12 hashes: true
 ```
 
 Five agents (including a `chaos-monkey`) fling 4000 changes at the wall. Admission control turns most of the flood away. The scheduler runs what is left in parallel across resources while serializing region-wide and global changes, the gate and conflict check sort each change into admit / defer / reject, and an operator works the hold queue every 10 ticks. Every admitted change is applied and reported back, and the ledger comes out the other side with its chain intact. Every agent signs its intents; the chaos monkey now and then forges one in the deployer's name, which is refused at the door, and every record left in the ledger verifies against the agents' public keys. Finally, an auditor who trusts the second-to-last signed checkpoint checks the rest of the ledger from it alone, and one record is proven to be in the ledger with a handful of hashes.
@@ -323,7 +328,7 @@ Five agents (including a `chaos-monkey`) fling 4000 changes at the wall. Admissi
 | 0.1 | Intent model, per-agent token-bucket admission + bounded priority queue, deny-overrides policy gate, hash-chained ledger, end-to-end `Floodwall` | **shipped** |
 | 0.2 | Scheduler: wide-blast serialization, narrow work in parallel by resource, per-resource in-flight limits, conflict detection, hold queue with human release and expiry | **done** |
 | 0.3 | Cryptographic ledger: SHA-256 chain, Ed25519-signed records, signed Merkle checkpoints, JSON Lines export with an independent verifier | **done** |
-| 0.4 | Persistence + replay: a durable ledger on disk, then rebuilding plane state from it | in progress |
+| 0.4 | Persistence + replay: a durable ledger on disk, every record's tick, and a plane rebuilt exactly by replaying its ledger | **done** |
 | 0.5 | Policy-as-code: declarative rules + a worked OPA-style example          | in progress |
 
 See [GOALS.md](GOALS.md) for the full roadmap and [STATUS.md](STATUS.md) for current state.
@@ -336,7 +341,7 @@ See [GOALS.md](GOALS.md) for the full roadmap and [STATUS.md](STATUS.md) for cur
 - **No wall clock.** Time is a logical tick supplied by the caller, so the whole plane is deterministic and testable. Time never moves backwards: a tick earlier than the latest one seen is treated as the latest.
 - **You apply the changes.** floodwall decides; it does not execute. An admitted intent is in flight until you call `complete`, so report back even when a change fails or times out.
 - **`unsafe` is forbidden** at the crate level.
-- **Tested against its own spec.** Besides unit tests and these README examples (compiled as doctests), [`tests/scheduler_invariants.rs`](tests/scheduler_invariants.rs) runs 300 seeded random floods and checks every scheduling, conflict and hold guarantee above after each step.
+- **Tested against its own spec.** Besides unit tests and these README examples (compiled as doctests), [`tests/scheduler_invariants.rs`](tests/scheduler_invariants.rs) runs 300 seeded random floods and checks every scheduling, conflict and hold guarantee above after each step, and [`tests/replay_property.rs`](tests/replay_property.rs) checks that replaying a ledger reproduces the live decisions, through random restarts and crashes.
 
 ## License
 

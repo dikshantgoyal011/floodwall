@@ -16,22 +16,32 @@
 //! so field boundaries are unambiguous (`"ab" + "c"` never hashes like
 //! `"a" + "bc"`).
 //!
-//! 1. the field `floodwall/ledger/record/v2` (domain separation, so a record
+//! 1. the field `floodwall/ledger/record/v3` (domain separation, so a record
 //!    digest is never mistaken for any other hash the crate computes);
 //! 2. `prev`: the previous record's digest, 32 bytes ([`Digest::GENESIS`],
 //!    all zeros, for the first record);
 //! 3. `seq` as a `u64`;
-//! 4. `intent_id` as a `u64`;
-//! 5. the intent's [digest](crate::Intent::digest): the byte `0` if the
+//! 4. `tick` as a `u64`;
+//! 5. `intent_id` as a `u64`;
+//! 6. the intent's [digest](crate::Intent::digest): the byte `0` if the
 //!    record is not about an intent, or the byte `1` followed by the 32-byte
 //!    digest of [`Record::intent`];
-//! 6. the intent's signature: the byte `0` if there is none, or the byte `1`
+//! 7. the intent's signature: the byte `0` if there is none, or the byte `1`
 //!    followed by the 64-byte signature;
-//! 7. the fields `agent`, `verdict` and `evidence.action`, as UTF-8;
-//! 8. `evidence.reason`: the byte `0` if there is none, or the byte `1`
+//! 8. the fields `agent`, `verdict` and `evidence.action`, as UTF-8;
+//! 9. `evidence.reason`: the byte `0` if there is none, or the byte `1`
 //!    followed by the reason as a field;
-//! 9. the number of `evidence.policies` as a `u64`, then for each, its name
-//!    and its label as fields.
+//! 10. the number of `evidence.policies` as a `u64`, then for each, its name
+//!     and its label as fields.
+//!
+//! # Time
+//!
+//! Every record carries the logical tick it was written at
+//! ([`Record::tick`]): the ledger's clock ([`Ledger::clock`]), which only
+//! moves forward ([`Ledger::advance_clock`]). A [`Floodwall`](crate::Floodwall)
+//! keeps it at the plane's own clock, so each decision, release, expiry and
+//! outcome shows when it happened. Ticks never decrease along the chain, and
+//! [`Ledger::verify`] refuses a ledger where they do.
 //!
 //! # Signatures
 //!
@@ -90,7 +100,7 @@ impl fmt::Debug for Digest {
     }
 }
 
-const RECORD_DOMAIN: &[u8] = b"floodwall/ledger/record/v2";
+const RECORD_DOMAIN: &[u8] = b"floodwall/ledger/record/v3";
 
 /// Feed one variable-length field: its length, then its bytes.
 fn field(h: &mut Sha256, bytes: &[u8]) {
@@ -114,6 +124,9 @@ pub struct Evidence {
 pub struct Record {
     /// Position in the chain, from 0.
     pub seq: u64,
+    /// The logical tick it was written at: never less than the tick of the
+    /// record before it (see [Time](self#time)).
+    pub tick: u64,
     /// The intent that was ruled on.
     pub intent_id: u64,
     /// The intent itself, as its agent submitted (and signed) it, for a
@@ -142,6 +155,7 @@ impl Record {
         field(&mut h, RECORD_DOMAIN);
         h.update(self.prev.as_bytes());
         h.update(&self.seq.to_le_bytes());
+        h.update(&self.tick.to_le_bytes());
         h.update(&self.intent_id.to_le_bytes());
         match self.intent_digest() {
             None => h.update(&[0]),
@@ -256,6 +270,8 @@ pub struct Ledger {
     signer: Option<SigningKey>,
     /// The file the ledger is kept in, if it is on disk.
     storage: Option<Storage>,
+    /// The tick the next record is written at; see [Time](self#time).
+    clock: u64,
 }
 
 /// Stop: a ledger on disk could not be written, so whether the latest
@@ -286,7 +302,23 @@ impl Ledger {
             checkpoint_every: None,
             signer: None,
             storage: None,
+            clock: 0,
         }
+    }
+
+    /// The tick the next record will carry: the latest tick passed to
+    /// [`Ledger::advance_clock`], or the tick of the latest record read
+    /// back, and 0 for a new ledger.
+    pub fn clock(&self) -> u64 {
+        self.clock
+    }
+
+    /// Move the clock forward to `now`, so the records written from now on
+    /// carry it. A `now` earlier than the clock leaves it as it is: time
+    /// never moves backwards along the chain. Returns the clock.
+    pub fn advance_clock(&mut self, now: u64) -> u64 {
+        self.clock = self.clock.max(now);
+        self.clock
     }
 
     /// Cut a [`Checkpoint`] automatically every `every` records.
@@ -456,6 +488,7 @@ impl Ledger {
     ) -> Result<usize, WriteError> {
         let mut record = Record {
             seq: self.records.len() as u64,
+            tick: self.clock,
             intent_id,
             intent,
             agent: agent.to_string(),
@@ -548,6 +581,12 @@ impl Ledger {
                 "record {seq} does not link to the record before it"
             ));
         }
+        if r.tick < self.clock {
+            return Err(format!(
+                "record {seq} is at tick {}, before the record before it (tick {})",
+                r.tick, self.clock
+            ));
+        }
         if !r.agrees_with_intent() {
             return Err(format!(
                 "record {seq} shows a different request from the intent it holds"
@@ -557,6 +596,7 @@ impl Ledger {
             return Err(format!("record {seq} does not match its digest"));
         }
         self.head = r.digest;
+        self.clock = r.tick;
         self.frontier.push(&r.digest);
         self.records.push(r);
         Ok(())
@@ -647,12 +687,14 @@ impl Ledger {
 
     /// Recompute the chain from genesis and confirm nothing has been
     /// altered: every record is at its position, links to the one before
-    /// it, agrees with the intent it holds, and has the digest its contents
-    /// give, and the last digest is the head. Every checkpoint must match
+    /// it, is at a tick no earlier than it, agrees with the intent it holds,
+    /// and has the digest its contents give, and the last digest is the
+    /// head. Every checkpoint must match
     /// the records it covers, in order. Checkpoint signatures are checked
     /// separately, with [`Ledger::verify_checkpoint_signatures`].
     pub fn verify(&self) -> bool {
         let mut prev = Digest::GENESIS;
+        let mut tick = 0;
         let mut frontier = Frontier::new();
         let mut checkpoints = self.checkpoints.iter().peekable();
         for i in 0..=self.records.len() {
@@ -665,6 +707,7 @@ impl Ledger {
             let Some(r) = self.records.get(i) else { break };
             if r.seq != i as u64
                 || r.prev != prev
+                || r.tick < tick
                 || !r.agrees_with_intent()
                 || r.compute_digest() != r.digest
             {
@@ -672,6 +715,7 @@ impl Ledger {
             }
             frontier.push(&r.digest);
             prev = r.digest;
+            tick = r.tick;
         }
         // Checkpoints must come in order and none may outrun the records.
         let in_order = self.checkpoints.windows(2).all(|w| w[0].size < w[1].size);
@@ -772,6 +816,46 @@ mod tests {
         assert!(!l.verify());
     }
 
+    #[test]
+    fn records_carry_the_clock_which_never_goes_back() {
+        let mut l = Ledger::new();
+        assert_eq!(l.clock(), 0);
+        l.append(1, "bot", "admit");
+        assert_eq!(l.advance_clock(5), 5);
+        assert_eq!(l.advance_clock(2), 5, "an earlier tick leaves the clock");
+        l.append(2, "bot", "admit");
+        l.append(3, "bot", "admit");
+        l.advance_clock(9);
+        l.append(4, "bot", "admit");
+        let ticks: Vec<u64> = l.records().iter().map(|r| r.tick).collect();
+        assert_eq!(ticks, [0, 5, 5, 9]);
+        assert!(l.verify());
+        // The tick is covered by the digest...
+        let mut edited = l.records[1].clone();
+        edited.tick = 6;
+        assert_ne!(edited.compute_digest(), l.records[1].digest);
+        // ...and a record whose tick goes back is refused even with its
+        // digest, and every digest after it, recomputed to match.
+        l.records[2].tick = 4;
+        let mut prev = l.records[1].digest;
+        for r in &mut l.records[2..] {
+            r.prev = prev;
+            r.digest = r.compute_digest();
+            prev = r.digest;
+        }
+        l.head = prev;
+        assert!(!l.verify());
+        l.records[2].tick = 5;
+        let mut prev = l.records[1].digest;
+        for r in &mut l.records[2..] {
+            r.prev = prev;
+            r.digest = r.compute_digest();
+            prev = r.digest;
+        }
+        l.head = prev;
+        assert!(l.verify(), "equal ticks are fine");
+    }
+
     fn evidence(reason: Option<&str>) -> Evidence {
         Evidence {
             action: "destroy web".into(),
@@ -846,6 +930,7 @@ mod tests {
                 ],
             },
         );
+        l.advance_clock(3);
         l.append_with(
             2,
             "deployer",
@@ -858,6 +943,10 @@ mod tests {
         );
         // Non-ASCII: lengths are in bytes, not characters.
         l.append(3, "opérateur", "released");
+        // A tick past 2^53, which a JSON number could not hold exactly; an
+        // earlier one afterwards changes nothing.
+        l.advance_clock(9_007_199_254_740_993);
+        l.advance_clock(2);
         l.append_with(
             3,
             "opérateur",
@@ -912,16 +1001,20 @@ mod tests {
         // from the "Record encoding" section of this module's docs and the
         // "Signing" section of `Intent`'s, with Node's Ed25519 signature.
         let want = [
-            "7a6771f4ee960f9a5fe1ebc497739dc56be2796637aadae8163cd85601e911af",
-            "a173989be6337d02b7e61b89ee26bd0a35dc091a4d50bf248ef8c4f0ce32cf32",
-            "42a5d402e0e778bb13e852befc5d1929393991ee41f6dec6a606c2005dae522e",
-            "312d24135327af062fdc660ce27a0ebc3a84fae9b3b7f6dbee6a085d6084d086",
-            "006b530eb9c1a079b0668a7646e282839145d59540ee26b401ea72fd51d2dd97",
-            "2af252fa07da44c62bc9f1cf9fa66a9e9eb6a28a19d718a406453a33fbd0105c",
+            "06f09d72dfd66b2ddfdc43daa6691f316ee1dd63e00b4044d5b72526c6a67426",
+            "2d45c70c235fc8ff13ed6b699ae41c9aab84a6476de49c663c1f1e402b61c809",
+            "5d124b8591b128a8c82c351f269d6ebaf1a994721cac2520e2ad7a6bbe604a7a",
+            "ce723558775024942c51ff539f87cdb133798306cce75ba26ea3c78988af307c",
+            "72f963e64ec03fa4f00478606b65d1a9f1d50d2ecd56154238f91d4d5f6d894e",
+            "6265b28d3bd1d47db1aa9da6eb816c1239ffc884f8e73360ea9d6ca1b349f0b0",
         ];
         let l = reference_ledger();
         let got: Vec<String> = l.records().iter().map(|r| r.digest.to_string()).collect();
         assert_eq!(got, want);
+        let ticks: Vec<u64> = l.records().iter().map(|r| r.tick).collect();
+        let big = 9_007_199_254_740_993;
+        assert_eq!(ticks, [0, 3, 3, big, big, big]);
+        assert_eq!(l.clock(), big);
         assert_eq!(l.head().to_string(), want[5]);
         assert!(l.verify());
         let signed = &l.records()[4];
@@ -947,7 +1040,7 @@ mod tests {
         let l = reference_ledger();
         assert_eq!(l.records()[0].prev, Digest::GENESIS);
         let d = l.records()[0].digest;
-        assert_eq!(d.as_bytes()[0], 0x7a);
+        assert_eq!(d.as_bytes()[0], 0x06);
         assert_eq!(format!("{d:?}"), format!("Digest({d})"));
     }
 

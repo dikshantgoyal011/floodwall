@@ -5,14 +5,14 @@
 //! JSON object per line, UTF-8, `\n` line endings, with exactly the keys
 //! shown below. Every object has a `"type"`. Digests, signatures and keys
 //! are lowercase hex. Integers that can exceed 2^53 (and so are not exact in
-//! every JSON parser) are written as decimal strings; counts and replica
-//! numbers are plain numbers.
+//! every JSON parser), like intent ids and ticks, are written as decimal
+//! strings; counts and replica numbers are plain numbers.
 //!
 //! **Header**, always the first line:
 //!
 //! ```text
 //! {"type":"header","format":"floodwall-ledger","version":1,"from":0,
-//!  "hash":"sha256","merkle":"rfc6962","record_encoding":"floodwall/ledger/record/v2",
+//!  "hash":"sha256","merkle":"rfc6962","record_encoding":"floodwall/ledger/record/v3",
 //!  "intent_encoding":"floodwall/intent/v1","checkpoint_encoding":"floodwall/checkpoint/v1"}
 //! ```
 //!
@@ -22,10 +22,14 @@
 //! **Record**, one per ledger record, in order (fields as in [`Record`]):
 //!
 //! ```text
-//! {"type":"record","seq":0,"intent_id":"7","agent":"deployer","verdict":"admit",
-//!  "action":"apply web","reason":"..."|null,"policies":[["name","label"],...],
-//!  "intent":<intent>|null,"prev":"<hex>","digest":"<hex>"}
+//! {"type":"record","seq":0,"tick":"12","intent_id":"7","agent":"deployer",
+//!  "verdict":"admit","action":"apply web","reason":"..."|null,
+//!  "policies":[["name","label"],...],"intent":<intent>|null,
+//!  "prev":"<hex>","digest":"<hex>"}
 //! ```
+//!
+//! `tick` is the logical tick the record was written at; ticks never
+//! decrease from one record to the next (see [`crate::ledger`]).
 //!
 //! `intent` is the intent the record is about, as its agent signed it:
 //!
@@ -118,7 +122,7 @@ pub(crate) fn header(from: u64) -> String {
     format!(
         "{{\"type\":\"header\",\"format\":\"{FORMAT}\",\"version\":{VERSION},\"from\":{from},\
          \"hash\":\"sha256\",\"merkle\":\"rfc6962\",\
-         \"record_encoding\":\"floodwall/ledger/record/v2\",\
+         \"record_encoding\":\"floodwall/ledger/record/v3\",\
          \"intent_encoding\":\"floodwall/intent/v1\",\
          \"checkpoint_encoding\":\"floodwall/checkpoint/v1\"}}"
     )
@@ -166,8 +170,8 @@ fn intent_json(s: &mut String, i: &Intent) {
 
 pub(crate) fn record_line(r: &Record) -> String {
     let mut s = format!(
-        "{{\"type\":\"record\",\"seq\":{},\"intent_id\":\"{}\",\"agent\":",
-        r.seq, r.intent_id
+        "{{\"type\":\"record\",\"seq\":{},\"tick\":\"{}\",\"intent_id\":\"{}\",\"agent\":",
+        r.seq, r.tick, r.intent_id
     );
     json_str(&mut s, &r.agent);
     s.push_str(",\"verdict\":");
@@ -478,7 +482,7 @@ fn read_header(value: &Value) -> Result<u64, String> {
     for (value, name, expected) in [
         (f[4], "hash", "sha256"),
         (f[5], "merkle", "rfc6962"),
-        (f[6], "record_encoding", "floodwall/ledger/record/v2"),
+        (f[6], "record_encoding", "floodwall/ledger/record/v3"),
         (f[7], "intent_encoding", "floodwall/intent/v1"),
         (f[8], "checkpoint_encoding", "floodwall/checkpoint/v1"),
     ] {
@@ -565,6 +569,7 @@ fn read_record(value: &Value) -> Result<Record, String> {
         &[
             "type",
             "seq",
+            "tick",
             "intent_id",
             "agent",
             "verdict",
@@ -577,8 +582,8 @@ fn read_record(value: &Value) -> Result<Record, String> {
         ],
         "the record",
     )?;
-    let Value::Array(items) = f[7] else {
-        return Err(format!("policies is {}, not an array", f[7].kind()));
+    let Value::Array(items) = f[8] else {
+        return Err(format!("policies is {}, not an array", f[8].kind()));
     };
     let policies = items
         .iter()
@@ -593,20 +598,21 @@ fn read_record(value: &Value) -> Result<Record, String> {
         .collect::<Result<Vec<_>, String>>()?;
     Ok(Record {
         seq: number(f[1], "seq")?,
-        intent_id: decimal(f[2], "intent_id")?,
-        agent: string(f[3], "agent")?.to_string(),
-        verdict: string(f[4], "verdict")?.to_string(),
+        tick: decimal(f[2], "tick")?,
+        intent_id: decimal(f[3], "intent_id")?,
+        agent: string(f[4], "agent")?.to_string(),
+        verdict: string(f[5], "verdict")?.to_string(),
         evidence: Evidence {
-            action: string(f[5], "action")?.to_string(),
-            reason: opt_string(f[6], "reason")?,
+            action: string(f[6], "action")?.to_string(),
+            reason: opt_string(f[7], "reason")?,
             policies,
         },
-        intent: match f[8] {
+        intent: match f[9] {
             Value::Null => None,
             other => Some(read_intent(other)?),
         },
-        prev: Digest(hex(f[9], "prev")?),
-        digest: Digest(hex(f[10], "digest")?),
+        prev: Digest(hex(f[10], "prev")?),
+        digest: Digest(hex(f[11], "digest")?),
     })
 }
 
@@ -675,6 +681,7 @@ mod tests {
         )
         .signed(&key);
         let mut l = Ledger::new();
+        l.advance_clock(u64::MAX);
         l.append_intent(
             &intent,
             "defer",
@@ -691,7 +698,8 @@ mod tests {
         assert_eq!(
             lines[1],
             format!(
-                "{{\"type\":\"record\",\"seq\":0,\"intent_id\":\"18446744073709551615\",\
+                "{{\"type\":\"record\",\"seq\":0,\"tick\":\"18446744073709551615\",\
+                 \"intent_id\":\"18446744073709551615\",\
                  \"agent\":\"depl\\\"oyer\",\"verdict\":\"defer\",\"action\":\"apply web\",\
                  \"reason\":\"line one\\nline two\",\
                  \"policies\":[[\"allow\",\"admit\"],[\"conflict-window\",\"defer\"]],\
@@ -1037,9 +1045,20 @@ mod tests {
             "intent_id is not a u64",
         );
         refused(
-            &r("\"seq\":", "\"seq\":\"").replacen(",\"intent_id\"", "\",\"intent_id\"", 1),
+            &r("\"seq\":", "\"seq\":\"").replacen(",\"tick\"", "\",\"tick\"", 1),
             "seq is a string, not a number",
         );
+        // A tick is a u64 written as a decimal string, like an intent id.
+        refused(
+            &r("\"tick\":\"0\"", "\"tick\":0"),
+            "tick is a number, not a string",
+        );
+        refused(&r("\"tick\":\"0\"", "\"tick\":\"-1\""), "tick is not a u64");
+        refused(
+            &r("\"tick\":\"0\"", "\"tick\":\"18446744073709551616\""),
+            "tick is not a u64",
+        );
+        refused(&r(",\"tick\":\"0\"", ""), "the record has no \"tick\"");
         refused(
             &r("\"kind\":\"scale\"", "\"kind\":[\"scale\"]"),
             "intent.action.kind is not",
