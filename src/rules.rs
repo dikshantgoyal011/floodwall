@@ -1071,7 +1071,7 @@ mod tests {
     use super::*;
     use crate::intent::{AgentId, IntentKey};
     use crate::policy::{BlastNeedsPriority, NoGlobalDestroy, ResourceAllowlist};
-    use crate::{Admission, Floodwall, RateLimit, Verdict};
+    use crate::{Admission, Floodwall, Ledger, RateLimit, ResumeError, Verdict};
 
     const STANDARD: &str = include_str!("../policies/standard.rules");
 
@@ -1549,6 +1549,73 @@ mod tests {
             report.decisions[0].verdict.reason(),
             Some("billing is frozen")
         );
+    }
+
+    #[test]
+    fn a_plane_with_a_rules_gate_resumes_exactly() {
+        // Rules depend only on the intent, so a plane built from the same
+        // file replays its ledger and carries on where it stopped.
+        let plane = |rules: &str| {
+            Floodwall::new(
+                Admission::new(64, RateLimit::new(8.0, 1.0)),
+                Gate::new().with_rules(rules).unwrap(),
+            )
+        };
+        let mut before = plane(STANDARD);
+        let flood = [
+            ("deployer", apply("web", "v2"), BlastRadius::Service), // admitted
+            ("deployer", apply("web", "v3"), BlastRadius::Service), // waits for web
+            ("ops", scale("billing", 3), BlastRadius::Service),     // held: off the list
+            ("reaper", scale("api", 0), BlastRadius::Region),       // rejected: not urgent
+        ];
+        for (id, (agent, action, blast)) in flood.into_iter().enumerate() {
+            let intent = Intent::new(
+                id as u64,
+                AgentId::new(agent),
+                action,
+                Priority::Normal,
+                blast,
+            );
+            before.submit(intent, 0).unwrap();
+        }
+        let ruled: Vec<&str> = before
+            .tick(1)
+            .decisions
+            .iter()
+            .map(|d| d.verdict.label())
+            .collect();
+        assert_eq!(ruled, ["admit", "defer", "reject"]);
+        let state = |p: &Floodwall| {
+            let in_flight: Vec<_> = p.in_flight().map(|f| (&f.intent, f.since)).collect();
+            format!(
+                "clock {} head {}\nqueued {:?}\nin flight {in_flight:?}\nheld {:?}",
+                p.clock(),
+                p.ledger().head(),
+                p.queued().collect::<Vec<_>>(),
+                p.held().collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(before.queued().count(), 1);
+        assert_eq!(before.in_flight().count(), 1);
+        assert_eq!(before.held().count(), 1);
+        let mut export = Vec::new();
+        before.ledger().export_jsonl(&mut export).unwrap();
+        let ledger = || Ledger::read_jsonl(&export[..]).unwrap();
+        let mut after = plane(STANDARD).resume(ledger(), before.clock()).unwrap();
+        assert_eq!(state(&after), state(&before));
+        // Both go on the same way: the held intent released, then a tick.
+        for p in [&mut before, &mut after] {
+            p.release(&IntentKey::new("ops", 2), "operator", 2).unwrap();
+            p.tick(3);
+        }
+        assert_eq!(state(&after), state(&before));
+        // A gate built from other rules is caught at the first decision it
+        // would have made differently.
+        let other = plane("format 1 policy \"open\" { defer \"never\" when false }");
+        assert!(matches!(
+            other.resume(ledger(), 1),
+            Err(ResumeError::Diverged { .. })
+        ));
     }
 
     /// Mangled versions of the standard file never panic.
