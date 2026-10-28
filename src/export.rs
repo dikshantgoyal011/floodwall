@@ -12,7 +12,7 @@
 //!
 //! ```text
 //! {"type":"header","format":"floodwall-ledger","version":1,"from":0,
-//!  "hash":"sha256","merkle":"rfc6962","record_encoding":"floodwall/ledger/record/v3",
+//!  "hash":"sha256","merkle":"rfc6962","record_encoding":"floodwall/ledger/record/v4",
 //!  "intent_encoding":"floodwall/intent/v1","checkpoint_encoding":"floodwall/checkpoint/v1"}
 //! ```
 //!
@@ -24,12 +24,17 @@
 //! ```text
 //! {"type":"record","seq":0,"tick":"12","intent_id":"7","agent":"deployer",
 //!  "verdict":"admit","action":"apply web","reason":"..."|null,
-//!  "policies":[["name","label"],...],"intent":<intent>|null,
-//!  "prev":"<hex>","digest":"<hex>"}
+//!  "policies":[["name","label"],...],
+//!  "bundles":[{"name":"production","revision":"2026.10.28-1","digest":"<hex>"},...],
+//!  "intent":<intent>|null,"prev":"<hex>","digest":"<hex>"}
 //! ```
 //!
 //! `tick` is the logical tick the record was written at; ticks never
 //! decrease from one record to the next (see [`crate::ledger`]).
+//!
+//! `bundles` are the policy bundles a decision's rules came from (see
+//! [Bundles](crate::rules#bundles)), in order, and `[]` for a record with
+//! none, as every record that is not a decision is.
 //!
 //! `intent` is the intent the record is about, as its agent signed it:
 //!
@@ -87,6 +92,7 @@ use crate::json::{self, Value};
 use crate::keyring::Keyring;
 use crate::ledger::{Digest, Evidence, Ledger, Record};
 use crate::merkle::Frontier;
+use crate::rules::BundleId;
 
 /// The `format` named in the header.
 pub const FORMAT: &str = "floodwall-ledger";
@@ -122,7 +128,7 @@ pub(crate) fn header(from: u64) -> String {
     format!(
         "{{\"type\":\"header\",\"format\":\"{FORMAT}\",\"version\":{VERSION},\"from\":{from},\
          \"hash\":\"sha256\",\"merkle\":\"rfc6962\",\
-         \"record_encoding\":\"floodwall/ledger/record/v3\",\
+         \"record_encoding\":\"floodwall/ledger/record/v4\",\
          \"intent_encoding\":\"floodwall/intent/v1\",\
          \"checkpoint_encoding\":\"floodwall/checkpoint/v1\"}}"
     )
@@ -190,6 +196,17 @@ pub(crate) fn record_line(r: &Record) -> String {
         s.push(',');
         json_str(&mut s, label);
         s.push(']');
+    }
+    s.push_str("],\"bundles\":[");
+    for (i, bundle) in r.evidence.bundles.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str("{\"name\":");
+        json_str(&mut s, &bundle.name);
+        s.push_str(",\"revision\":");
+        json_str(&mut s, &bundle.revision);
+        s.push_str(&format!(",\"digest\":\"{}\"}}", bundle.digest));
     }
     s.push_str("],\"intent\":");
     match &r.intent {
@@ -323,8 +340,11 @@ pub fn keys_json(keyring: &Keyring, plane: Option<&VerifyingKey>) -> String {
 /// One line of an export, read back by [`read_line`].
 #[derive(Debug)]
 pub(crate) enum Line {
-    Header { from: u64 },
-    Record(Record),
+    Header {
+        from: u64,
+    },
+    /// Boxed: a record is much larger than the other lines.
+    Record(Box<Record>),
     Checkpoint(Checkpoint),
 }
 
@@ -351,7 +371,7 @@ pub(crate) fn read_line(line: &str) -> Result<Line, String> {
         "record" => {
             let r = read_record(&value)?;
             let written = record_line(&r);
-            (Line::Record(r), written)
+            (Line::Record(Box::new(r)), written)
         }
         "checkpoint" => {
             let c = read_checkpoint(&value)?;
@@ -482,7 +502,7 @@ fn read_header(value: &Value) -> Result<u64, String> {
     for (value, name, expected) in [
         (f[4], "hash", "sha256"),
         (f[5], "merkle", "rfc6962"),
-        (f[6], "record_encoding", "floodwall/ledger/record/v3"),
+        (f[6], "record_encoding", "floodwall/ledger/record/v4"),
         (f[7], "intent_encoding", "floodwall/intent/v1"),
         (f[8], "checkpoint_encoding", "floodwall/checkpoint/v1"),
     ] {
@@ -576,6 +596,7 @@ fn read_record(value: &Value) -> Result<Record, String> {
             "action",
             "reason",
             "policies",
+            "bundles",
             "intent",
             "prev",
             "digest",
@@ -596,6 +617,22 @@ fn read_record(value: &Value) -> Result<Record, String> {
             _ => Err(format!("policies[{n}] is not a [name, label] pair")),
         })
         .collect::<Result<Vec<_>, String>>()?;
+    let Value::Array(items) = f[9] else {
+        return Err(format!("bundles is {}, not an array", f[9].kind()));
+    };
+    let bundles = items
+        .iter()
+        .enumerate()
+        .map(|(n, item)| {
+            let what = format!("bundles[{n}]");
+            let b = fields(item, &["name", "revision", "digest"], &what)?;
+            Ok(BundleId {
+                name: string(b[0], &format!("{what}.name"))?.to_string(),
+                revision: string(b[1], &format!("{what}.revision"))?.to_string(),
+                digest: Digest(hex(b[2], &format!("{what}.digest"))?),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     Ok(Record {
         seq: number(f[1], "seq")?,
         tick: decimal(f[2], "tick")?,
@@ -606,13 +643,14 @@ fn read_record(value: &Value) -> Result<Record, String> {
             action: string(f[6], "action")?.to_string(),
             reason: opt_string(f[7], "reason")?,
             policies,
+            bundles,
         },
-        intent: match f[9] {
+        intent: match f[10] {
             Value::Null => None,
             other => Some(read_intent(other)?),
         },
-        prev: Digest(hex(f[10], "prev")?),
-        digest: Digest(hex(f[11], "digest")?),
+        prev: Digest(hex(f[11], "prev")?),
+        digest: Digest(hex(f[12], "digest")?),
     })
 }
 
@@ -682,7 +720,7 @@ mod tests {
         .signed(&key);
         let mut l = Ledger::new();
         l.advance_clock(u64::MAX);
-        l.append_intent(
+        l.append_intent_with(
             &intent,
             "defer",
             Some("line one\nline two".into()),
@@ -690,6 +728,11 @@ mod tests {
                 ("allow".into(), "admit".into()),
                 ("conflict-window".into(), "defer".into()),
             ],
+            vec![BundleId {
+                name: "production".into(),
+                revision: "2026.10.28-1".into(),
+                digest: Digest([0xab; 32]),
+            }],
         );
         l.append(3, "ops", "released");
         let text = export(&l);
@@ -703,17 +746,22 @@ mod tests {
                  \"agent\":\"depl\\\"oyer\",\"verdict\":\"defer\",\"action\":\"apply web\",\
                  \"reason\":\"line one\\nline two\",\
                  \"policies\":[[\"allow\",\"admit\"],[\"conflict-window\",\"defer\"]],\
+                 \"bundles\":[{{\"name\":\"production\",\"revision\":\"2026.10.28-1\",\
+                 \"digest\":\"{}\"}}],\
                  \"intent\":{{\"id\":\"18446744073709551615\",\"agent\":\"depl\\\"oyer\",\
                  \"action\":{{\"kind\":\"apply\",\"resource\":\"web\",\"manifest\":\"v2\"}},\
                  \"priority\":\"urgent\",\"blast_radius\":\"service\",\"signature\":\"{}\"}},\
                  \"prev\":\"{}\",\"digest\":\"{}\"}}",
+                "ab".repeat(32),
                 intent.signature.unwrap(),
                 Digest::GENESIS,
                 r.digest
             )
         );
-        // Absent values are null, an empty policy list is [].
-        assert!(lines[2].contains("\"reason\":null,\"policies\":[],\"intent\":null,"));
+        // Absent values are null, empty policy and bundle lists are [].
+        assert!(
+            lines[2].contains("\"reason\":null,\"policies\":[],\"bundles\":[],\"intent\":null,")
+        );
         assert!(text.ends_with('\n'));
         assert!(!text.contains('\r'));
     }
@@ -961,11 +1009,20 @@ mod tests {
                 blasts[n],
             );
             let intent = if n == 1 { intent } else { intent.signed(&key) };
-            l.append_intent(
+            // Record n carries n bundles, with awkward text.
+            let bundles = (0..n)
+                .map(|i| BundleId {
+                    name: ["prod", "\u{e9}\"x\\y"][i].into(),
+                    revision: ["r1", "2026.10.28-1\n"][i].into(),
+                    digest: Digest([(n + i) as u8; 32]),
+                })
+                .collect();
+            l.append_intent_with(
                 &intent,
                 "admit",
                 [None, Some(String::new()), Some("why\n".into())][n].clone(),
                 vec![("p".into(), "admit".into()); n],
+                bundles,
             );
         }
         l.append(3, "ops", "released");
@@ -1097,11 +1154,53 @@ mod tests {
         );
         refused(
             &r("\"policies\":[", "\"policies\":{\"a\":[").replacen(
-                "]],\"intent\"",
-                "]]},\"intent\"",
+                "]],\"bundles\"",
+                "]]},\"bundles\"",
                 1,
             ),
             "policies is an object",
+        );
+        // Bundles: an array of {name, revision, digest}, exactly.
+        let digest = Digest([1; 32]).to_string();
+        let bundle = format!("{{\"name\":\"prod\",\"revision\":\"r1\",\"digest\":\"{digest}\"}}");
+        refused(
+            &r(&format!("\"bundles\":[{bundle}]"), "\"bundles\":{}"),
+            "bundles is an object, not an array",
+        );
+        refused(
+            &r(&bundle, "[\"prod\",\"r1\"]"),
+            "bundles[0] is an array, not an object",
+        );
+        refused(
+            &r("\"revision\":\"r1\",", ""),
+            "bundles[0] has no \"revision\"",
+        );
+        refused(
+            &r("\"revision\":\"r1\",", "\"revision\":\"r1\",\"by\":\"ci\","),
+            "bundles[0] has an unknown field \"by\"",
+        );
+        refused(
+            &r(
+                "\"name\":\"prod\",\"revision\":\"r1\"",
+                "\"revision\":\"r1\",\"name\":\"prod\"",
+            ),
+            "bundles[0] does not have its fields in the documented order",
+        );
+        refused(
+            &r("\"name\":\"prod\"", "\"name\":7"),
+            "bundles[0].name is a number",
+        );
+        refused(
+            &r("\"revision\":\"r1\"", "\"revision\":null"),
+            "bundles[0].revision is null",
+        );
+        refused(
+            &r(&digest, &"AB".repeat(32)),
+            "bundles[0].digest is not 32 bytes of lowercase hex",
+        );
+        refused(
+            &r(&digest, &"01".repeat(31)),
+            "bundles[0].digest is not 32 bytes of lowercase hex",
         );
         refused(
             &r("\"reason\":\"\"", "\"reason\":false"),

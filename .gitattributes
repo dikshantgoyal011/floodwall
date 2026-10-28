@@ -2,3 +2,8 @@
 # LF on every OS so a Windows checkout builds byte-identical output.
 site/** text=auto eol=lf
 docs/** text=auto eol=lf
+
+# A rules file that declares a policy bundle is known by its SHA-256 (see
+# src/rules.rs), which every decision made with it records. Keep the files
+# LF on every OS, so a checkout hashes as the file was released.
+policies/** text=auto eol=lf

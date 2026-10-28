@@ -114,7 +114,7 @@ independent model).
   just admission state. Delivered with FW-402: the replay rebuilds all of
   it.
 
-## v0.5 - policy as code ◦ in progress
+## v0.5 - policy as code ✦ **done**
 
 - **FW-501** ✓ Declarative policy format so rules are data, not Rust.
   `floodwall::rules`: a small rules language (`reject`/`defer` "reason"
@@ -125,8 +125,10 @@ independent model).
   each next to its Rego in `policies/README.md`, run at the gate by
   `cargo run --example production`, and checked against a transcription
   of the Rego on every combination of what they test.
-- **FW-503** Policy bundles versioned and recorded in the ledger alongside
-  verdicts.
+- **FW-503** ✓ Policy bundles versioned and recorded in the ledger alongside
+  verdicts. A rules file declares `bundle "<name>" revision "<revision>"`;
+  every decision made with it records the name, the revision and the
+  file's SHA-256, covered by the record's digest (record encoding v4).
 
 ## Later
 

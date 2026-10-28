@@ -7,6 +7,7 @@
 
 use crate::intent::Intent;
 use crate::policy::{Policy, Verdict};
+use crate::rules::BundleId;
 
 /// The combined ruling plus the per-policy breakdown that produced it.
 #[derive(Debug)]
@@ -21,6 +22,8 @@ pub struct GateDecision {
 #[derive(Default)]
 pub struct Gate {
     policies: Vec<Box<dyn Policy>>,
+    /// The bundles of the rules files loaded into the stack, in order.
+    pub(crate) bundles: Vec<BundleId>,
 }
 
 impl Gate {
@@ -43,6 +46,13 @@ impl Gate {
     /// Whether the stack is empty.
     pub fn is_empty(&self) -> bool {
         self.policies.is_empty()
+    }
+
+    /// The policy bundles the stack's rules came from, in the order they
+    /// were loaded ([`Gate::with_rules`]; see
+    /// [Bundles](crate::rules#bundles)). Every decision records them.
+    pub fn bundles(&self) -> &[BundleId] {
+        &self.bundles
     }
 
     /// Rule on one intent, returning the combined verdict and the full

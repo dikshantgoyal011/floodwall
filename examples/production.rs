@@ -123,6 +123,7 @@ pub fn run() -> String {
     let policies = floodwall::rules::parse(RULES).expect("the guardrails parse");
     let rules: usize = policies.iter().map(|p| p.len()).sum();
     let gate = Gate::new().with_rules(RULES).expect("the guardrails parse");
+    let bundle = gate.bundles()[0].clone();
     let mut plane = Floodwall::new(Admission::new(64, RateLimit::new(8.0, 1.0)), gate);
     writeln!(
         out,
@@ -130,6 +131,7 @@ pub fn run() -> String {
         policies.len()
     )
     .unwrap();
+    writeln!(out, "bundle {bundle}, sha256 {}", bundle.digest).unwrap();
 
     let morning = morning();
     let count = morning.len();
@@ -219,5 +221,12 @@ pub fn run() -> String {
         kinds.join(", ")
     )
     .unwrap();
+    // Each decision records the bundle that made it.
+    let decided = ledger
+        .records()
+        .iter()
+        .filter(|r| r.evidence.bundles == [bundle.clone()])
+        .count();
+    writeln!(out, "  {decided} decisions record bundle {bundle}").unwrap();
     out
 }

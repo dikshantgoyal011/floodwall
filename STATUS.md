@@ -9,9 +9,11 @@ not trust whoever holds it. v0.4 is done too: the ledger can be kept on
 disk (FW-401), every record carries the tick it was written at (FW-404),
 and a restarted plane picks up exactly where it left off by replaying its
 ledger (FW-402, FW-405), which a property test checks over random floods
-and restarts (FW-403). v0.5 has begun: policies can be written as data,
-in a small rules language (FW-501), with a worked example of OPA/Rego-style
-guardrails run at the gate (FW-502). An `Intent` flows through `Admission`
+and restarts (FW-403). v0.5 is done as well: policies can be written as
+data, in a small rules language (FW-501); a worked example writes
+OPA/Rego-style guardrails in it and runs them at the gate (FW-502); and a
+rules file can be a versioned policy bundle that every decision it makes
+records (FW-503). An `Intent` flows through `Admission`
 (per-agent token bucket + bounded priority queue with backpressure) into
 the scheduler, which starts only what may run now: a `Global` change
 alone, `Region` changes one at a time with their resource to themselves,
@@ -23,15 +25,17 @@ the caller reports back; deferred intents wait in a hold queue for a human
 to release or expire them.
 
 Every decision, release, expiry and outcome lands in a SHA-256 hash-chained
-`Ledger`. With a keyring, agents sign their intents with Ed25519 and every
-record carries its agent's signature. The ledger cuts Merkle checkpoints
-(RFC 6962) that the plane can sign, so an auditor can check what came after
-a trusted checkpoint without replaying from genesis, or prove a single
-record with a logarithmic inclusion proof. The whole ledger, or the part
-after a checkpoint, exports as JSON Lines, and an independent verifier
-using only Node's standard library (`tools/verify-ledger.mjs`) checks every
-digest, link, Merkle root and signature, and that every record shows the
-intent its agent signed, in CI.
+`Ledger`, and a decision records the policy bundles its rules came from:
+each one's name, revision and file digest. With a keyring, agents sign
+their intents with Ed25519 and every record carries its agent's
+signature. The ledger cuts Merkle checkpoints (RFC 6962) that the plane
+can sign, so an auditor can check what came after a trusted checkpoint
+without replaying from genesis, or prove a single record with a
+logarithmic inclusion proof. The whole ledger, or the part after a
+checkpoint, exports as JSON Lines, and an independent verifier using only
+Node's standard library (`tools/verify-ledger.mjs`) checks every digest,
+link, Merkle root and signature, and that every record shows the intent
+its agent signed, in CI.
 
 A ledger on disk (`Ledger::create`, `Ledger::open`) is that same JSON
 Lines file, written as it grows: every record is written and synced before
@@ -43,20 +47,26 @@ of its own, checks it from genesis, and discards only a last line a crash
 left unfinished; any other bad line is refused and the file left alone.
 
 Still zero dependencies (SHA-256, SHA-512, Ed25519 and the JSON reader are
-from scratch) and pinned to Rust 1.95. 227 unit tests, 13 doctests
+from scratch) and pinned to Rust 1.95. 234 unit tests, 14 doctests
 (including the README examples), a randomized invariant test (300 seeded
 floods plus 6 signed ones, each ending in checkpoint audits), a replay
 property test (150 random floods plus 6 signed ones, with 300-odd
-restarts), the worked example's guardrails checked against their Rego on
-24,576 intents, an edge-case export fixture that is also kept on disk, and
-18 tamper tests of the independent verifier; fmt + clippy (`-D warnings`)
-clean.
+restarts, half of them with a policy bundle), the worked example's
+guardrails checked against their Rego on 24,576 intents, an edge-case
+export fixture that is also kept on disk, and 21 tamper tests of the
+independent verifier; fmt + clippy (`-D warnings`) clean.
 
 The floodwall.ai site (React + Vite in `site/`, built into `docs/` for
 GitHub Pages) describes the scheduler and hold queue.
 
 ## Recently shipped
 
+- **FW-503** - versioned policy bundles: a rules file declares
+  `bundle "<name>" revision "<revision>"`, and every decision made with
+  it records the bundle's name, revision and the file's SHA-256 (record
+  encoding v4). The export and the independent verifier carry them, and a
+  plane can restart on a new revision that rules on its history the same
+  way.
 - **FW-502** - a worked OPA/Rego-style example: production guardrails
   (`policies/production.rules`) next to their Rego in
   `policies/README.md`, run at the gate by
@@ -97,20 +107,25 @@ GitHub Pages) describes the scheduler and hold queue.
 
 ## Next up
 
-- **v0.5 policy as code** - FW-503: policy bundles versioned and recorded
-  in the ledger alongside verdicts.
+- **Later** - no milestone is planned past v0.5. GOALS.md lists what could
+  come next (FW-901 to FW-908), from backpressure signalling and in-flight
+  leases to a TLA+ model of the protocol.
 
 ## Known gaps
 
 - Resuming establishes that the agents signed what the ledger says, and
   that this plane makes the decisions it shows; not who wrote the file.
   Check the ledger's signed checkpoints against the plane's key for that.
-- Resuming needs the plane built exactly as before; the configuration is
-  not in the ledger. A difference that changes a decision is caught at the
-  first record that comes out differently, but one that changes nothing
-  yet is not, and takes effect from the restart on. A plane that started
-  from an `Admission` that already held intents cannot be resumed, since
-  their arrival is not in its ledger.
+- Resuming needs the plane built exactly as before; of the configuration,
+  only the gate's policy bundles are in the ledger. A difference that
+  changes a decision is caught at the first record that comes out
+  differently, but one that changes nothing yet is not, and takes effect
+  from the restart on. A plane may restart on a new revision of its
+  bundles that rules on its history the same way: the replay checks the
+  rules agree with every decision, not that the revision a decision
+  records was the one in use, which rests on the signed checkpoints. A
+  plane that started from an `Admission` that already held intents cannot
+  be resumed, since their arrival is not in its ledger.
 - A call that records nothing still moves the plane's clock, which the
   ledger cannot show, so `Floodwall::resume` needs the tick to restart
   at: the latest tick the plane was given, or later (the current time,
@@ -124,6 +139,9 @@ GitHub Pages) describes the scheduler and hold queue.
   completes, the reopened ledger lacks that checkpoint; the next one, or
   `Ledger::checkpoint`, covers those records.
 - The whole ledger is still held in memory, and reopening reads all of it.
+- A decision names its bundle by the rules file's SHA-256, but the ledger
+  does not hold the rules themselves: checking a decision against its
+  rules needs the file, kept wherever the team releases its bundles.
 - A retired agent key (kept for audits after a rotation) verifies any of
   its agent's records. Records now carry their tick (FW-404), so a key
   could be limited to the records before its retirement, but the keyring

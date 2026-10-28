@@ -51,12 +51,35 @@
 //! The replayed plane must be built exactly as the one that wrote the
 //! ledger: the same admission capacity and rate limit, the same gate (the
 //! same policies, in the same order, deciding the same way), the same
-//! scheduler and hold settings, and a keyring if it had one. Nothing about
-//! the configuration is in the ledger. A difference that changes any
+//! scheduler and hold settings, and a keyring if it had one. Of the
+//! configuration, only the gate's policy bundles are in the ledger (see
+//! [Policy bundles](#policy-bundles)). A difference that changes any
 //! decision is caught, as [`ResumeError::Diverged`] at the first record
 //! that comes out differently; a difference that changes no decision so far
 //! is not, and takes effect from then on, as if the plane had been
 //! reconfigured at the restart.
+//!
+//! # Policy bundles
+//!
+//! Every decision records the policy bundles its gate's rules came from
+//! (see [Bundles](crate::rules#bundles)). A replay rules on every intent
+//! with the plane's own gate, and must reach the same decision, with the
+//! same reason and the same verdict from every policy. The bundles it
+//! records for a replayed decision are the ones the ledger shows, as long
+//! as the plane's gate has bundles of the same names, in the same order:
+//! they say which revision decided, then.
+//!
+//! So a plane can restart on a new revision of its bundles, as long as the
+//! new revision rules on the ledger's history the same way. From the
+//! restart on, its decisions record the new revision, and the first of them
+//! marks the change in the ledger. A gate with other bundles (one renamed,
+//! added or dropped) is refused, as [`ResumeError::Diverged`] at the first
+//! decision.
+//!
+//! The replay checks that the plane's rules agree with every decision in the
+//! ledger, not that the revision a decision records was the one in use when
+//! it was made: that is what the ledger says, and, like who wrote the file,
+//! rests on its signed checkpoints.
 //!
 //! # Signatures
 //!
@@ -130,6 +153,7 @@ use std::fmt;
 use crate::intent::{Intent, IntentKey};
 use crate::keyring::Keyring;
 use crate::ledger::{Digest, Ledger, Record, SignatureError, SignatureProblem};
+use crate::rules::BundleId;
 use crate::{Floodwall, Outcome, QUEUED, SIGNATURE_CHECK};
 
 /// Why [`Floodwall::resume`] could not pick up from a ledger.
@@ -245,6 +269,23 @@ fn checks_at(records: &[Record], tick: u64) -> HashMap<IntentKey, bool> {
     checks
 }
 
+/// For the pass at `tick` whose records start `records`: the bundles each
+/// of its decisions records, as the ledger shows (see
+/// [Policy bundles](self#policy-bundles)).
+fn bundles_at(records: &[Record], tick: u64) -> HashMap<IntentKey, Vec<BundleId>> {
+    let mut bundles = HashMap::new();
+    for r in records.iter().take_while(|r| r.tick == tick) {
+        let (Some(intent), "admit" | "defer" | "reject") = (&r.intent, r.verdict.as_str()) else {
+            continue;
+        };
+        // The first ruling on an intent from here on is this pass's.
+        bundles
+            .entry(intent.key())
+            .or_insert_with(|| r.evidence.bundles.clone());
+    }
+    bundles
+}
+
 /// A record, briefly, for [`ResumeError::Diverged`].
 fn describe(r: &Record) -> String {
     let key = r.intent.as_ref().map_or_else(
@@ -276,6 +317,15 @@ fn difference(want: &Record, got: &Record) -> String {
         format!(
             "wrote it with the reason {:?}, not {:?}",
             got.evidence.reason, want.evidence.reason
+        )
+    } else if want.evidence.bundles != got.evidence.bundles {
+        let names = |r: &Record| -> Vec<String> {
+            r.evidence.bundles.iter().map(BundleId::to_string).collect()
+        };
+        format!(
+            "wrote it with the bundles {:?}, not {:?}",
+            names(got),
+            names(want)
         )
     } else {
         "wrote it differently".into()
@@ -348,10 +398,12 @@ impl Floodwall {
             let call = self.call_for(record)?;
             if matches!(call, Call::Tick) {
                 self.replayed_checks = Some(checks_at(&stored[next..], record.tick));
+                self.replayed_bundles = Some(bundles_at(&stored[next..], record.tick));
             }
             let written = self.ledger.len();
             let refused = self.replay(call, record.tick);
             self.replayed_checks = None;
+            self.replayed_bundles = None;
             let replayed = &self.ledger.records()[written..];
             if replayed.is_empty() {
                 return Err(ResumeError::Diverged {
@@ -383,7 +435,10 @@ impl Floodwall {
             ledger.advance_clock(r.tick);
             let reason = r.evidence.reason.clone();
             let policies = r.evidence.policies.clone();
-            if let Err(e) = ledger.write_intent(intent, &r.verdict, reason, policies, false) {
+            let bundles = r.evidence.bundles.clone();
+            if let Err(e) =
+                ledger.write_intent(intent, &r.verdict, reason, policies, bundles, false)
+            {
                 crate::ledger::write_failed(e);
             }
         }
@@ -1189,5 +1244,152 @@ mod tests {
         .signed(&new_key);
         assert_eq!(q.submit(fresh, 2), Ok(()));
         assert!(matches!(q.tick(3).decisions[0].verdict, Verdict::Admit));
+    }
+
+    /// A plane whose gate is one bundle: an allowlist of `allowed` as rules.
+    fn bundled(name: &str, revision: &str, allowed: &str) -> Floodwall {
+        let rules = format!(
+            "format 1\nbundle \"{name}\" revision \"{revision}\"\n\
+             policy \"allowlist\" {{ defer \"{{resource}} is off the list\" \
+             when resource not in [{allowed}] }}\n"
+        );
+        Floodwall::new(
+            Admission::new(8, RateLimit::new(4.0, 1.0)),
+            Gate::new().with_rules(&rules).unwrap(),
+        )
+    }
+
+    const WEB_AND_API: &str = "\"web\", \"api\"";
+
+    /// The revision each decision in a plane's ledger records.
+    fn revisions(p: &Floodwall) -> Vec<String> {
+        p.ledger()
+            .records()
+            .iter()
+            .filter(|r| matches!(r.verdict.as_str(), "admit" | "defer" | "reject"))
+            .map(|r| r.evidence.bundles[0].revision.clone())
+            .collect()
+    }
+
+    /// `records` in a new ledger, bundles and all.
+    fn copy(records: &[Record]) -> Ledger {
+        let mut ledger = Ledger::new();
+        for r in records {
+            ledger.advance_clock(r.tick);
+            ledger.append_intent_with(
+                r.intent.as_ref().unwrap(),
+                &r.verdict,
+                r.evidence.reason.clone(),
+                r.evidence.policies.clone(),
+                r.evidence.bundles.clone(),
+            );
+        }
+        ledger
+    }
+
+    #[test]
+    fn a_restart_on_a_new_revision_keeps_the_history_and_marks_the_change() {
+        let mut before = bundled("fleet", "1", WEB_AND_API);
+        before.submit(scale("a", 1, "web", 2), 0).unwrap();
+        before.submit(scale("a", 2, "cache", 2), 0).unwrap(); // off the list
+        before.tick(1);
+        // Revision 2 rules on everything in the ledger the same way, so the
+        // plane restarts on it, and the history keeps revision 1.
+        let mut after = bundled("fleet", "2", WEB_AND_API)
+            .resume(reread(before.ledger()), 1)
+            .unwrap();
+        assert_eq!(after.ledger().head(), before.ledger().head());
+        assert_eq!(revisions(&after), ["1", "1"]);
+        // From the restart on, decisions record revision 2: the first of
+        // them marks the change.
+        after.submit(scale("a", 3, "api", 2), 2).unwrap();
+        after.tick(2);
+        assert_eq!(revisions(&after), ["1", "1", "2"]);
+        let digests: Vec<Digest> = after
+            .ledger()
+            .records()
+            .iter()
+            .filter_map(|r| r.evidence.bundles.first().map(|b| b.digest))
+            .collect();
+        assert_ne!(digests[1], digests[2], "the revision is in the file");
+        // A later restart replays both, each decision as it was recorded.
+        let again = bundled("fleet", "2", WEB_AND_API)
+            .resume(reread(after.ledger()), after.clock())
+            .unwrap();
+        assert_eq!(state(&again), state(&after));
+        assert_eq!(revisions(&again), ["1", "1", "2"]);
+    }
+
+    #[test]
+    fn a_restart_with_other_bundles_is_refused() {
+        let mut before = bundled("fleet", "1", WEB_AND_API);
+        before.submit(scale("a", 1, "web", 2), 0).unwrap();
+        before.tick(1);
+        let ledger = || reread(before.ledger());
+        // Record 0 is a#1's arrival, 1 its decision.
+        let diverged_at_the_decision = |result| match refused(result) {
+            ResumeError::Diverged { seq, found, .. } => {
+                assert_eq!(seq, 1, "{found}");
+                found
+            }
+            other => panic!("{other:?}"),
+        };
+        // A renamed bundle.
+        assert_eq!(
+            diverged_at_the_decision(bundled("staging", "1", WEB_AND_API).resume(ledger(), 1)),
+            "wrote it with the bundles [\"staging 1\"], not [\"fleet 1\"]"
+        );
+        // The same rules, but not as a bundle.
+        let rules = format!(
+            "format 1 policy \"allowlist\" {{ defer \"{{resource}} is off the list\" \
+             when resource not in [{WEB_AND_API}] }}"
+        );
+        let unbundled = Floodwall::new(
+            Admission::new(8, RateLimit::new(4.0, 1.0)),
+            Gate::new().with_rules(&rules).unwrap(),
+        );
+        assert_eq!(
+            diverged_at_the_decision(unbundled.resume(ledger(), 1)),
+            "wrote it with the bundles [], not [\"fleet 1\"]"
+        );
+        // A new revision that rules on the history differently is refused,
+        // like any other change that changes a decision.
+        let found = diverged_at_the_decision(bundled("fleet", "2", "\"api\"").resume(ledger(), 1));
+        assert!(found.starts_with("wrote `defer` for a#1"), "{found}");
+    }
+
+    #[test]
+    fn a_tick_cut_short_is_finished_under_the_current_revision() {
+        let mut before = bundled("fleet", "1", WEB_AND_API);
+        before.submit(scale("a", 1, "web", 2), 0).unwrap();
+        before.submit(scale("a", 2, "api", 2), 0).unwrap();
+        before.tick(1);
+        // A crash kept only the first of the tick's two decisions.
+        let records = before.ledger().records();
+        let cut = copy(&records[..records.len() - 1]);
+        let after = bundled("fleet", "2", WEB_AND_API).resume(cut, 1).unwrap();
+        // The decision that reached the disk keeps its revision; the one the
+        // restart finished was made now, under revision 2.
+        assert_eq!(revisions(&after), ["1", "2"]);
+        assert_eq!(after.in_flight().count(), 2);
+        assert!(after.ledger().verify());
+    }
+
+    #[test]
+    fn the_replay_checks_the_rules_not_which_revision_was_in_use() {
+        // What a ledger says about the revision in use is history: a replay
+        // checks the plane's rules agree with every decision, not that the
+        // recorded revision was the one in use (see "Policy bundles").
+        let mut before = bundled("fleet", "1", WEB_AND_API);
+        before.submit(scale("a", 1, "web", 2), 0).unwrap();
+        before.tick(1);
+        let mut records = before.ledger().records().to_vec();
+        records[1].evidence.bundles[0].revision = "0.9".into();
+        let relabelled = copy(&records);
+        assert!(relabelled.verify(), "re-hashed, so the chain is consistent");
+        let after = bundled("fleet", "1", WEB_AND_API)
+            .resume(relabelled, 1)
+            .unwrap();
+        assert_eq!(revisions(&after), ["0.9"]);
     }
 }
