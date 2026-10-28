@@ -1,8 +1,12 @@
-import { Link, NavLink, Outlet } from "react-router";
+import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router";
+import { AUTH_COPY, AUTH_PATHS } from "../../constants/auth";
 import { CONSOLE_NAV, CONSOLE_PATHS } from "../../constants/console";
+import { loginPath } from "../../helpers/auth";
 import { cx } from "../../helpers/cx";
 import { usePlane } from "../../hooks/usePlane";
+import { useSession } from "../../hooks/useSession";
 import { BrandMark } from "../shared/BrandMark";
+import { Button } from "../ui/button";
 import { PlaneProvider } from "./PlaneProvider";
 
 const NAV_LINK =
@@ -16,8 +20,17 @@ function HoldCount() {
   ) : null;
 }
 
-/** The console shell under /app: a sidebar (a top bar on narrow screens) and the page. */
+/**
+ * The console shell under /app: a sidebar (a top bar on narrow screens) and
+ * the page. Signed-out visitors go to sign in first and come back here.
+ */
 export function ConsoleLayout() {
+  const { session, signOut } = useSession();
+  const location = useLocation();
+
+  if (session.status === "loading") return null;
+  if (session.status === "signedOut") return <Navigate to={loginPath(location.pathname + location.search)} replace />;
+
   return (
     <PlaneProvider>
       {/* React hoists this into <head>: the console is shared by URL, not meant for search. */}
@@ -55,9 +68,19 @@ export function ConsoleLayout() {
               </NavLink>
             ))}
           </nav>
-          <p className="mt-auto rounded-control bg-subtle p-3 text-xs leading-normal text-muted console-narrow:hidden">
-            Dummy data. Nothing here touches a real plane.
-          </p>
+          <div className="mt-auto flex flex-col gap-4 console-narrow:contents">
+            <p className="rounded-control bg-subtle p-3 text-xs leading-normal text-muted console-narrow:hidden">
+              Dummy data. Nothing here touches a real plane.
+            </p>
+            <div className="flex items-center gap-2 px-2 console-narrow:ml-auto">
+              <Link className="min-w-0 flex-1 truncate font-semibold console-narrow:hidden" to={AUTH_PATHS.account}>
+                {session.user.email}
+              </Link>
+              <Button variant="outline" size="sm" onClick={() => void signOut()}>
+                {AUTH_COPY.signOut}
+              </Button>
+            </div>
+          </div>
         </aside>
         <main
           className={cx(

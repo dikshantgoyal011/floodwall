@@ -56,6 +56,25 @@ export const bayLights =
 /** A pricing section: the content column, spaced from the one above. */
 export const pricingSection = `${pageWidth} pt-section`;
 
+/* ------------------------------------------------------------- Sign-in */
+
+// Passed straight to shadcn's Button. Like ButtonLink, they undo its fixed
+// height, border and pressed nudge, and use the site's focus outline.
+const pillBase =
+  "h-auto min-h-10 shrink gap-0 rounded-(--radius-pill) px-5 text-sm transition-[transform,background,border-color] duration-180 ease-[ease] active:not-aria-[haspopup]:translate-y-0 focus-visible:ring-0 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-bay-deep disabled:opacity-55";
+
+/** The solid black pill, as a form button. */
+export const pillSolid = `${pillBase} border-0 bg-black font-bold text-white hover:bg-[#151515]`;
+
+/** The outlined pill beside it, for the quieter actions. */
+export const pillOutline = `${pillBase} border border-line bg-white font-semibold text-ink hover:border-[rgba(8,11,13,0.24)] hover:bg-tint-hover`;
+
+/** The card the sign-in forms and account details sit on. */
+export const authCard = `${card} gap-5 p-8 mobile:p-6`;
+
+/** The blue note that says the code is a demo. */
+export const authNote = "rounded-control bg-info-soft px-3.5 py-2.5 text-sm text-info";
+
 /* ------------------------------------------------------------- Console */
 
 // Cards, buttons, inputs, selects, tables and tabs are shadcn's, in
