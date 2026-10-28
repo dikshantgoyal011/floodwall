@@ -130,8 +130,12 @@ pub const FORMAT: u64 = 1;
 /// file declares, and the SHA-256 of the file (see [Bundles](self#bundles)).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BundleId {
+    /// The bundle's name, such as `production`.
     pub name: String,
+    /// The revision it was released under, such as `2026.10.28-1`.
     pub revision: String,
+    /// The SHA-256 of the rules file, exactly as given, as `sha256sum`
+    /// prints it.
     pub digest: Digest,
 }
 
