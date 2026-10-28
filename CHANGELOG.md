@@ -8,6 +8,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A worked example of OPA/Rego-style policies at the gate (FW-502).
+  `policies/production.rules` writes a platform team's production
+  guardrails as rules: images only from the internal registry, no agent
+  taking a database or queue to zero, service ownership, scale bounds that
+  wait for a human, more urgency for wider changes, and chaos agents kept in
+  staging. `policies/README.md` sets each one next to the Rego it stands
+  for and says what carries over and what does not, and
+  `cargo run --example production` runs them at the gate.
+  `tests/production_policies.rs` transcribes the Rego into Rust and checks
+  the rules decide exactly as it does, with the same messages, on 24,576
+  intents either side of every boundary, and that the walkthrough's output
+  and quoted policies are the example's and the file's.
 - Policies as data (FW-501). `floodwall::rules` reads a small declarative
   rules language: named policies, each a list of `reject "reason" when
   <condition>` and `defer "reason" when <condition>` rules, with

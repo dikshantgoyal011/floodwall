@@ -10,7 +10,8 @@ disk (FW-401), every record carries the tick it was written at (FW-404),
 and a restarted plane picks up exactly where it left off by replaying its
 ledger (FW-402, FW-405), which a property test checks over random floods
 and restarts (FW-403). v0.5 has begun: policies can be written as data,
-in a small rules language (FW-501). An `Intent` flows through `Admission`
+in a small rules language (FW-501), with a worked example of OPA/Rego-style
+guardrails run at the gate (FW-502). An `Intent` flows through `Admission`
 (per-agent token bucket + bounded priority queue with backpressure) into
 the scheduler, which starts only what may run now: a `Global` change
 alone, `Region` changes one at a time with their resource to themselves,
@@ -46,8 +47,9 @@ from scratch) and pinned to Rust 1.95. 227 unit tests, 13 doctests
 (including the README examples), a randomized invariant test (300 seeded
 floods plus 6 signed ones, each ending in checkpoint audits), a replay
 property test (150 random floods plus 6 signed ones, with 300-odd
-restarts), an edge-case export fixture that is also kept on disk, and 18
-tamper tests of the independent verifier; fmt + clippy (`-D warnings`)
+restarts), the worked example's guardrails checked against their Rego on
+24,576 intents, an edge-case export fixture that is also kept on disk, and
+18 tamper tests of the independent verifier; fmt + clippy (`-D warnings`)
 clean.
 
 The floodwall.ai site (React + Vite in `site/`, built into `docs/` for
@@ -55,6 +57,11 @@ GitHub Pages) describes the scheduler and hold queue.
 
 ## Recently shipped
 
+- **FW-502** - a worked OPA/Rego-style example: production guardrails
+  (`policies/production.rules`) next to their Rego in
+  `policies/README.md`, run at the gate by
+  `cargo run --example production`, and checked against a transcription
+  of the Rego.
 - **FW-501** - policies as data: a small, type-checked rules language
   (`floodwall::rules`, `Gate::with_rules`), in which
   `policies/standard.rules` writes the built-in policies.
@@ -90,9 +97,8 @@ GitHub Pages) describes the scheduler and hold queue.
 
 ## Next up
 
-- **v0.5 policy as code** - FW-502 and FW-503: a worked OPA-style example
-  evaluated at the gate, and policy bundles versioned and recorded in the
-  ledger alongside verdicts.
+- **v0.5 policy as code** - FW-503: policy bundles versioned and recorded
+  in the ledger alongside verdicts.
 
 ## Known gaps
 

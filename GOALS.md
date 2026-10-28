@@ -120,7 +120,11 @@ independent model).
   `floodwall::rules`: a small rules language (`reject`/`defer` "reason"
   `when` condition), type-checked when read, and `Gate::with_rules`;
   `policies/standard.rules` writes the built-in policies in it.
-- **FW-502** A worked OPA/Rego-style example evaluated at the gate.
+- **FW-502** ✓ A worked OPA/Rego-style example evaluated at the gate.
+  `policies/production.rules`: production guardrails written as rules,
+  each next to its Rego in `policies/README.md`, run at the gate by
+  `cargo run --example production`, and checked against a transcription
+  of the Rego on every combination of what they test.
 - **FW-503** Policy bundles versioned and recorded in the ledger alongside
   verdicts.
 

@@ -276,6 +276,8 @@ assert_eq!(report.decisions[0].verdict, Verdict::Reject("billing is frozen until
 
 Rules test an intent's agent, resource, manifest, kind, replicas, priority and blast radius, with comparisons, lists, `*` patterns, `not`, `and` and `or`; a file that mistypes a field or a value is refused with its line and column. [`policies/standard.rules`](policies/standard.rules) writes the built-in policies this way, and the tests check it rules exactly as they do. The format is documented in [`src/rules.rs`](src/rules.rs).
 
+For a worked example, [`policies/README.md`](policies/README.md) writes a platform team's production guardrails (a trusted image registry, protected state, service ownership, scale bounds, change risk) as rules, each next to the OPA/Rego it stands for, and `cargo run --example production` runs them at the gate.
+
 ## Demo
 
 ```text
@@ -341,7 +343,7 @@ See [GOALS.md](GOALS.md) for the full roadmap and [STATUS.md](STATUS.md) for cur
 - **No wall clock.** Time is a logical tick supplied by the caller, so the whole plane is deterministic and testable. Time never moves backwards: a tick earlier than the latest one seen is treated as the latest.
 - **You apply the changes.** floodwall decides; it does not execute. An admitted intent is in flight until you call `complete`, so report back even when a change fails or times out.
 - **`unsafe` is forbidden** at the crate level.
-- **Tested against its own spec.** Besides unit tests and these README examples (compiled as doctests), [`tests/scheduler_invariants.rs`](tests/scheduler_invariants.rs) runs 300 seeded random floods and checks every scheduling, conflict and hold guarantee above after each step, and [`tests/replay_property.rs`](tests/replay_property.rs) checks that replaying a ledger reproduces the live decisions, through random restarts and crashes.
+- **Tested against its own spec.** Besides unit tests and these README examples (compiled as doctests), [`tests/scheduler_invariants.rs`](tests/scheduler_invariants.rs) runs 300 seeded random floods and checks every scheduling, conflict and hold guarantee above after each step, [`tests/replay_property.rs`](tests/replay_property.rs) checks that replaying a ledger reproduces the live decisions, through random restarts and crashes, and [`tests/production_policies.rs`](tests/production_policies.rs) checks the worked example's rules decide exactly as their Rego does.
 
 ## License
 

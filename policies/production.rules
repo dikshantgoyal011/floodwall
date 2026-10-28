@@ -1,0 +1,50 @@
+format 1
+
+# Production guardrails for a fleet of agents: the worked example of
+# writing OPA/Rego-style policies as floodwall rules. policies/README.md
+# shows the Rego each policy stands for, and walks through the gate's
+# decisions with `cargo run --example production`.
+
+# Supply chain: deploy only images that CI built and pushed to the internal
+# registry. The classic admission-control rule.
+policy "trusted-registry" {
+  reject "{agent} tried to deploy {manifest}, which is not from registry.internal"
+    when kind == apply and not manifest matches "registry.internal/*"
+}
+
+# State: no agent tears down a database or a queue.
+policy "protect-state" {
+  reject "{resource} holds state, so no agent may take it to zero"
+    when destructive and (resource matches "*-db" or resource matches "*-queue")
+}
+
+# Ownership: a team's services change only through its own agents, or the
+# shared autoscaler.
+policy "service-ownership" {
+  reject "{agent} does not own {resource}"
+    when resource matches "payments*" and agent not in ["payments-deployer", "autoscaler"]
+  reject "{agent} does not own {resource}"
+    when resource matches "search*" and agent not in ["search-deployer", "autoscaler"]
+}
+
+# Capacity: scaling past the usual bounds waits for a human.
+policy "scale-bounds" {
+  defer "scaling {resource} to {replicas} replicas needs a human"
+    when replicas > 40
+  defer "scaling {resource} to zero needs a human"
+    when replicas == 0
+}
+
+# Risk: the wider a change can break things, the more urgency it needs.
+policy "change-risk" {
+  reject "a global {kind} needs priority pager, not {priority}"
+    when blast_radius == global and priority < pager
+  defer "a region-wide change at priority {priority} waits for a human"
+    when blast_radius == region and priority < urgent
+}
+
+# Sandboxes: chaos agents stay in staging.
+policy "chaos-in-staging" {
+  reject "{agent} may only touch staging, not {resource}"
+    when agent matches "chaos-*" and not resource matches "staging-*"
+}
