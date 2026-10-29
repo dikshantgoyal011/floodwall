@@ -363,6 +363,9 @@ impl Floodwall {
     /// against the current keyring when next ruled on (see
     /// [Signatures](crate::replay#signatures)).
     ///
+    /// The resumed plane's [`stats`](Floodwall::stats) start afresh: they
+    /// count what it does from here on (see [`crate::stats`]).
+    ///
     /// Fails with [`ResumeError::NotFresh`] if this plane has queued or
     /// recorded anything, [`ResumeError::Unverified`] if `ledger` does not
     /// verify, [`ResumeError::Unauthenticated`] if an intent in it is not
@@ -449,6 +452,9 @@ impl Floodwall {
         // Pending intents are checked against the current keyring when next
         // ruled on: what vouched for them in the past is not permission now.
         self.authenticated.clear();
+        // The stats count what this plane does from here on: what it
+        // replayed is in the ledger (see crate::stats).
+        self.counters.reset(self.admission.len());
         // One clock for the plane and its ledger, which may have been moved
         // past its last record.
         let clock = self.advance(now.max(ledger.clock()));

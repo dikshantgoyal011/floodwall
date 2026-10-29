@@ -313,6 +313,39 @@ assert_eq!(decision.evidence.bundles, [bundle]); // covered by the record's dige
 
 The bundle's digest is the SHA-256 of the file, so an auditor holding it can match it with `sha256sum`. The export carries the bundles, and `tools/verify-ledger.mjs` lists the bundles a ledger names. A plane can restart on a new revision that rules on its history the same way; the earlier decisions keep theirs.
 
+### Watching the plane
+
+The plane counts what it does as it goes: for each agent, and for the whole fleet, what was refused at the door and why, admitted, deferred, rejected, released, expired, and how it turned out; and how deep the queue is, how much is in flight and how much is held. `Stats::prometheus` writes the same numbers in the Prometheus text format, with no dependency, for a `/metrics` endpoint:
+
+```rust
+use floodwall::{Admission, Floodwall, Gate, RateLimit};
+use floodwall::intent::{Action, AgentId, BlastRadius, Intent, Priority};
+
+// Each agent may burst one intent, and never refills.
+let mut plane = Floodwall::new(Admission::new(64, RateLimit::new(1.0, 0.0)), Gate::new());
+let scale = |id| Intent::new(
+    id,
+    AgentId::new("autoscaler"),
+    Action::Scale { resource: "web".into(), replicas: 3 },
+    Priority::Normal,
+    BlastRadius::Service,
+);
+plane.submit(scale(1), 0).unwrap();
+plane.submit(scale(2), 0).unwrap_err(); // over its rate limit
+plane.tick(0);
+
+let stats = plane.stats();
+let autoscaler = stats.agent("autoscaler").unwrap();
+assert_eq!((autoscaler.queued, autoscaler.rate_limited, autoscaler.admitted), (1, 1, 1));
+assert_eq!(stats.in_flight, 1);
+
+let text = stats.prometheus();
+assert!(text.contains(r#"floodwall_intents_total{agent="autoscaler",event="rate_limited"} 1"#));
+assert!(text.contains("floodwall_in_flight 1"));
+```
+
+The counts start when the plane is built, or resumed from its ledger, as metrics do when a process restarts: the ledger keeps the history, but not the refusals at the door. Per-agent counts are kept for the first 1024 agents, and with a keyring only for the agents in it; the rest are counted together, so a fleet minting fresh ids cannot grow the plane's memory, and intents in made-up names cannot crowd out the real agents.
+
 ## Demo
 
 ```text
@@ -378,7 +411,7 @@ See [GOALS.md](GOALS.md) for the full roadmap and [STATUS.md](STATUS.md) for cur
 - **No wall clock.** Time is a logical tick supplied by the caller, so the whole plane is deterministic and testable. Time never moves backwards: a tick earlier than the latest one seen is treated as the latest.
 - **You apply the changes.** floodwall decides; it does not execute. An admitted intent is in flight until you call `complete`, so report back even when a change fails or times out.
 - **`unsafe` is forbidden** at the crate level.
-- **Tested against its own spec.** Besides unit tests and these README examples (compiled as doctests), [`tests/scheduler_invariants.rs`](tests/scheduler_invariants.rs) runs 300 seeded random floods and checks every scheduling, conflict and hold guarantee above after each step, [`tests/replay_property.rs`](tests/replay_property.rs) checks that replaying a ledger reproduces the live decisions, through random restarts and crashes, and [`tests/production_policies.rs`](tests/production_policies.rs) checks the worked example's rules decide exactly as their Rego does.
+- **Tested against its own spec.** Besides unit tests and these README examples (compiled as doctests), [`tests/scheduler_invariants.rs`](tests/scheduler_invariants.rs) runs 300 seeded random floods and checks every scheduling, conflict and hold guarantee above after each step, [`tests/replay_property.rs`](tests/replay_property.rs) checks that replaying a ledger reproduces the live decisions, through random restarts and crashes, [`tests/stats_property.rs`](tests/stats_property.rs) checks the plane's stats are exactly what its calls returned, and [`tests/production_policies.rs`](tests/production_policies.rs) checks the worked example's rules decide exactly as their Rego does.
 
 ## License
 

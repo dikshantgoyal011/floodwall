@@ -139,9 +139,13 @@ independent model).
 - **FW-903** Formal model (TLA+) of the admit/serialize/commit protocol with
   safety (no two conflicting changes commit) and liveness (every admitted
   intent eventually decides) obligations.
-- **FW-904** *(new)* Observability: per-agent admit / defer / reject
+- **FW-904** ✓ *(new)* Observability: per-agent admit / defer / reject
   counters, queue depth, and rate-limit hits, exposed without adding a
-  runtime dependency.
+  runtime dependency. `Floodwall::stats` counts, per agent and in all,
+  every refusal at the door by its reason and every decision, release,
+  expiry and outcome, with the queue's depth and peak, what is in flight
+  and what is held; `Stats::prometheus` writes them in the Prometheus text
+  format.
 - **FW-905** *(new)* Throughput benchmarks for admission and the gate, so
   the scheduler and SHA-256 work can be measured against v0.1.
 - **FW-906** *(new)* Optional in-flight leases: surface (or auto-fail)

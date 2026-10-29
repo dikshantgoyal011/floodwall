@@ -77,6 +77,7 @@ pub mod rules;
 pub mod scheduler;
 pub mod sha256;
 pub mod sha512;
+pub mod stats;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -95,9 +96,11 @@ pub use policy::{Policy, Verdict};
 pub use replay::ResumeError;
 pub use rules::BundleId;
 pub use scheduler::{InFlight, SchedulerConfig};
+pub use stats::{Counts, Stats};
 
 use hold::Hold;
 use scheduler::{Readiness, Scheduler};
+use stats::{Counters, Event};
 
 // Compile and run the README's examples as doctests, so they cannot drift
 // from the API.
@@ -249,6 +252,9 @@ pub struct Floodwall {
     /// ledger shows that pass ruling on, the bundles its decision records
     /// (see [Policy bundles](crate::replay#policy-bundles)).
     replayed_bundles: Option<HashMap<IntentKey, Vec<BundleId>>>,
+    /// What the plane has done since it was built or resumed (see
+    /// [`crate::stats`]).
+    counters: Counters,
     clock: u64,
 }
 
@@ -284,7 +290,10 @@ impl Floodwall {
             }
             live.insert(key);
         }
+        let mut counters = Counters::default();
+        counters.queue_depth(admission.len());
         Ok(Self {
+            counters,
             clock: admission.clock(),
             admission,
             scheduler: Scheduler::new(SchedulerConfig::default()),
@@ -376,14 +385,32 @@ impl Floodwall {
     /// [Durability](Floodwall#durability)).
     pub fn submit(&mut self, intent: Intent, now: u64) -> Result<(), Rejected> {
         let now = self.advance(now);
-        if let Some(keyring) = &self.keyring {
-            keyring.authenticate(&intent).map_err(|e| match e {
+        let agent = intent.agent.clone();
+        let result = match &self.keyring {
+            Some(keyring) => keyring.authenticate(&intent).map_err(|e| match e {
                 AuthError::Unsigned => Rejected::Unsigned,
                 AuthError::UnknownAgent => Rejected::UnknownAgent,
                 AuthError::BadSignature => Rejected::BadSignature,
-            })?;
+            }),
+            None => Ok(()),
         }
-        self.queue(intent, now)
+        .and_then(|()| self.queue(intent, now));
+        match result {
+            Ok(()) => {
+                self.counters.count(agent.as_str(), Event::Queued);
+                self.counters.queue_depth(self.admission.len());
+            }
+            Err(why) => {
+                // Only the keyring's agents get counts of their own: an
+                // intent refused at the door may name anyone.
+                let trusted = self
+                    .keyring
+                    .as_ref()
+                    .is_none_or(|k| k.get(&agent).is_some());
+                self.counters.refused(agent.as_str(), why, trusted);
+            }
+        }
+        result
     }
 
     /// Let an intent in, past the signature check: refuse a duplicate,
@@ -535,6 +562,12 @@ impl Floodwall {
             _ => gate_bundles.to_vec(),
         };
         self.record(&intent, verdict.label(), reason, policies, bundles);
+        let event = match &verdict {
+            Verdict::Admit => Event::Admitted,
+            Verdict::Defer(_) => Event::Deferred,
+            Verdict::Reject(_) => Event::Rejected,
+        };
+        self.counters.count(intent.agent.as_str(), event);
         match &verdict {
             Verdict::Admit => self.scheduler.start(intent.clone(), now),
             Verdict::Defer(why) => {
@@ -570,6 +603,8 @@ impl Floodwall {
     /// Record a held intent's expiry and forget it.
     fn expire_held(&mut self, held: Held, reason: String, report: &mut TickReport) {
         self.forget(&held.intent.key());
+        self.counters
+            .count(held.intent.agent.as_str(), Event::Expired);
         self.record(
             &held.intent,
             "expired",
@@ -615,9 +650,12 @@ impl Floodwall {
             Vec::new(),
         );
         self.persist();
+        self.counters
+            .count(held.intent.agent.as_str(), Event::Released);
         self.admission
             .requeue(held.intent, now)
             .expect("checked the queue has room above");
+        self.counters.queue_depth(self.admission.len());
         self.released.insert(key.clone(), by.to_string());
         Ok(())
     }
@@ -645,6 +683,8 @@ impl Floodwall {
             Vec::new(),
         );
         self.persist();
+        self.counters
+            .count(held.intent.agent.as_str(), Event::Expired);
         Ok(held)
     }
 
@@ -680,6 +720,11 @@ impl Floodwall {
             Vec::new(),
         );
         self.persist();
+        let event = match outcome {
+            Outcome::Succeeded => Event::Succeeded,
+            Outcome::Failed(_) => Event::Failed,
+        };
+        self.counters.count(finished.intent.agent.as_str(), event);
         Ok(finished.intent)
     }
 
@@ -733,6 +778,18 @@ impl Floodwall {
     /// The held (deferred) intents, oldest first.
     pub fn held(&self) -> impl Iterator<Item = &Held> {
         self.hold.iter()
+    }
+
+    /// What the plane has done since it was built or resumed, per agent and
+    /// across the fleet, and where it stands now: how deep the queue is, and
+    /// has been at most, and how much is in flight and held (see
+    /// [`crate::stats`]).
+    pub fn stats(&self) -> Stats {
+        self.counters.snapshot(
+            self.admission.len(),
+            self.scheduler.in_flight().count(),
+            self.hold.iter().count(),
+        )
     }
 
     /// Whether the intent `key` is held.

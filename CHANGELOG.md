@@ -8,6 +8,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Observability (FW-904). `Floodwall::stats` returns a `Stats`: for each
+  agent (`Stats::agent`, `Stats::agents`) and in all (`Stats::total`), a
+  `Counts` of the intents refused at the door, by reason (unsigned,
+  unknown agent, bad signature, duplicate, backpressure, rate limited),
+  queued, admitted, deferred, rejected, released, expired (by a human, past
+  the TTL, or evicted), succeeded and failed; and the queue's depth and its
+  peak, what is in flight and what is held. `Stats::prometheus` writes it
+  in the Prometheus text exposition format, with no dependency. The counts
+  are what the plane did since it was built or resumed: `Floodwall::resume`
+  starts them afresh. Per-agent counts are kept for the first
+  `stats::AGENT_LIMIT` (1024) agents; later ones are counted together in
+  `Stats::untracked`, and so, with a keyring, is what is refused at the
+  door in the name of an agent outside it. `tests/stats_property.rs`
+  checks the stats are exactly what every call returned, through random
+  floods and restarts, and the demo checks them against its own tally.
 - Versioned policy bundles, recorded with every decision (FW-503). A rules
   file can declare `bundle "<name>" revision "<revision>"` right after its
   format line; its identity is `BundleId`: the name, the revision, and the

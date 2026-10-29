@@ -54,7 +54,7 @@ impl Rng {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Tally {
     offered: u64,
     forged: u64,
@@ -171,8 +171,9 @@ fn main() {
     // from any checkpoint without replaying it from genesis.
     let mut plane = build_plane(&keyring)
         .with_ledger(ledger.with_checkpoints(256).with_signer(plane_key.clone()));
-    // What the plane held when --ledger restarted it.
+    // What the plane held when --ledger restarted it, and the tally then.
     let mut restarted = None;
+    let mut before_restart = Tally::default();
 
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
     let flood_ticks = 200u64;
@@ -215,6 +216,7 @@ fn main() {
                 "the restarted plane holds what the old one did"
             );
             restarted = Some(held);
+            before_restart = t.clone();
         }
 
         // Changes that finish applying report back.
@@ -361,6 +363,33 @@ fn main() {
     }
 
     let queued = t.offered - t.forged - t.rate_limited - t.backpressure;
+    // The plane's own stats agree with this tally. With --ledger, they count
+    // from the restart, as a resumed plane's do.
+    let b = &before_restart;
+    let stats = plane.stats().total;
+    let expired = |t: &Tally| t.expired_by_operator + t.expired_by_plane;
+    let queued_by = |t: &Tally| t.offered - t.forged - t.rate_limited - t.backpressure;
+    let agree = [
+        (stats.bad_signature, t.forged - b.forged),
+        (stats.rate_limited, t.rate_limited - b.rate_limited),
+        (stats.backpressure, t.backpressure - b.backpressure),
+        (stats.queued, queued - queued_by(b)),
+        (stats.admitted, t.admitted - b.admitted),
+        (stats.deferred, t.deferred - b.deferred),
+        (stats.rejected, t.rejected - b.rejected),
+        (stats.released, t.released - b.released),
+        (stats.expired, expired(&t) - expired(b)),
+        (stats.succeeded, t.succeeded - b.succeeded),
+        (stats.failed, t.failed - b.failed),
+    ];
+    assert!(
+        agree.iter().all(|(counted, tallied)| counted == tallied),
+        "the plane's stats disagree with the demo's tally: {agree:?}"
+    );
+    assert_eq!(
+        (stats.duplicate, stats.unsigned, stats.unknown_agent),
+        (0, 0, 0)
+    );
     let latest = plane.checkpoint();
     let ledger = plane.ledger();
     println!(

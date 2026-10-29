@@ -46,12 +46,22 @@ the file against a second writer, reads it back with a strict JSON reader
 of its own, checks it from genesis, and discards only a last line a crash
 left unfinished; any other bad line is refused and the file left alone.
 
+The plane counts what it does (FW-904): `Floodwall::stats` gives, per
+agent and in all, every refusal at the door by its reason, every
+decision, release, expiry and outcome, and the queue's depth and peak,
+what is in flight and what is held, and `Stats::prometheus` writes them
+in the Prometheus text format. The counts start when the plane is built
+or resumed, and are kept per agent for the first 1024 agents (with a
+keyring, only for the agents in it).
+
 Still zero dependencies (SHA-256, SHA-512, Ed25519 and the JSON reader are
-from scratch) and pinned to Rust 1.95. 234 unit tests, 14 doctests
+from scratch) and pinned to Rust 1.95. 241 unit tests, 15 doctests
 (including the README examples), a randomized invariant test (300 seeded
 floods plus 6 signed ones, each ending in checkpoint audits), a replay
 property test (150 random floods plus 6 signed ones, with 300-odd
-restarts, half of them with a policy bundle), the worked example's
+restarts, half of them with a policy bundle), a stats property test (150
+random floods, 30 of them signed, with about 700 restarts, the stats
+checked against what every call returned), the worked example's
 guardrails checked against their Rego on 24,576 intents, an edge-case
 export fixture that is also kept on disk, and 21 tamper tests of the
 independent verifier; fmt + clippy (`-D warnings`) clean.
@@ -61,6 +71,11 @@ GitHub Pages) describes the scheduler and hold queue.
 
 ## Recently shipped
 
+- **FW-904** - observability: `Floodwall::stats` counts what the plane
+  does, per agent and in all (refusals at the door by reason, decisions,
+  releases, expiries and outcomes) with the queue's depth and peak, what
+  is in flight and what is held, and `Stats::prometheus` writes them in
+  the Prometheus text format, with no dependency.
 - **FW-503** - versioned policy bundles: a rules file declares
   `bundle "<name>" revision "<revision>"`, and every decision made with
   it records the bundle's name, revision and the file's SHA-256 (record
@@ -107,9 +122,10 @@ GitHub Pages) describes the scheduler and hold queue.
 
 ## Next up
 
-- **Later** - no milestone is planned past v0.5. GOALS.md lists what could
-  come next (FW-901 to FW-908), from backpressure signalling and in-flight
-  leases to a TLA+ model of the protocol.
+- **Later** - no milestone is planned past v0.5. Of what GOALS.md lists
+  could come next (FW-901 to FW-908), FW-904 is done; the rest run from
+  backpressure signalling and in-flight leases to a TLA+ model of the
+  protocol.
 
 ## Known gaps
 
