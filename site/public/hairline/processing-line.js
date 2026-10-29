@@ -1,69 +1,118 @@
-/** The README's full control plane, with the hold branch off the policy gate. */
-const { Cam, facing, fit, proj, rings, prism, fillet, poly, open, seg, solid, put, mk,
-  pointer, register, disposer, reducedMotion, bezier } = HL;
+/**
+ * The README's control plane as one machined channel. The flood narrows through
+ * admission and the scheduler to a sluice gate. The gate rules on each intent: deferrals are
+ * sent from the gate into the hold bay and return through it only when a person presses
+ * release, rejections sink, and admitted work passes under the ledger's stamp onto dry ground.
+ */
+const { Cam, facing, fit, proj, rrect, prism, fillet, poly, open, seg, solid, put, mk,
+  pointer, register, disposer, reducedMotion, bezier, tween, tset, tval } = HL;
 
-function mount({stage,svg,onStageChange=()=>{},onHoldChange=()=>{}},value) {
+function mount({stage,svg,onStageChange=()=>{},onHoldChange=()=>{}}) {
   const mobile=matchMedia("(max-width: 600px)").matches;
-  const terminalShift=32;
-  const bag=disposer(), C=mobile?Cam(90,.65,1):Cam(45,.5,1);
-  const timing={pause:1500,append:900,travel:3200,landing:650,settleLead:2200,rest:300,second:9600,duration:17000};
+  const bag=disposer(), C=mobile?Cam(90,.62,1):Cam(45,.5,1);
+  fit(C,[[0,0,0]],200,160);
+  const P=proj(C), front=facing(C), origin=P(0,0,0), Z=8;
+  // The sign of each world axis toward the viewer drives the painter's sort.
+  const toward=[Math.sin(C.az),Math.cos(C.az)].map(v=>Math.abs(v)<1e-6?0:Math.sign(v));
+  const ease=bezier(.32,.72,0,1), glide=bezier(.45,0,.55,1);
+  const unit=v=>Math.max(0,Math.min(1,v)), mix=(a,b,k)=>a.map((v,i)=>v+(b[i]-v)*k);
   let frame={x:0,y:0,width:400,height:320};
-  fit(C,[[-160,-100,0],[200,115,0],[-160,115,0],[200,-100,0],[60,-25,66]],200,160);
-  const deck={bottom:3,top:8,radius:6};
-  const ground=proj(C), P=(x,y,z)=>ground(x,y,z+deck.top), front=facing(C), root=mk("g",{},svg);
-  function plate(parent,box,z0,z1,r=3,crease=true) {
-    const [ring,inner]=rings(...box,r,.65), s=solid(parent);
-    put(s,prism(P,front,ring,inner,z0,z1));if(!crease)s.cr.remove();return s;
+  const root=mk("g",{},svg), floor=mk("g",{},root), scene=mk("g",{},root), above=mk("g",{},root), notes=mk("g",{},root);
+
+  // Every solid is a chamfered block (n=1 cuts each corner once) drawn at the origin and
+  // translated: projection is affine. Round parts pass a higher n.
+  const blocks=[];
+  function block(w,h,d,{r=2,b=.6,n=1,crease=true,cls=""}={}) {
+    const g=mk("g",cls?{class:cls}:{},scene), s=solid(g);
+    const it={g,s,w,h,d,x:0,y:0,z:0,shown:true,shape:"",pose:"",alpha:"",marks:null};
+    it.size=(W,H,D)=>{
+      const key=`${W.toFixed(2)} ${H.toFixed(2)} ${D.toFixed(2)}`;
+      if(it.shape===key)return it;
+      it.shape=key;Object.assign(it,{w:W,h:H,d:D});
+      const k=Math.min(b,W/2-.3,H/2-.3);
+      put(s,prism(P,front,rrect(0,0,W,H,r,n),crease?rrect(k,k,W-k,H-k,Math.max(.3,r-k),n):null,0,D));
+      it.marks?.(W,H,D);return it;
+    };
+    it.at=(x,y,z,opacity=1)=>{
+      it.x=x;it.y=y;it.z=z;it.shown=opacity>.004;
+      const q=P(x,y,z),pose=`translate(${(q[0]-origin[0]).toFixed(2)} ${(q[1]-origin[1]).toFixed(2)})`,alpha=opacity.toFixed(2);
+      if(it.pose!==pose){it.pose=pose;g.setAttribute("transform",pose);}
+      if(it.alpha!==alpha){it.alpha=alpha;g.setAttribute("opacity",alpha);}
+      return it;
+    };
+    it.centre=(x,y,z,opacity)=>it.at(x-it.w/2,y-it.h/2,z,opacity);
+    it.remove=()=>{g.remove();blocks.splice(blocks.indexOf(it),1);};
+    it.state=(name,on)=>{if(g.classList.contains(name)!==on)g.classList.toggle(name,on);};
+    blocks.push(it);return it.size(w,h,d);
   }
-  // Detached labels keep the camera's projected axes, with air around the drawing.
-  function zoneLabel(text,point,u,v,size,kind="upright") {
-    const a=P(0,0,0),b=P(...u),c=P(...v);
-    const ul=Math.hypot(b[0]-a[0],b[1]-a[1]),vl=Math.hypot(c[0]-a[0],c[1]-a[1]);
-    const label=mk("text",{class:`zone-label zone-label-${kind}`,"data-zone-label":text,
-      "text-anchor":"middle","dominant-baseline":"central","font-size":String(size),
-      transform:`matrix(${(b[0]-a[0])/ul} ${(b[1]-a[1])/ul} ${(c[0]-a[0])/vl} ${(c[1]-a[1])/vl} ${point[0]} ${point[1]})`},root);
-    label.textContent=text.toUpperCase();return label;
+  // A check printed on the lid, drawn along the screen's axes so it reads upright from either camera.
+  const across=[Math.cos(C.az),-Math.sin(C.az)], down=[Math.sin(C.az),Math.cos(C.az)];
+  function checked(it) {
+    const path=mk("path",{class:"nf production-check",opacity:"0"},it.g);
+    it.marks=(W,H,D)=>{
+      const R=Math.min(W,H)*.36,f=(u,v)=>P(W/2+R*(u*across[0]+v*down[0]),H/2+R*(u*across[1]+v*down[1]),D+.05);
+      path.setAttribute("d",open([f(-.62,-.05),f(-.18,.62),f(.7,-.62)]));
+    };
+    it.marks(it.w,it.h,it.d);it.check=path;return it;
   }
-  function card(parent,x,y,z,w=10,h=9) {
-    const group=mk("g",{},parent), body=plate(group,[x,y,x+w,y+h],z,z+4,2);
-    let last="";
-    function draw(X,Y,Z,depth=4,W=w,H=h) {
-      const key=`${X},${Y},${Z},${depth},${W},${H}`; if(last===key)return; last=key;
-      const [r,i]=rings(X,Y,X+W,Y+H,2,.5);
-      put(body,prism(P,front,r,i,Z,Z+depth));
+
+  // Painter's sort: a box wholly above, or wholly nearer along a viewed axis, cannot be hidden.
+  function sweep(it,axis) {
+    const lo=axis?it.y:it.x,hi=lo+(axis?it.h:it.w);
+    return toward[axis]>0?[lo,hi]:[-hi,-lo];
+  }
+  function order(a,b) {
+    const e=.01;
+    if(b.z>=a.z+a.d-e)return -1;
+    if(a.z>=b.z+b.d-e)return 1;
+    for(const axis of [0,1]) {
+      if(!toward[axis])continue;
+      const [a0,a1]=sweep(a,axis),[b0,b1]=sweep(b,axis);
+      if(b0>=a1-e)return -1;
+      if(a0>=b1-e)return 1;
     }
-    draw(x,y,z); return {body,draw,group};
+    // Intersecting boxes, such as a card riding over a plate's lip: the one standing higher is in front.
+    if(a.z>b.z+e&&a.z+a.d>b.z+b.d+e)return 1;
+    if(b.z>a.z+e&&b.z+b.d>a.z+a.d+e)return -1;
+    return 0;
   }
-  function rails(points,width=8,kind="") {
-    for(const side of [-1,1]) {
-      const edge=points.map((q,i)=>{
-        const a=points[Math.max(0,i-1)],b=points[Math.min(points.length-1,i+1)];
-        const dx=b[0]-a[0],dy=b[1]-a[1],length=Math.hypot(dx,dy);
-        return ground(q[0]-side*dy/length*width/2,q[1]+side*dx/length*width/2,deck.top+.15);
-      });
-      mk("path",{d:open(edge),class:`nf guide-rail ${kind}`},root);
-    }
-  }
-  function cartonMarks(parent) {
-    const group=mk("g",{},parent),check=mk("path",{class:"nf production-check"},group),record=mk("path",{class:"nf production-record"},group);
-    return {group,draw(x,y,z,w,h,d){
-      const face=(u,v)=>P(x+w+.1,y+h*(1-u),z+d*v);
-      const tile=(u0,v0,u1,v1)=>poly([face(u0,v0),face(u1,v0),face(u1,v1),face(u0,v1)]);
-      if(mobile) {
-        // The portrait camera sees the x face; the desktop check face is edge-on.
-        check.setAttribute("d",open([face(.1,.56),face(.29,.33),face(.59,.8)]));
-        record.setAttribute("d",tile(.68,.55,.89,.82)+tile(.74,.19,.95,.46)+seg(face(.79,.55),face(.85,.46)));
-        return;
+  let painted=[];
+  function paint() {
+    const items=blocks.filter(it=>it.shown),n=items.length;
+    const box=items.map(it=>{
+      let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+      for(const x of [it.x,it.x+it.w])for(const y of [it.y,it.y+it.h])for(const z of [it.z,it.z+it.d]) {
+        const q=P(x,y,z);x0=Math.min(x0,q[0]);x1=Math.max(x1,q[0]);y0=Math.min(y0,q[1]);y1=Math.max(y1,q[1]);
       }
-      check.setAttribute("d",open([P(x+w*.12,y+h+.1,z+d*.6),P(x+w*.34,y+h+.1,z+d*.28),P(x+w*.76,y+h+.1,z+d*.9)]));
-      record.setAttribute("d",tile(.19,.55,.64,.82)+tile(.35,.19,.8,.46)+seg(face(.43,.55),face(.59,.46)));
-    }};
+      return [x0,y0,x1,y1];
+    });
+    const depth=items.map(it=>(it.x+it.w/2)*toward[0]+(it.y+it.h/2)*toward[1]+it.z*.01);
+    const next=items.map(()=>[]),need=new Array(n).fill(0);
+    for(let i=0;i<n;i++)for(let j=i+1;j<n;j++) {
+      const a=box[i],b=box[j];
+      if(a[2]<=b[0]+.01||b[2]<=a[0]+.01||a[3]<=b[1]+.01||b[3]<=a[1]+.01)continue;
+      const o=order(items[i],items[j])||(depth[i]<=depth[j]?-1:1);
+      if(o<0){next[i].push(j);need[j]++;}else{next[j].push(i);need[i]++;}
+    }
+    const done=new Array(n).fill(false),out=[];
+    while(out.length<n) {
+      let pick=-1;
+      for(let i=0;i<n;i++)if(!done[i]&&!need[i]&&(pick<0||depth[i]<depth[pick]))pick=i;
+      // Intersecting solids can form a cycle; the farther one breaks it.
+      if(pick<0)for(let i=0;i<n;i++)if(!done[i]&&(pick<0||depth[i]<depth[pick]))pick=i;
+      done[pick]=true;out.push(items[pick]);
+      for(const j of next[pick])need[j]--;
+    }
+    if(out.length!==painted.length||out.some((it,i)=>it!==painted[i])){out.forEach(it=>scene.appendChild(it.g));painted=out;}
   }
-  // One rounded Y footprint: broad intake, a narrow gate, two distinct banks.
-  const outline=[[-149,-34],[64,-34],[142,-112],[228+terminalShift,-112],[228+terminalShift,-56],[160,-56],[107,0],
-    [160,56],[228+terminalShift,56],[228+terminalShift,112],[142,112],[64,34],[-149,34]];
-  const bank=fillet(outline,outline.map(()=>deck.radius));
-  mk("path",{d:poly(bank.map(([x,y])=>ground(x,y,deck.bottom))),class:"sil platform-bottom"},root);
+
+  // One machined slab: a squared intake bay, a 45° shoulder into the channel, the hold arm off
+  // the gate's approach, and the production yard. Every corner is a chamfer cut.
+  const W=24, B=46;
+  const outline=[[-172,-B],[-104,-B],[-82,-W],[184,-W],[194,-34],[276,-34],[276,34],[194,34],[184,W],[100,W],
+    [100,132],[46,132],[46,W],[-82,W],[-104,B],[-172,B]];
+  const bank=fillet(outline,[8,3,3,3,3,8,8,3,3,4,8,8,4,3,3,8],1);
+  mk("path",{d:poly(bank.map(([x,y])=>P(x,y,0))),class:"sil platform-bottom"},floor);
   const edgeFaces=bank.map((a,i)=>{const b=bank[(i+1)%bank.length];return front({nu:b[1]-a[1],nv:a[0]-b[0]});});
   const startEdge=edgeFaces.indexOf(false),sideRuns=[];let sideRun=[];
   for(let step=1;step<=bank.length;step++) {
@@ -71,384 +120,419 @@ function mount({stage,svg,onStageChange=()=>{},onHoldChange=()=>{}},value) {
     if(edgeFaces[i]){if(!sideRun.length)sideRun.push(a);sideRun.push(b);}
     else if(sideRun.length){sideRuns.push(sideRun);sideRun=[];}
   }
-  mk("path",{d:sideRuns.map(run=>poly([...run.map(q=>ground(...q,deck.top)),...run.toReversed().map(q=>ground(...q,deck.bottom))])).join(""),class:"platform-side"},root);
-  mk("path",{d:poly(bank.map(([x,y])=>ground(x,y,deck.top))),class:"sil platform-top"},root);
-  // Inset workshop guides establish the two routes without floor arrows.
-  rails([[-145,0],[57,0]],8);
-  for(const side of [-1,1])rails([[78,0],[125,side*48],[177+terminalShift,side*84]],8,"release-guide");
+  if(sideRun.length)sideRuns.push(sideRun);
+  mk("path",{d:sideRuns.map(run=>poly([...run.map(q=>P(...q,Z)),...run.toReversed().map(q=>P(...q,0))])).join(""),class:"platform-side"},floor);
+  mk("path",{d:poly(bank.map(([x,y])=>P(x,y,Z))),class:"sil platform-top"},floor);
 
-  // Seeded variation keeps the flood irregular without changing on rerenders.
+  // Floor markings: a hairline centre guide up to the gate, and painted lanes with flow chevrons:
+  // deferrals from the gate into the hold bay, released work back to the gate, and the main lane on.
+  const lift=Z+.1, quad=(a,c,b,k)=>a.map((v,i)=>(1-k)**2*v+2*(1-k)*k*c[i]+k*k*b[i]);
+  mk("path",{d:open([[-78,0],[88,0]].map(([x,y])=>P(x,y,lift))),class:"nf guide-rail"},floor);
+  function lane(points,half,spacing,cls) {
+    const at=[0];
+    for(let i=1;i<points.length;i++)at.push(at[i-1]+Math.hypot(points[i][0]-points[i-1][0],points[i][1]-points[i-1][1]));
+    const frame=i=>{const a=points[Math.max(0,i-1)],b=points[Math.min(points.length-1,i+1)],l=Math.hypot(b[0]-a[0],b[1]-a[1]);
+      return [(b[0]-a[0])/l,(b[1]-a[1])/l];};
+    const side=(i,s)=>{const [tx,ty]=frame(i),q=points[i];return P(q[0]-ty*half*s,q[1]+tx*half*s,lift);};
+    const edge=s=>open(points.map((_,i)=>side(i,s)));
+    // Square stop bars close both ends, so every lane reads as a painted, finished marking.
+    const caps=seg(side(0,1),side(0,-1))+seg(side(points.length-1,1),side(points.length-1,-1));
+    mk("path",{d:edge(1)+edge(-1)+caps,class:`nf floor-edge ${cls}`},floor);
+    let marks="";
+    for(let d=spacing*.6;d<at.at(-1)-spacing*.3;d+=spacing) {
+      const i=Math.max(1,at.findIndex(v=>v>=d)),k=(d-at[i-1])/(at[i]-at[i-1]);
+      const q=[points[i-1][0]+(points[i][0]-points[i-1][0])*k,points[i-1][1]+(points[i][1]-points[i-1][1])*k],[tx,ty]=frame(i);
+      const w=half*.62,back=2.4,tip=1.4;
+      marks+=open([P(q[0]-tx*back-ty*w,q[1]-ty*back+tx*w,lift),P(q[0]+tx*tip,q[1]+ty*tip,lift),P(q[0]-tx*back+ty*w,q[1]-ty*back-tx*w,lift)]);
+    }
+    mk("path",{d:marks,class:`nf floor-mark ${cls}`},floor);
+  }
+  // The hold lanes sit 11 units either side of the arm and bay centreline (x = 73). The deferral
+  // lane drops straight from the gate's queue into the bay; the release lane climbs back to it.
+  function bend(a,corner,b,radius=10) {
+    const toward=(p,q,d)=>{const l=Math.hypot(q[0]-p[0],q[1]-p[1]);return [p[0]+(q[0]-p[0])/l*d,p[1]+(q[1]-p[1])/l*d];};
+    const straight=(p,q)=>{const n=Math.max(1,Math.round(Math.hypot(q[0]-p[0],q[1]-p[1])/2));return Array.from({length:n},(_,i)=>[p[0]+(q[0]-p[0])*i/n,p[1]+(q[1]-p[1])*i/n]);};
+    const p1=toward(corner,a,radius),p2=toward(corner,b,radius);
+    return [...straight(a,p1),...Array.from({length:9},(_,i)=>quad(p1,corner,p2,i/8)),...straight(p2,b).slice(1),b];
+  }
+  const LANE={y:12,into:84,out:62,bay:74};
+  lane([[LANE.into,20],[LANE.into,46],[LANE.into,LANE.bay-2]],4.5,8,"hold-guide");
+  // The release lane runs from the bay back to the gate, and lights up while a released batch moves.
+  lane(bend([LANE.out,LANE.bay-2],[LANE.out,LANE.y],[LANE.into-6,LANE.y]),4.5,8,"release-guide");
+  // The main lane: from the gate, under the ledger arch, onto dry ground, on the channel's axis.
+  lane(Array.from({length:41},(_,i)=>[116+i*2,0]).concat([[198,0]]),5.5,8,"production-guide");
+  const width=x=>x<=-104?B:x>=-82?W:B+(W-B)*(x+104)/22;
+  // Lane dividers run straight through the bay and converge with the shoulder.
+  for(const l of [-.6,-.2,.2,.6]) {
+    const pts=[];
+    for(let x=-166;x<=-80;x+=2)pts.push(P(x,l*(width(x)-8),lift));
+    mk("path",{d:open(pts),class:"nf flood-lane"},floor);
+  }
+
+  // The flood: five lanes squeezed by the shoulder, crowding as they reach the wall.
   const noise=n=>{const v=Math.sin(n*127.1+311.7)*43758.5453;return v-Math.floor(v);};
-  const flood=Array.from({length:48},(_,i)=>{
-    const home=[-146+noise(i+1)*91,-28+noise(i+61)*54,8+noise(i+121)*7];
-    return {home,card:card(root,...home,6+noise(i+181)*3,5+noise(i+241)*2),
-      offset:noise(i+301)*91,speed:.014+noise(i+361)*.017,wave:noise(i+421)*Math.PI*2};
+  const flood=[];
+  [-.8,-.4,0,.4,.8].forEach((l,lane)=>{
+    const speed=.009+noise(lane+7)*.005;
+    for(let i=0;i<6;i++)flood.push({l,speed,phase:(i+noise(lane*6+i+61)*.35)/6,wave:noise(lane*6+i+91)*6.28,
+      block:block(7+noise(lane*6+i+1)*2,5.5+noise(lane*6+i+31)*1.2,3,{r:1.6,b:.5,cls:"flood-intent"})});
   });
 
-  // Admission: a bounded tray, with a single intake slot and a compact queue.
-  const admission=plate(root,[-49,-22,-17,22],0,10,3);
-  for(let i=0;i<3;i++)card(root,-41,-11+i*7,11+i,14,10);
-
-  // Scheduler: three resource lanes, each with its own waiting work.
-  const scheduler=plate(root,[0,-22,38,22],0,10,3);
-  for(const y of [-14,0,14]) {
-    card(root,6+(y===0?12:0),y-4,11,10,8);
+  // Admission: one bounded tray. Scheduler: three lanes divided by fins.
+  const admission=block(30,32,3,{r:3,b:1.2}).at(-60,-16,Z);
+  const scheduler=block(36,42,2.5,{r:3,b:1.2}).at(-16,-21,Z);
+  const fins=[-6.6,5.4].map(y=>block(32,1.2,5,{r:.6,crease:false}).at(-14,y,Z+2.5));
+  // Gate: a sluice, two posts and a crown with a shutter that lifts between them.
+  const posts=[-26,20].map(y=>block(8,6,42,{r:1.5,crease:false}).at(100,y,Z));
+  const shutter=block(5,40,14,{r:1.5,b:.8});
+  const crown=block(14,56,6,{r:2,b:.8}).at(97,-28,Z+42);
+  // Ledger: a lower arch whose stamp head presses each passing change; the chain rides on top.
+  const arch=[-24,20].map(y=>block(6,4,28,{r:1.2,crease:false}).at(154,y,Z));
+  const beam=block(12,52,5,{r:2,b:.8}).at(151,-26,Z+28);
+  const head=block(8,12,4.5,{r:1.5,b:.7}), rod=block(2,2,1,{r:.8,crease:false});
+  const receipts=Array.from({length:5},()=>block(8,7,2.5,{r:1.2,b:.6,cls:"ledger-record"}));
+  const links=Array.from({length:4},()=>mk("path",{class:"nf ledger-chain-link"},above));
+  // Production: dry ground. A low, sharp-edged pad that checked cartons flow onto in three lanes;
+  // each arrival advances its lane, and the farthest carton ships off the far end.
+  const pad=block(74,58,1.6,{r:5,b:1.6,cls:"production-destination"}).at(198,-29,Z);
+  const top=Z+1.6, carton={w:12,h:11,d:8}, intent={w:9,h:7,d:3.5};
+  const yard={x:211,step:19,depth:3,rows:[-15,0,15]};
+  // Row guides painted on the pad: one bay per row, closed by a back stop at the far end.
+  {
+    const g=mk("path",{class:"nf floor-edge"},pad.g),L=(x,y)=>P(x-198,y+29,1.65);
+    let d="";
+    for(const y of [-22.5,-7.5,7.5,22.5])d+=seg(L(202,y),L(268,y));
+    d+=seg(L(268,-22.5),L(268,22.5));
+    g.setAttribute("d",d);
   }
-
-  // A persistent, layered backlog remains behind the gate between releases.
-  const backlog=[];
-  for(let layer=0;layer<2;layer++)for(let i=0;i<6-layer*3;i++) {
-    const q=[21+(i%3)*10+noise(i+layer*7)*2,-17+Math.floor(i/3)*19+noise(i+layer*13+1)*4,16+layer*6];
-    backlog.push(q);
-  }
-  backlog.sort((a,b)=>a[0]+a[1]+a[2]-b[0]-b[1]-b[2]).forEach(q=>card(root,...q,8,7));
-  const arrivals=Array.from({length:6},(_,i)=>{
-    const target=backlog[(i*5)%backlog.length], period=4300+noise(i+501)*3700;
-    const packet=card(root,0,0,0,8,7);packet.group.setAttribute("data-flow-kind","queue-arrival");
-    return {card:packet,target,period,offset:noise(i+541)*period,delay:noise(i+581)*600};
-  });
-
-  // The next three queue up on top, then hand off to the released batch.
-  const queueTargets=[[22,8,26],[24,9,33],[26,10,40]];
-  const waiting=queueTargets.map(()=>card(root,0,0,0,10,8));
-  waiting.forEach(c=>{c.body.sil.classList.add("hi");c.group.setAttribute("data-flow-kind","waiting");});
-
-  // Gate: opaque posts and a retractable barrier across one controlled throat.
-  plate(root,[61,-25,70,-20],0,46,1.5,false);
-  const shutter=plate(root,[62,-19,69,19],20,25,2);
-  const movers=Array.from({length:3},(_,i)=>({card:card(root,0,0,0,10,8),route:i===0?"hold":"production"}));
-  movers.forEach(m=>{m.card.group.setAttribute("data-flow-route",m.route);m.card.body.sil.classList.add("hi");});
-  const frontGate=plate(root,[61,20,70,25],0,46,1.5,false);
-  movers.forEach((m,i)=>{
-    if(i===0)return;
-    m.badge=cartonMarks(m.card.group);m.marks=m.badge.group;m.marks.setAttribute("opacity","0");
-  });
-  const crown=plate(root,[58,-27,73,27],46,52,2);
-
-  // Ledger: an append station, with an intake, recording head, and linked receipts.
-  const ledgerOffset=[5,-5],origin=P(0,0,0),shift=P(...ledgerOffset,0);
-  const ledgerStamp=[122+ledgerOffset[0],-43+ledgerOffset[1],12];
-  const ledgerIntake=[103+ledgerOffset[0],-44+ledgerOffset[1],12];
-  const ledgerTransform=`translate(${shift[0]-origin[0]} ${shift[1]-origin[1]})`;
-  const ledgerBack=mk("g",{transform:ledgerTransform},root),ledgerFront=mk("g",{transform:ledgerTransform},root);
-  root.insertBefore(ledgerBack,movers[0].card.group);
-  const ledger=[plate(ledgerBack,[94,-62,134,-26],0,10,3)];
-  ledger.push(plate(ledgerBack,[124,-57,132,-51],10,27,1.5,false));
-  ledger.push(plate(ledgerFront,[122,-53,133,-33],24,28,2));
-  const recordHead=plate(ledgerFront,[123,-43,131,-35],19,23,1.5);
-  ledger.push(recordHead);
-  // The visible chain is a moving window: each append adds a new linked tile.
-  const receiptCount=4,receiptStep=9,receiptWidth=7,receiptOrigin=[99,-34,11];
-  const receipts=Array.from({length:receiptCount},(_,i)=>card(ledgerFront,receiptOrigin[0]+i*receiptStep,receiptOrigin[1],receiptOrigin[2],receiptWidth,7));
-  const chainLinks=Array.from({length:receiptCount-1},(_,i)=>mk("path",{d:seg(P(receiptOrigin[0]+i*receiptStep+receiptWidth,-31,13),P(receiptOrigin[0]+(i+1)*receiptStep,-31,13)),class:"nf ledger-chain-link"},ledgerFront));
-  const writeLink=mk("path",{d:open([P(122,-43,17),P(122,-35,15),P(receiptOrigin[0]+(receiptCount-1)*receiptStep,-34,15)]),class:"nf ledger-write-link",opacity:"0"},ledgerFront);
-  receipts.forEach(c=>{ledger.push(c.body);c.group.classList.add("ledger-record");});
-
-
-  // A retained amber queue waits behind a manual-release stop; nothing auto-dispatches.
-  const hold=plate(root,[154+terminalShift,60,200+terminalShift,106],0,10,3);
-  root.insertBefore(hold.g,movers[0].card.group);
-  const backstop=plate(root,[154+terminalShift,60,200+terminalShift,63],10,18,1.5);
-  root.insertBefore(backstop.g,movers[0].card.group);
-  const holdPositions=Array.from({length:8},(_,i)=>[(i%2===0?162:180)+terminalShift,i%2===0?87:73,11+Math.floor(i/2)*6]);
-  const heldCards=holdPositions.map(q=>{
-    const c=card(root,...q,10,8);c.group.classList.add("held-intent");return c;
-  });
-  // A round, raised push button beside Hold; its label lies on the top face.
-  const consoleGroup=mk("g",{class:"release-console"},root);
-  const [buttonX,buttonY]=[213+terminalShift,84];
-  const buttonBounds=r=>[buttonX-r,buttonY-r,buttonX+r,buttonY+r];
-  const buttonRadius=11.5,buttonTop=12,buttonShoulder=8;
-  plate(consoleGroup,buttonBounds(10.5),0,3,10.5,false);
-  plate(consoleGroup,buttonBounds(8.5),3,buttonShoulder,8.5,false);
-  const buttonFace=plate(consoleGroup,buttonBounds(buttonRadius),buttonShoulder,buttonTop,buttonRadius);
-  buttonFace.g.classList.add("release-button-face");
-  const buttonText=mk("text",{class:"release-button-text","text-anchor":"middle","dominant-baseline":"central","font-size":"7","textLength":"19","lengthAdjust":"spacingAndGlyphs"},consoleGroup);
+  // The final run: off the arch, along the production lane, and onto the entry of its row.
+  const toYard=(start,end,row)=>[end,[yard.x,yard.rows[row],Z],[[182,0,Z],[198,yard.rows[row]*.4,Z]]];
+  // Hold: an open bay at the end of the arm, and a round push button in front of it.
+  const bay=block(42,32,3,{r:3,b:1.2}).at(52,74,Z);
+  const holdSlots=[0,1].flatMap(level=>[[67.5,85],[78.5,85],[67.5,95],[78.5,95]].map(([x,y])=>[x,y,Z+3+level*intent.d]));
+  const heldCards=holdSlots.map(q=>block(intent.w,intent.h,intent.d,{cls:"held-intent"}).centre(...q));
+  const button={x:73,y:120,top:Z+7};
+  const disc=(R,z0,z1,cls)=>block(R*2,R*2,z1-z0,{r:R,n:12,b:.9,cls}).at(button.x-R,button.y-R,z0);
+  disc(9.5,Z,Z+2);disc(7.5,Z+2,Z+5);
+  const face=disc(8.5,Z+5,button.top,"release-button-face");
+  const buttonText=mk("text",{class:"release-button-text","text-anchor":"middle","dominant-baseline":"central",
+    "font-size":mobile?"5.6":"5.6","textLength":mobile?"12.5":"14","lengthAdjust":"spacingAndGlyphs"},above);
   buttonText.textContent="release";
 
+  // Plates a card can cross: admission, scheduler, the hold bay and the dry-ground pad. A card rises
+  // over a plate's lip within two units of travel, so it never cuts through a plate's edge.
+  const plates=[[-60,-16,30,32,Z+3],[-16,-21,36,42,Z+2.5],[52,74,42,32,Z+3],[198,-29,74,58,top]];
+  function surface(cx,cy,w,h) {
+    let z=Z;
+    for(const [x,y,pw,ph,pz] of plates) {
+      const d=Math.min(cx+w/2-x,x+pw-cx+w/2,cy+h/2-y,y+ph-cy+h/2);
+      if(d>0){const k=unit(d/2);z=Math.max(z,Z+(pz-Z)*k*k*(3-2*k));}
+    }
+    return z;
+  }
 
-  // Completed, checked changes remain above production across batch boundaries.
-  const production=plate(root,[154+terminalShift,-106,200+terminalShift,-60],0,12,3);
-  production.g.classList.add("production-destination");
-  root.insertBefore(production.g,movers[0].card.group);
-  const carton={w:15,h:mobile?17:11,d:10,step:10,base:12,slots:(mobile?[[162,-81],[182,-103]]:[[160,-78],[180,-100]]).map(([x,y])=>[x+terminalShift,y])};
-  const produced=carton.slots.map(()=>Array.from({length:3},()=>{
-    const c=card(root,0,0,0,carton.w,carton.h),badge=cartonMarks(c.group);
-    c.draw(0,0,0,carton.d,carton.w,carton.h);
-    badge.draw(0,0,0,carton.w,carton.h,carton.d);c.group.classList.add("production-box");
-    return {card:c,badge};
-  }));
-  const receivedAt=[-Infinity,-Infinity];
-  // Keep the arriving node: it becomes the top carton, rather than handing off to a copy.
-  function landProduction(packet,column) {
-    const retired=produced[column].shift();retired.card.group.remove();
-    packet.card.group.classList.add("production-box");
-    packet.card.group.classList.remove("human-released-intent","is-recording");
-    packet.card.group.removeAttribute("data-flow-route");
-    produced[column].push({card:packet.card,badge:packet.badge});
-    receivedAt[column]=elapsed;
-    return retired;
+  // Callouts attach at the midpoint of a station's edge, never a corner. A leader is a polyline
+  // from that point; the label sits as a flag above its end, beside it, or below it.
+  const callouts=new Map();
+  function callout(name,index,label,anchor,path,align,sub) {
+    const a=P(...anchor),b=path.at(-1),g=mk("g",{class:"callout"},notes),size=mobile?6.4:5.6;
+    mk("path",{d:open([a,...path]),class:"nf callout-leader"},g);
+    mk("ellipse",{cx:a[0].toFixed(2),cy:a[1].toFixed(2),rx:"1.3",ry:"1.3",class:"callout-dot"},g);
+    const place={flag:[b[0],b[1]-3,"start","auto"],right:[b[0]+3,b[1],"start","central"],
+      left:[b[0]-3,b[1],"end","central"],below:[b[0],b[1]+size+1.5,"middle","auto"]}[align];
+    const text=mk("text",{x:place[0].toFixed(2),y:place[1].toFixed(2),"font-size":String(size),"text-anchor":place[2],"dominant-baseline":place[3]},g);
+    if(index)mk("tspan",{class:"callout-index"},text).textContent=`${index} `;
+    mk("tspan",{},text).textContent=label.toUpperCase();
+    if(sub) {
+      // The secondary line sits under the flag's rule, beside the leader.
+      const [x,y]=align==="flag"?[b[0]+3,b[1]+size+1.5]:[place[0],place[1]+size*1.3];
+      mk("text",{class:"callout-sub",x:x.toFixed(2),y:y.toFixed(2),"font-size":String(size),"text-anchor":align==="flag"?"start":place[2],
+        "dominant-baseline":place[3]},g).textContent=sub.toUpperCase();
+    }
+    callouts.set(name,g);
   }
-  // Placement follows the annotated open-space composition; no name touches a solid.
-  const uprightU=[0,-1,0],uprightV=[0,0,-1];
-  const offset=(q,dx,dy)=>{const p=P(...q);return [p[0]+dx,p[1]+dy];};
   if(mobile) {
-    zoneLabel("Flood of intents",offset([-145,0,15],0,-23),[0,-1,0],[1,0,0],10,"floor");
-    zoneLabel("Admission",offset([-33,22,8],-54,0),uprightU,uprightV,10);
-    zoneLabel("Scheduler",offset([19,22,8],-54,3),uprightU,uprightV,10);
-    zoneLabel("Gate",offset([66,0,52],54,-5),uprightU,uprightV,10);
-    zoneLabel("Ledger",offset([125,-39,16],40,-27),uprightU,uprightV,10);
-    zoneLabel("Hold",offset([229+terminalShift,84,0],0,15),uprightU,uprightV,10);
-    zoneLabel("Production",offset([229+terminalShift,-84,0],0,15),uprightU,uprightV,10);
-    zoneLabel("Dry ground",offset([229+terminalShift,-84,0],0,29),uprightU,uprightV,8,"secondary");
+    // One aligned column to the right of the portrait drawing.
+    const column=Math.max(...bank.map(q=>P(...q,Z+18)[0]))+8;
+    const aside=(name,index,label,q,sub)=>callout(name,index,label,q,[[column,P(...q)[1]]],"right",sub);
+    aside("intents","01","Flood of intents",[-138,-B,Z]);
+    aside("admission","02","Admission",[-45,-16,Z+3]);
+    aside("scheduler","03","Scheduler",[2,-21,Z+2.5]);
+    aside("gate","04","Gate",[104,-26,Z+21]);
+    aside("ledger","05","Ledger",[157,-26,Z+33]);
+    aside("production","06","Production",[235,-29,top],"Dry ground");
+    const hold=P(73,132,Z);callout("hold","","Hold",[73,132,Z],[[hold[0],hold[1]+22]],"below");
   } else {
-    zoneLabel("Flood of intents",offset([-104,-48,12],-4,-14),[1,0,0],[0,1,0],8,"floor");
-    zoneLabel("Admission",offset([-33,44,0],-4,26),uprightU,uprightV,8);
-    zoneLabel("Scheduler",offset([19,44,0],-2,30),uprightU,uprightV,8);
-    zoneLabel("Gate",offset([66,0,52],35,-22),uprightU,uprightV,8);
-    zoneLabel("Ledger",offset([129,-49,28],15,-16),uprightU,uprightV,8);
-    zoneLabel("Hold",offset([178+terminalShift,128,0],0,17),uprightU,uprightV,8);
-    zoneLabel("Production",offset([213+terminalShift,-84,0],16,30),uprightU,uprightV,8);
-    zoneLabel("Dry ground",offset([213+terminalShift,-84,0],16,43),uprightU,uprightV,6.5,"secondary");
+    // The main line's labels share one header row; the leaders rise to it as flags.
+    const row=Math.min(P(-172,0,Z)[1],P(104,-28,Z+48)[1])-18;
+    const flag=(name,index,label,q,sub)=>callout(name,index,label,q,[[P(...q)[0],row]],"flag",sub);
+    flag("intents","01","Flood of intents",[-172,0,Z]);
+    flag("admission","02","Admission",[-45,-16,Z+3]);
+    flag("gate","04","Gate",[104,-28,Z+48]);
+    flag("ledger","05","Ledger",[157,-26,Z+33]);
+    flag("production","06","Production",[235,-29,top],"Dry ground");
+    // The scheduler's leader drops off its near edge and turns out, clear of the deck.
+    const sched=P(2,W-3,Z+2.5);
+    callout("scheduler","03","Scheduler",[2,W-3,Z+2.5],[[sched[0],sched[1]+18],[sched[0]-22,sched[1]+18]],"left");
+    const hold=P(73,132,Z);callout("hold","","Hold",[73,132,Z],[[hold[0],hold[1]+16]],"below");
   }
-  const names=["intents","admission","scheduler","gate","hold","ledger","production"];
-  const centers=[P(-107,0,9),P(-34,0,12),P(18,0,12),P(66,0,32),P(177+terminalShift,84,14),P(125,-39,16),P(177+terminalShift,-84,20)];
-  const ease=bezier(.32,.72,0,1), duration=timing.duration;
-  const carryEase=bezier(.42,0,.28,1),landEase=bezier(.45,0,.55,1);
-  function productionPose(destination,age) {
-    const crossing=timing.travel-timing.landing;
-    if(age>=crossing) {
-      const k=landEase(Math.max(0,Math.min(1,(age-crossing)/timing.landing)));
-      return [destination[0],destination[1],destination[2]+6*(1-k)];
-    }
-    const k=carryEase(Math.max(0,Math.min(1,age/crossing)));
-    const q=ledgerStamp.map((v,n)=>v+(destination[n]+(n===2?6:0)-v)*k);
-    q[2]+=5*Math.sin(Math.PI*k);return q;
+
+  // The cycle: three intents leave the flood and queue at the gate. Two are admitted; the near
+  // lane's intent is deferred to the hold bay on one cycle and rejected on the next.
+  const D=12000, lanes=[-13.5,0,13.5], trayY=[-10,0,10];
+  const STAMP=[5900,7100], HOP=[7300,8500], ARRIVE=5600, ARCH=157, FRONT=LANE.into;
+  const movers=lanes.map((_,lane)=>{
+    const b=checked(block(intent.w,intent.h,intent.d,{r:1.2,b:.5,cls:"cycle-intent"}));
+    b.s.sil.classList.add("hi");return {lane,block:b,cycle:-1};
+  });
+  let held=4, completed=0, records=0, lastAppend=-Infinity, pullAt=-Infinity, jobs=[];
+  const rows=yard.rows.map(()=>[]), shipped=[];let turn=0;
+  function carton$(row,pos) {
+    const b=checked(block(intent.w,intent.h,intent.d,{r:1.2,crease:false,cls:"production-box"}));
+    b.size(carton.w,carton.h,carton.d);b.check.setAttribute("opacity","1");
+    return Object.assign(b,{row,pos:tween(pos,700),fade:tween(1,500)});
   }
-  let elapsed=0, paused=false, active=-1, drawnGate=NaN, drawnHead=NaN, breadcrumbStage="";
-  let released=0, releaseCompleted=0, holdStatus="", visibleHeld=4, lastArrivals=4, pullAt=-Infinity;
-  let lastReleasedStamp=-Infinity, lastReleaseStart=-Infinity;
-  const releases=[];
-  const arrivalsAt=time=>4+Math.max(0,Math.floor((time-6900)/duration)+1);
-  const heldAt=time=>Math.max(0,arrivalsAt(time)-released);
-  function release() {
-    if(paused&&!reducedMotion()||releases.some(job=>!job.done))return;
-    const count=Math.min(2,heldAt(elapsed),visibleHeld);if(!count)return;
-    pullAt=elapsed;
-    let start=elapsed+450,stampAt=start+2000;
-    for(let i=0;i<count;i++) {
-      // Reserve the head and leave the receiving column time to clear and settle.
-      const column=i%2,phase=stampAt%duration;
-      const columnRecordAt=column===0?6600:timing.second;
-      const busyEnd=Math.max(timing.second+timing.pause,columnRecordAt+timing.settleLead+timing.rest);
-      if(phase<busyEnd&&phase+timing.pause>4800)stampAt+=busyEnd-phase;
-      const c=card(root,0,0,0,10,8),badge=cartonMarks(c.group);
-      c.group.classList.add("deferred-intent","human-released-intent");c.group.setAttribute("data-flow-route","released");
-      releases.push({card:c,badge,home:null,start,
-        stampAt,landAt:stampAt+timing.pause+timing.travel,column,done:false});
-      lastReleaseStart=start;
-      start=stampAt+timing.pause+timing.travel+250;stampAt=start+2000;
-    }
-    released+=count;render();loop.wake();
+  [2,3,1].forEach((count,row)=>{for(let pos=0;pos<count;pos++)rows[row].push(carton$(row,pos));});
+  // Arrivals take the lanes in turn; the lane advances one place to clear its entry.
+  function claim() {
+    const row=turn++%rows.length,lane=rows[row];
+    lane.forEach(box=>tset(box.pos,box.pos.to+1,elapsed,0));
+    for(let i=lane.length-1;i>=0;i--)if(lane[i].pos.to>=yard.depth){const [box]=lane.splice(i,1);shipped.push(box);tset(box.fade,0,elapsed,250);}
+    return {row};
   }
-  function move(card,home,q,opacity=1) {
-    const a=P(...home),b=P(...q);
-    const pose=`translate(${(b[0]-a[0]).toFixed(2)} ${(b[1]-a[1]).toFixed(2)})`, alpha=opacity.toFixed(2);
-    if(card.pose!==pose){card.pose=pose;card.group.setAttribute("transform",pose);}
-    if(card.alpha!==alpha){card.alpha=alpha;card.group.setAttribute("opacity",alpha);}
-  }
-  function between(a,b,t) {const k=ease(Math.max(0,Math.min(1,t)));return a.map((v,i)=>v+(b[i]-v)*k);}
-  function render() {
-    const t=elapsed%duration, reduced=reducedMotion();
-    const arrived=arrivalsAt(elapsed);
-    if(arrived>lastArrivals){visibleHeld=Math.min(8,visibleHeld+arrived-lastArrivals);lastArrivals=arrived;}
-    flood.forEach(m=>{
-      const travel=reduced?m.offset:((m.offset+elapsed*m.speed+3*Math.sin(elapsed*.0011+m.wave))%91+91)%91;
-      const q=[-146+travel,m.home[1]+(reduced?0:1.8*Math.sin(elapsed*.0017+m.wave)),m.home[2]];
-      move(m.card,m.home,q,reduced?1:Math.min(1,travel/7,(91-travel)/7));
-    });
-    arrivals.forEach((m,i)=>{
-      const age=reduced?m.period*.7:(elapsed+m.offset)%m.period, approach=2400+m.delay;
-      const start=[-40+i%3*5,-14+(i%4)*8,19];
-      const landing=[m.target[0],m.target[1],m.target[2]+5];
-      const q=age<approach?between(start,landing,age/approach):landing;
-      const opacity=reduced?.8:Math.min(1,age/250,(m.period-age)/600);
-      move(m.card,[0,0,0],q,opacity);
-    });
-    const gateClosed=t<3400||t>=5300, closedAge=(t-5300+duration)%duration;
-    let waitingCount=0;
-    waiting.forEach((c,i)=>{
-      const age=elapsed<3400?t:closedAge, delay=elapsed<3400?i*650:500+i*2500;
-      const progress=(age-delay)/1200, visible=reduced||gateClosed&&progress>0;
-      const q=reduced?queueTargets[i]:between([-38+i*5,-12+i*8,19],queueTargets[i],progress);
-      move(c,[0,0,0],q,visible?Math.min(1,Math.max(0,progress)*5):0);
-      if(visible&&progress>=1)waitingCount++;
-    });
-    if(stage.dataset.queueCount!==String(waitingCount))stage.dataset.queueCount=String(waitingCount);
-    movers.forEach((m,i)=>{
-      const cycle=Math.floor(elapsed/duration);
-      if(m.landed) {
-        if(cycle===m.cycle)return;
-        m.card=m.spare.card;m.badge=m.spare.badge;m.marks=m.badge.group;
-        m.card.group.classList.remove("production-box","recorded-intent");
-        m.card.group.setAttribute("data-flow-route","production");
-        m.card.body.sil.classList.add("hi");m.card.group.setAttribute("opacity","0");
-        root.insertBefore(m.card.group,frontGate.g);
-        m.landed=false;m.recorded=undefined;m.shape=undefined;
+  function land({row}) {rows[row].unshift(carton$(row,0));}
+  function appended(at) {records++;lastAppend=Math.max(lastAppend,at);}
+  // Keys are [time, [x, y, z], via?]. A leg eases once from end to end and passes its via
+  // points on a Catmull-Rom curve at even speed, so a route never stops at a corner.
+  function curve(points) {
+    const out=[points[0]];
+    for(let i=0;i<points.length-1;i++) {
+      const p0=points[Math.max(0,i-1)],p1=points[i],p2=points[i+1],p3=points[Math.min(points.length-1,i+2)];
+      for(let k=1;k<=10;k++) {
+        const t=k/10,t2=t*t,t3=t2*t;
+        out.push(p1.map((_,n)=>.5*(2*p1[n]+(p2[n]-p0[n])*t+(2*p0[n]-5*p1[n]+4*p2[n]-p3[n])*t2+(3*p1[n]-p0[n]-3*p2[n]+p3[n])*t3)));
       }
-      m.cycle=cycle;
-      const queue=queueTargets[i],exit=[81+i*4,-9+i*7,14];
-      const holdEnd=holdPositions[Math.min(7,visibleHeld)], input=[ledgerIntake[0]+(i-1)*6,ledgerIntake[1]+(i-1)*4,12], stamp=ledgerStamp;
-      const recordAt=i===2?6600:timing.second, destination=[...carton.slots[i===2?0:1],carton.base+2*carton.step];
-      let q=queue;
-      if(reduced)q=i===0?holdEnd:destination;
-      else if(t<3400)q=queue;
-      else if(t<4800)q=between(queue,exit,(t-3400-(2-i)*140)/1000);
-      else if(i===0)q=between(exit,holdEnd,(t-4800-200)/1900);
-      else if(t<6200)q=between(exit,input,(t-4800-(2-i)*100)/1300);
-      else if(t<recordAt)q=between(input,stamp,(t-recordAt+400)/400);
-      else if(t<recordAt+timing.pause)q=stamp;
-      else q=productionPose(destination,t-recordAt-timing.pause);
-      if(i>0) {
-        const recorded=!reduced&&t>=recordAt+timing.pause;
-        if(m.recorded!==recorded){m.recorded=recorded;m.card.group.classList.toggle("recorded-intent",recorded);
-          if(recorded)root.appendChild(m.card.group);else root.insertBefore(m.card.group,frontGate.g);}
-        const morph=recorded?ease(Math.min(1,(t-recordAt-timing.pause)/550)):0, W=10+(carton.w-10)*morph,H=8+(carton.h-8)*morph,D=4+(carton.d-4)*morph;
-        if(m.shape!==morph){m.shape=morph;m.card.draw(0,0,0,D,W,H);m.marks.setAttribute("opacity",Math.min(1,morph*2).toFixed(2));
-          m.badge.draw(0,0,0,W,H,D);}
-      } else m.card.group.classList.toggle("deferred-intent",t>=4800||reduced);
-      m.card.group.classList.toggle("is-recording",i>0&&t>=recordAt&&t<recordAt+timing.pause);
-      const landed=i>0&&t>=recordAt+timing.pause+timing.travel;
-      const held=i===0&&t>=6900;
-      const opacity=reduced?0:t<3400?0:held?0:Math.min(1,(duration-t)/700);
-      move(m.card,[0,0,0],q,opacity);
-      if(landed&&!reduced){m.spare=landProduction(m,i===2?0:1);m.landed=true;}
+    }
+    return out;
+  }
+  function along(points,k) {
+    const at=[0];
+    for(let i=1;i<points.length;i++)at.push(at[i-1]+Math.hypot(points[i][0]-points[i-1][0],points[i][1]-points[i-1][1],points[i][2]-points[i-1][2]));
+    const d=k*at.at(-1);
+    for(let i=1;i<points.length;i++)if(d<=at[i]||i===points.length-1)return mix(points[i-1],points[i],at[i]>at[i-1]?unit((d-at[i-1])/(at[i]-at[i-1])):1);
+    return points.at(-1);
+  }
+  function track(keys,t) {
+    if(t<=keys[0][0])return keys[0][1];
+    for(let i=1;i<keys.length;i++) {
+      const [t0,q0]=keys[i-1],[t1,q1,via]=keys[i];
+      if(t>=t1)continue;
+      const k=glide(unit((t-t0)/Math.max(1,t1-t0)));
+      return via?along(curve([q0,...via,q1]),k):mix(q0,q1,k);
+    }
+    return keys[keys.length-1][1];
+  }
+  const inTray=()=>held+jobs.filter(job=>!job.lifted).length;
+  function plan(lane,cycle) {
+    const y=lanes[lane], outcome=lane<2?"admit":cycle%2===0?"hold":"reject";
+    // Heights here are the deck; surface() lifts a card over each plate it crosses.
+    const keys=[[200+lane*450,[-88,y*.7,Z]],[1100+lane*450,[-45,trayY[lane],Z]],[1900+lane*250,[-45,trayY[lane],Z]],
+      [2800+lane*250,[2,y,Z]],[3000+lane*150,[2,y,Z]]];
+    keys.push([3900+lane*150,[FRONT,y,Z]]);
+    // The gate defers it: the shutter stays down for it, and it drops down the hold lane.
+    if(outcome==="hold")keys.push([4400,[FRONT,y,Z]],[ARRIVE,holdSlots[Math.min(7,inTray())],[[FRONT,26,Z],[FRONT,62,Z]]]);
+    if(outcome==="reject")keys.push([4500,[FRONT,y,Z]],[5200,[FRONT-2,y+2,Z-2]]);
+    if(outcome==="admit")keys.push([4300+lane*200,[FRONT,y,Z]]);
+    // Admitted work merges onto the main lane past the gate.
+    if(lane===0)keys.push([STAMP[0],[ARCH,0,Z],[[114,y,Z],[130,0,Z]]]);
+    if(lane===1)keys.push([5600,[120,0,Z],[[112,0,Z]]],[6600,[120,0,Z]],[STAMP[1],[ARCH,0,Z]]);
+    if(lane<2)keys.push([STAMP[lane]+800,[ARCH,0,Z]]);
+    return {outcome,keys,stamp:STAMP[lane],hop:HOP[lane]};
+  }
+  // Recording morphs an intent into a checked carton.
+  function record(b,age) {
+    const k=age<0?0:ease(unit(age/600));
+    b.state("is-recording",age<0&&age>=-800);
+    b.state("recorded-intent",age>=0);
+    // A finished carton has a clean lid: the intent's crease gives way to the check.
+    if(b.s.cr.style.opacity!==(age>=0?"0":""))b.s.cr.style.opacity=age>=0?"0":"";
+    b.size(intent.w+(carton.w-intent.w)*k,intent.h+(carton.h-intent.h)*k,intent.d+(carton.d-intent.d)*k);
+    b.check.setAttribute("opacity",unit(k*2-1).toFixed(2));
+  }
+  // A release reserves its pass through the gate and its stamp outside the automatic batch,
+  // and leaves the arm clear while overflow is arriving. Leaving the bay to the stamp takes 2.7s.
+  const LEAD=2700, GATE=1400;
+  function free(s,taken) {
+    const start=s-LEAD,g=s-GATE;
+    for(let cycle=Math.floor(s/D)-1;cycle<=Math.floor(s/D)+1;cycle++) {
+      const a=cycle*D;
+      if(s+1400>a+5200&&s-500<a+9400)return false;
+      if(g+1600>a+3600&&g<a+5600)return false;
+      if(cycle%2===0&&g>a+4200&&start<a+ARRIVE+100)return false;
+    }
+    return taken.every(other=>Math.abs(other-s)>=1700);
+  }
+  function release() {
+    if(paused&&!reducedMotion()||jobs.length)return;
+    const count=Math.min(2,held);if(!count)return;
+    pullAt=elapsed;
+    const taken=[],visible=Math.min(holdSlots.length,inTray());
+    for(let j=0;j<count;j++) {
+      let s=Math.max(elapsed+LEAD+300,(taken.at(-1)??-Infinity)+1700);
+      while(!free(s,taken))s+=100;
+      taken.push(s);
+      const slot=holdSlots[Math.max(0,visible-1-j)];
+      const b=checked(block(intent.w,intent.h,intent.d,{r:1.2,b:.5,cls:"deferred-intent human-released-intent"})).centre(...slot,0);
+      jobs.push({block:b,slot,s,start:s-LEAD,gate:s-GATE,lifted:false,claim:null,stamped:false});
+    }
+    held-=count;render();loop.wake();
+  }
+
+  const stations={admission:[admission],scheduler:[scheduler,...fins],gate:[shutter,crown,...posts],
+    hold:[bay],ledger:[beam,head,...arch],production:[pad]};
+  let elapsed=0, paused=false, selected=null, pinned=null, breadcrumb="", holdStatus="";
+  function render() {
+    const reduced=reducedMotion(), cycle=Math.floor(elapsed/D), t=reduced?6100:elapsed-cycle*D;
+    flood.forEach(f=>{
+      const u=reduced?f.phase:((f.phase+elapsed*f.speed/82)%1+1)%1, x=-166+82*(.75*u+.25*(1-(1-u)**2));
+      f.block.centre(x,f.l*(width(x)-8)+(reduced?0:.6*Math.sin(elapsed*.0016+f.wave)),Z,reduced?1:Math.min(1,u/.08,(1-u)/.08));
     });
-    const heldCount=heldAt(elapsed);
-    releases.forEach(job=>{
-      if(job.done)return;
-      const time=reduced?job.landAt:elapsed,depart=job.stampAt+timing.pause;
-      if(time<job.start){job.card.group.setAttribute("opacity","0");return;}
-      if(!job.home){job.home=holdPositions[Math.max(0,visibleHeld-1)];visibleHeld=Math.max(0,visibleHeld-1);}
-      const stamp=ledgerStamp,input=ledgerIntake,junction=[87,13,16];
-      let q=job.home;
-      if(time<job.start)q=job.home;
-      else if(time<job.start+1100)q=between(job.home,junction,(time-job.start)/1100);
-      else if(time>=job.start+1100&&time<job.stampAt-400)q=between(junction,input,(time-job.start-1100)/500);
-      else if(time<job.stampAt)q=between(input,stamp,(time-job.stampAt+400)/400);
-      else if(time<depart)q=stamp;
-      else q=productionPose([...carton.slots[job.column],carton.base+2*carton.step],time-depart);
-      const recorded=time>=depart,morph=recorded?ease(Math.min(1,(time-depart)/550)):0;
-      const W=10+(carton.w-10)*morph,H=8+(carton.h-8)*morph,D=4+(carton.d-4)*morph;
-      job.card.group.classList.toggle("is-recording",time>=job.stampAt&&time<depart);
-      job.card.group.classList.toggle("deferred-intent",!recorded);
-      job.card.group.classList.toggle("recorded-intent",recorded);
-      job.card.group.classList.toggle("human-released-intent",!recorded);
-      job.card.draw(0,0,0,D,W,H);
-      job.badge.draw(0,0,0,W,H,D);job.badge.group.setAttribute("opacity",String(Math.min(1,morph*2)));
-      move(job.card,[0,0,0],q,1);
-      job.card.group.dataset.releasePhase=time<job.stampAt?"transfer":time<depart?"recording":time<job.landAt?"production":"complete";
-      if(time>=job.landAt){landProduction(job,job.column);job.done=true;releaseCompleted++;
-        lastReleasedStamp=Math.max(lastReleasedStamp,job.stampAt+200);}
+
+    movers.forEach(m=>{
+      if(m.cycle!==cycle){m.cycle=cycle;m.claim=null;m.landed=m.stamped=m.arrived=false;}
+      const p=plan(m.lane,cycle),b=m.block;
+      let q=track(p.keys,t),opacity=unit((t-p.keys[0][0])/250);
+      b.state("deferred-intent",p.outcome==="hold"&&t>=4300);
+      b.state("rejected-intent",p.outcome==="reject"&&t>=4200);
+      if(reduced&&p.outcome!=="admit")opacity=0;
+      if(p.outcome==="reject")opacity*=1-unit((t-4600)/600);
+      if(p.outcome==="hold"&&t>=ARRIVE){opacity=0;if(!m.arrived&&!reduced){m.arrived=true;held++;}}
+      // Defer/reject decisions append receipts at the gate; admits append at the recording head.
+      const receiptAt=p.outcome==="admit"?p.stamp+300:p.outcome==="hold"?4400:4500;
+      if(t>=receiptAt&&!m.stamped&&!reduced){m.stamped=true;appended(cycle*D+receiptAt);}
+      if(p.outcome==="admit") {
+        record(b,t-p.stamp-800);
+        if(t>=p.stamp+800&&!reduced)m.claim??=claim();
+        if(m.claim)q=track([[p.stamp+800,[ARCH,0,Z]],toYard(0,p.hop+800,m.claim.row)],t);
+        if(t>=p.hop+800&&!reduced){opacity=0;if(!m.landed){m.landed=true;land(m.claim);}}
+      } else record(b,-Infinity);
+      b.centre(q[0],q[1],Math.max(q[2],surface(q[0],q[1],b.w,b.h)),opacity);
     });
-    // The production columns now own landed cards; retain only live release jobs.
-    for(let i=releases.length-1;i>=0;i--)if(releases[i].done)releases.splice(i,1);
-    heldCards.forEach((c,i)=>c.group.setAttribute("opacity",i<visibleHeld?"1":"0"));
-    stage.dataset.visibleHeldCount=String(visibleHeld);
-    const busy=releases.some(job=>!job.done);
+
+    jobs.forEach(job=>{
+      const b=job.block;
+      if(reduced) {
+        if(!job.stamped){job.stamped=true;appended(elapsed);}
+        land(job.claim??claim());job.done=true;completed++;b.remove();return;
+      }
+      if(elapsed<job.start){b.centre(...job.slot,0);return;}
+      job.lifted=true;
+      // Out of the bay, up the release lane to the gate, through it once it lifts, then to the stamp.
+      const s=job.s,g=job.gate,keys=[[job.start,job.slot],[job.start+300,[job.slot[0],job.slot[1],job.slot[2]+5]],
+        [g,[FRONT,LANE.y,Z],[[LANE.out,66,Z],[LANE.out,22,Z],[LANE.out+10,LANE.y,Z]]],[g+500,[FRONT,LANE.y,Z]],
+        [s,[ARCH,0,Z],[[116,6,Z]]],[s+800,[ARCH,0,Z]]];
+      if(elapsed>=s+800)job.claim??=claim();
+      if(job.claim)keys.push(toYard(0,s+2200,job.claim.row));
+      let q=track(keys,elapsed);
+      if(elapsed>=s+300&&!job.stamped){job.stamped=true;appended(s+300);}
+      record(b,elapsed-s-800);
+      b.state("deferred-intent",elapsed<s+800);
+      b.state("human-released-intent",elapsed<s+800);
+      if(elapsed>=s+2200){land(job.claim);job.done=true;completed++;b.remove();return;}
+      b.g.dataset.releasePhase=elapsed<g+500?"transfer":elapsed<s?"gate":elapsed<s+800?"recording":"production";
+      b.centre(q[0],q[1],Math.max(q[2],surface(q[0],q[1],b.w,b.h)),1);
+    });
+    jobs=jobs.filter(job=>!job.done);
+    const tray=Math.min(holdSlots.length,inTray());
+    heldCards.forEach((c,i)=>c.centre(...holdSlots[i],i<tray?1:0));
+
+    // Production lanes advance by tween; a shipped carton fades as it leaves the pad.
+    rows.forEach((lane,row)=>lane.forEach(box=>box.centre(yard.x+tval(box.pos,elapsed)*yard.step,yard.rows[row],top,1)));
+    for(let i=shipped.length-1;i>=0;i--) {
+      const box=shipped[i],alpha=tval(box.fade,elapsed);
+      if(alpha<=.01){box.remove();shipped.splice(i,1);continue;}
+      box.centre(yard.x+tval(box.pos,elapsed)*yard.step,yard.rows[box.row],top,alpha);
+    }
+
+    // Gate shutter lifts for the batch, then closes behind it; it lifts again for each released intent.
+    const lift=u=>u<0?0:u<400?ease(u/400):u<1100?1:u<1600?1-ease((u-1100)/500):0;
+    const lifted=reduced?0:Math.max(t<3800?0:t<4300?ease((t-3800)/500):t<5100?1:t<5600?1-ease((t-5100)/500):0,
+      ...jobs.map(job=>lift(elapsed-job.gate)));
+    shutter.at(101.5,-20,Z+lifted*27);
+    // The stamp presses while a change sits under it; a new receipt slides onto the chain.
+    const stamps=STAMP.map(s=>cycle*D+s).concat(jobs.map(job=>job.s));
+    const live=stamps.find(s=>elapsed>=s&&elapsed<s+800),age=live===undefined?-1:elapsed-live;
+    const press=reduced?1:age<0?0:age<180?ease(age/180):age<500?1:1-ease(unit((age-500)/300));
+    const headZ=Z+20-press*15.5;
+    head.at(ARCH-4,-6,headZ);rod.size(2,2,Z+28-headZ-4.5).at(ARCH-1,-1,headZ+4.5);
+    beam.state("ledger-recording",age>=0);head.state("ledger-recording",age>=0);
+    const appendAge=reduced?Infinity:elapsed-lastAppend, append=appendAge<900?ease(appendAge/900):1;
+    const receiptY=i=>-17+(i-append)*9, receiptAlpha=i=>i===4?append:i===0?1-append:1;
+    receipts.forEach((r,i)=>{
+      r.at(ARCH-4,receiptY(i),Z+33+(i===4?6*(1-append):0),receiptAlpha(i));
+      r.s.sil.classList.toggle("hi",appendAge<900&&i===4);
+    });
+    links.forEach((link,i)=>{
+      const zTop=Z+35.5;
+      link.setAttribute("d",seg(P(ARCH,receiptY(i)+3.5,zTop),P(ARCH,receiptY(i+1)+3.5,zTop)));
+      link.setAttribute("opacity",Math.min(receiptAlpha(i),receiptAlpha(i+1)).toFixed(2));
+    });
+
+    // A short downstroke, held while the release dispatches, then a physical return.
+    const busy=jobs.length>0, pressAge=elapsed-pullAt, holdUntil=Math.max(900,(jobs[0]?.start??pullAt)-pullAt+300);
+    const pushed=reduced||!Number.isFinite(pullAt)?0:pressAge<180?ease(pressAge/180):pressAge<holdUntil?1:1-ease(unit((pressAge-holdUntil)/300));
+    face.at(button.x-8.5,button.y-8.5,Z+5-pushed*1.5);
+    const faceTop=P(button.x,button.y,button.top-pushed*1.5+.1);
+    buttonText.setAttribute("transform",`matrix(1 0 0 ${(C.k*1.25).toFixed(3)} ${faceTop[0].toFixed(2)} ${faceTop[1].toFixed(2)})`);
     stage.classList.toggle("manual-release-active",busy);
-    // A short downstroke, held while dispatching, then a physical return.
-    const pressAge=elapsed-pullAt,holdUntil=Math.max(900,lastReleaseStart-pullAt+500);
-    const buttonPress=reduced||!Number.isFinite(pullAt)?0:pressAge<180?ease(pressAge/180):pressAge<holdUntil?1:1-ease(Math.min(1,(pressAge-holdUntil)/300));
-    const top=buttonTop-buttonPress*1.5,[faceRing,faceInner]=rings(...buttonBounds(buttonRadius),buttonRadius,.65);
-    put(buttonFace,prism(P,front,faceRing,faceInner,buttonShoulder,top));
-    // Align the engraving across the face and optically open its vertical strokes.
-    const origin=P(buttonX,buttonY,top+.2);
-    buttonText.setAttribute("transform",`matrix(1 0 0 .85 ${origin[0]} ${origin[1]})`);
-    stage.dataset.releasePress=buttonPress.toFixed(2);
-    const status=JSON.stringify({count:heldCount,available:Math.min(2,heldCount,visibleHeld),busy,paused:paused&&!reduced,completed:releaseCompleted,point:P(buttonX,buttonY,buttonTop),frame});
+
+    const status=JSON.stringify({count:held,available:Math.min(2,held),busy,paused:paused&&!reduced,completed,
+      point:P(button.x,button.y,button.top),frame});
     if(status!==holdStatus){holdStatus=status;onHoldChange(JSON.parse(status));}
-    stage.dataset.releasedCount=String(released);
-    stage.dataset.releaseCompleted=String(releaseCompleted);
-    if(stage.dataset.heldCount!==String(heldCount))stage.dataset.heldCount=String(heldCount);
-    const manualRecording=releases.find(job=>!job.done&&elapsed>=job.stampAt&&elapsed<job.stampAt+timing.pause);
-    const recordAge=manualRecording?elapsed-manualRecording.stampAt:t>=timing.second&&t<timing.second+timing.pause?t-timing.second:t>=6600&&t<6600+timing.pause?t-6600:-1;
-    const press=reduced||recordAge<0?0:recordAge<150?ease(recordAge/150):recordAge<timing.pause-300?1:1-ease(Math.min(1,(recordAge-timing.pause+300)/300));
-    ledger[0].g.classList.toggle("ledger-recording",recordAge>=0);
-    writeLink.setAttribute("opacity",!reduced&&recordAge>=200&&recordAge<timing.pause?"1":"0");
-    const headZ=19-press*3.5;
-    if(headZ!==drawnHead){drawnHead=headZ;const [r,i]=rings(123,-43,131,-35,2,.65);put(recordHead,prism(P,front,r,i,headZ,headZ+4));}
-    const appendTimes=[5000,6800,timing.second+200], cycle=Math.floor(elapsed/duration);
-    const recent=[...appendTimes.map(at=>cycle*duration+at),lastReleasedStamp,...releases.map(job=>job.stampAt+200)].filter(at=>Number.isFinite(at)&&at<=elapsed);
-    const latest=recent.length?Math.max(...recent):undefined;
-    const appending=!reduced&&latest!==undefined&&elapsed-latest<timing.append;
-    const append=appending?ease((elapsed-latest)/timing.append):latest!==undefined?1:0;
-    receipts.forEach((c,i)=>{
-      const home=[receiptOrigin[0]+i*receiptStep,receiptOrigin[1],receiptOrigin[2]], q=[home[0]-append*receiptStep,home[1],home[2]+(i===receiptCount-1?7*(1-append):0)];
-      move(c,home,q,i===receiptCount-1?append:i===0?1-append:1);
-      c.body.sil.classList.toggle("hi",active===5||appending&&i===receiptCount-1);
-    });
-    chainLinks.forEach((link,i)=>{
-      link.classList.toggle("is-appending",appending&&i===receiptCount-2);
-      const dx=P(-append*receiptStep,0,0)[0]-P(0,0,0)[0],dy=P(-append*receiptStep,0,0)[1]-P(0,0,0)[1];
-      link.setAttribute("transform",`translate(${dx} ${dy})`);
-      link.setAttribute("opacity",i===receiptCount-2?append:i===0?1-append:1);
-    });
-    const count=Math.floor(elapsed/duration)*3+appendTimes.filter(at=>t>=at+timing.append).length+releaseCompleted+releases.filter(job=>elapsed>=job.stampAt+200+timing.append).length;
-    if(stage.dataset.ledgerRecords!==String(count))stage.dataset.ledgerRecords=String(count);
-    // Retire the bottom before the other two move; hold the empty top for arrival.
-    produced.forEach((column,index)=>{
-      const landedAt=(index===0?6600:timing.second)+timing.pause+timing.travel;
-      const nextAuto=landedAt+(Math.floor((elapsed-landedAt)/duration)+1)*duration;
-      const next=Math.min(nextAuto,...releases.filter(job=>!job.done&&job.column===index&&job.landAt>elapsed).map(job=>job.landAt));
-      const remaining=next-elapsed,fadeEnd=next-timing.settleLead;
-      const fadeStart=Math.max(next-timing.travel,receivedAt[index]);
-      const fade=Math.max(0,Math.min(1,(fadeEnd-elapsed)/Math.max(1,fadeEnd-fadeStart)));
-      const settle=reduced?0:ease(Math.max(0,Math.min(1,(timing.settleLead-remaining)/timing.landing)));
-      column.forEach((box,level)=>{
-        const [x,y]=carton.slots[index],z=carton.base+(level-(level>0?settle:0))*carton.step;
-        move(box.card,[0,0,0],[x,y,z],reduced||level>0?1:fade);
-      });
-    });
-    const lift=reduced?0:t<3000?0:t<3400?ease((t-3000)/400):t<4800?1:t<5300?1-ease((t-4800)/500):0;
-    const z=20+lift*20;
-    if(z!==drawnGate){drawnGate=z;const [r,i]=rings(62,-19,69,19,2,.65);put(shutter,prism(P,front,r,i,z,z+5));}
-    const phase=reduced?"rest":t<2200?"admission":t<3400?"scheduler":t<4800?"gate":t<6200?"split":t<timing.second+timing.pause?"ledger":t<timing.second+timing.pause+timing.travel+500?"production":"recorded";
+    stage.dataset.heldCount=String(held);
+    stage.dataset.ledgerRecords=String(records);
+
+    const phase=reduced?"intents":t<1900?"admission":t<3300?"scheduler":t<5200?"gate":t<7900?"ledger":t<9500?"production":"intents";
     if(stage.dataset.flowPhase!==phase)stage.dataset.flowPhase=phase;
-    const selected=active<0?phase:names[active];
-    const current={rest:"intents",split:"gate",hold:"gate",recorded:"production"}[selected]??selected;
-    if(!paused&&breadcrumbStage!==current){breadcrumbStage=current;onStageChange(current);}
+    const current=selected??phase;
+    // The current stage, whether the cycle reached it or the reader chose it, carries the bridge red.
+    callouts.forEach((g,name)=>g.classList.toggle("is-active",name===current));
+    Object.entries(stations).forEach(([key,list])=>list.forEach(b=>b.state("is-selected",key===current)));
+    const crumb=current==="hold"?"gate":current;
+    if(!paused&&breadcrumb!==crumb){breadcrumb=crumb;onStageChange(crumb);}
+    paint();
   }
   const loop=register(stage,dt=>{
     if(paused||reducedMotion()){render();return false;}
     elapsed+=dt*1000;render();return true;
   });
   bag.add(loop.unregister);
-  function choose(next) {
-    active=next;
-    [admission,scheduler,shutter,hold,production].forEach(s=>s.sil.classList.remove("hi"));
-    ledger.forEach(s=>s.sil.classList.remove("hi"));
-    const selected={1:admission,2:scheduler,3:shutter,4:hold,6:production}[next];
-    selected?.sil.classList.add("hi");
-    if(next===5)ledger.forEach(s=>s.sil.classList.add("hi"));
-    crown.sil.classList.toggle("hi",next<0);render();
+
+  const centres={intents:[-125,0,Z],admission:[-45,0,Z+3],scheduler:[2,0,Z+4],gate:[104,0,Z+26],
+    hold:[73,96,Z+4],ledger:[ARCH,0,Z+22],production:[234,0,top+6]};
+  // A breadcrumb pin holds a station lit; hover previews another and leaving returns to the pin.
+  function choose(name) {
+    selected=name??pinned;
+    render();
   }
   function hit([x,y]) {
-    let best=-1,distance=Infinity;
-    centers.forEach((p,i)=>{const d=Math.hypot(x-p[0],y-p[1]);if(d<distance){distance=d;best=i;}});
-    return distance<37?best:-1;
+    let best=null,distance=Infinity;
+    for(const [name,q] of Object.entries(centres)){const p=P(...q),d=Math.hypot(x-p[0],y-p[1]);if(d<distance){distance=d;best=name;}}
+    return distance<30?best:null;
   }
   // The kernel reports its fixed 400×320 canvas; map it into the fitted frame.
-  if(!mobile)bag.add(pointer(stage,{move:p=>choose(hit([frame.x+p[0]*frame.width/400,frame.y+p[1]*frame.height/320])),leave:()=>choose(-1)}));
-  bag.add(()=>{svg.replaceChildren();stage.style.removeProperty("aspect-ratio");});choose(-1);
+  if(!mobile)bag.add(pointer(stage,{move:p=>choose(hit([frame.x+p[0]*frame.width/400,frame.y+p[1]*frame.height/320])),leave:()=>choose(null)}));
+  bag.add(()=>{svg.replaceChildren();stage.style.removeProperty("aspect-ratio");});
+  render();
   {
-    const bounds=root.getBBox(),padding=mobile?16:18;
+    const bounds=root.getBBox(),padding=mobile?10:12;
     frame={x:bounds.x-padding,y:bounds.y-padding,width:bounds.width+padding*2,height:bounds.height+padding*2};
     svg.setAttribute("viewBox",`${frame.x} ${frame.y} ${frame.width} ${frame.height}`);
     stage.style.aspectRatio=`${frame.width} / ${frame.height}`;
+    stage.dataset.frame=`${frame.width.toFixed(1)}x${frame.height.toFixed(1)}`;
     holdStatus="";render();
   }
-  return {release,set:()=>{},play:()=>{elapsed=0;render();loop.wake();},setPaused:v=>{paused=v;render();loop.wake();},destroy:bag.dispose};
+  return {release,set:()=>{},play:()=>{elapsed=0;render();loop.wake();},setPaused:v=>{paused=v;render();loop.wake();},pin:name=>{pinned=name;choose(name);},destroy:bag.dispose};
 }
 
 hairline({name:"processing-line",means:"Intents pass admission, scheduling, and a policy gate; deferred work waits on hold, while the ledger precedes production.",

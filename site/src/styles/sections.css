@@ -15,33 +15,32 @@
 }
 
 .section-heading {
-  display: grid;
+  display: flex;
   flex: none;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 3fr);
+  flex-direction: column;
+  align-items: flex-start;
   border-bottom: 1px solid var(--line);
 }
 
-#gate .section-heading, #ledger .section-heading {
-  grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr);
-}
-
 .section-heading h2 {
-  grid-column: 2;
-  grid-row: 1;
   max-width: min(900px, 100%);
-  padding: 24px;
+  padding: 20px 24px 24px;
   font-size: var(--display-md);
   line-height: 1.08;
 }
 
+/* Title-block tab: as wide as its label, ruled on the right and bottom against the drawing frame. */
 .section-heading .kicker {
-  grid-column: 1;
-  grid-row: 1;
-  padding: 24px;
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  margin: 0;
+  padding: 0 16px;
   border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
   color: var(--muted);
-  font: 450 11px/1.5 var(--mono);
-  letter-spacing: .03em;
+  font: 500 var(--label-size)/1.5 var(--mono);
+  letter-spacing: var(--label-tracking);
   text-transform: uppercase;
 }
 
@@ -121,7 +120,7 @@
   border-bottom: 1px solid var(--line);
   color: var(--muted);
   font-size: var(--text-sm);
-  line-height: 1.6;
+  line-height: var(--leading-body);
 }
 
 .feature-points li:last-child { border-bottom: 0; }
@@ -143,12 +142,12 @@
   gap: 8px 16px;
   padding: 16px 24px;
   color: var(--muted);
-  font: 450 11px/1.5 var(--mono);
+  font: 500 var(--label-size)/1.5 var(--mono);
 }
 
 .panel-head { border-bottom: 1px solid var(--line); }
 .panel-foot { border-top: 1px solid var(--line); }
-.panel-head > span, .panel-foot > span { text-transform: uppercase; letter-spacing: .03em; }
+.panel-head > span, .panel-foot > span { text-transform: uppercase; letter-spacing: var(--label-tracking); }
 .panel-foot code { color: var(--ink); font-family: var(--mono); font-size: 11px; }
 
 .panel-status {
@@ -178,7 +177,7 @@
 
 .policy-row:last-child { border-bottom: 0; }
 .policy-row code { color: var(--ink); font: 400 12px/1.5 var(--mono); overflow-wrap: anywhere; }
-.policy-row p { max-width: 48ch; margin: 8px 0 0; color: var(--muted); font-size: var(--text-sm); line-height: 1.6; }
+.policy-row p { max-width: 48ch; margin: 8px 0 0; color: var(--muted); font-size: var(--text-sm); line-height: var(--leading-body); }
 
 .verdict-admit { --verdict: var(--admit); }
 .verdict-defer { --verdict: var(--defer); }
@@ -237,8 +236,49 @@
 .roadmap-copy h3 { margin: 0 0 12px; font-size: 24px; font-weight: 550; letter-spacing: -.025em; line-height: 1.2; }
 .roadmap-copy .card-copy { align-self: start; }
 
+/* The Tally form draws dark text on a transparent page, so its cell keeps the light tokens in both themes. */
+.waitlist-card {
+  --paper: #ffffff;
+  --ink: #171717;
+  --muted: #606060;
+  --line: #e5e5e5;
+  --accent: #171717;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 24px;
+  background: var(--paper);
+  color: var(--ink);
+  color-scheme: light;
+}
+
+.waitlist-card iframe { display: block; width: 100%; border: 0; }
+
+.waitlist-fallback {
+  margin: 16px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.waitlist-fallback a,
+.noscript-note a {
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Shown only without JavaScript, when the page itself cannot render. */
+.noscript-note {
+  margin-block: var(--section-space);
+  color: var(--muted);
+  font-size: var(--text-lg);
+  line-height: var(--leading-body);
+}
+
 @media (max-width: 900px) {
-  .section-heading, #gate .section-heading, #ledger .section-heading { grid-template-columns: minmax(144px, .24fr) minmax(0, 1fr); }
   .model-rail, .roadmap-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .section-body { grid-template-columns: minmax(0, 1fr); }
   .feature-card { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -246,15 +286,15 @@
 
 @media (max-width: 600px) {
   .section { --section-inset: 16px; }
-  .section-heading, #gate .section-heading, #ledger .section-heading { grid-template-columns: minmax(0, 1fr); }
-  .section-heading h2 { grid-column: 1; grid-row: 1; padding: 20px 16px; font-size: 32px; }
-  .section-heading .kicker { grid-column: 1; grid-row: 2; padding: 12px 16px; border-right: 0; border-top: 1px solid var(--line); }
+  .section-heading h2 { padding: 16px 16px 20px; font-size: 32px; }
+  .section-heading .kicker { padding: 0 12px; }
   .model-rail, .roadmap-grid { grid-template-columns: minmax(0, 1fr); }
   .model-stage { padding: 20px 16px; }
   .model-stage .tag, .roadmap-copy h3 { font-size: 22px; }
   .roadmap-card > .tag { padding: 16px; font-size: 28px; }
   .roadmap-copy { padding: 20px 16px; }
   .feature-copy { padding: 20px 16px; }
+  .waitlist-card { padding: 16px; }
   .feature-points li { padding: 16px; }
   .panel-head, .panel-foot { padding: 16px; }
   .policy-row { padding: 20px 16px; gap: 12px; }
@@ -270,3 +310,23 @@
   #gate { min-height: min(560px, var(--slide-height)); }
   #ledger { min-height: min(640px, var(--slide-height)); }
 }
+
+/* First-view reveal: the drawing rises 8px, then its ruled cells follow in sequence. */
+.section-drawing[data-reveal] {
+  --reveal-ease: cubic-bezier(.22, 1, .36, 1);
+  transition: opacity 560ms var(--reveal-ease), transform 560ms var(--reveal-ease);
+}
+.section-drawing[data-reveal] :is(.model-stage, .roadmap-card, .policy-row, .ledger-row, .feature-points li) {
+  transition: opacity 420ms var(--reveal-ease) var(--reveal-delay, 0ms), transform 420ms var(--reveal-ease) var(--reveal-delay, 0ms);
+}
+/* Screen only: printing or saving a PDF shows every sheet, revealed or not. */
+@media screen {
+  .section-drawing[data-reveal="pending"] { opacity: 0; transform: translateY(8px); }
+  .section-drawing[data-reveal="pending"] :is(.model-stage, .roadmap-card, .policy-row, .ledger-row, .feature-points li) { opacity: 0; transform: translateY(6px); }
+}
+.section-drawing[data-reveal] :is(.model-stage, .roadmap-card, .policy-row, .ledger-row, .feature-points li):nth-child(2) { --reveal-delay: 160ms; }
+.section-drawing[data-reveal] :is(.model-stage, .roadmap-card, .policy-row, .ledger-row, .feature-points li):nth-child(3) { --reveal-delay: 220ms; }
+.section-drawing[data-reveal] :is(.model-stage, .roadmap-card, .policy-row, .ledger-row, .feature-points li):nth-child(4) { --reveal-delay: 280ms; }
+.section-drawing[data-reveal] :is(.model-stage, .roadmap-card, .policy-row, .ledger-row, .feature-points li):nth-child(5) { --reveal-delay: 340ms; }
+.section-drawing[data-reveal] :is(.model-stage, .roadmap-card, .policy-row, .ledger-row, .feature-points li):nth-child(n+6) { --reveal-delay: 400ms; }
+.section-drawing[data-reveal] :is(.model-stage, .roadmap-card, .policy-row, .ledger-row, .feature-points li):first-child { --reveal-delay: 100ms; }

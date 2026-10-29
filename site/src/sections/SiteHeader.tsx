@@ -2,7 +2,7 @@ import { useCallback, useLayoutEffect, useRef } from "react";
 import { NAV_SECTIONS, NAV_SECTION_IDS, REPO_URL } from "../content";
 import { useActiveSection } from "../hooks";
 import { BrandMark } from "../components/BrandMark";
-import { ArrowUpRight01Icon } from "@hugeicons/core-free-icons";
+import { ArrowUpRight01Icon, GithubIcon } from "@hugeicons/core-free-icons";
 import { Icon } from "../components/Icon";
 
 export function SiteHeader() {
@@ -52,15 +52,16 @@ export function SiteHeader() {
         </a>
         <div className="nav-links" ref={linksRef}>
           {NAV_SECTIONS.map(({ id, label }) => (
-            <a key={id} href={`#${id}`} aria-current={active === id ? "location" : undefined}>
+            <a key={id} href={`#${id}`} data-section={id} aria-current={active === id ? "location" : undefined}>
               <span>{label}</span>
             </a>
           ))}
           <span className="nav-indicator" ref={indicatorRef} aria-hidden="true" />
         </div>
         <a className="button button-sm" href={REPO_URL}>
+          <Icon icon={GithubIcon} size={16} className="button-brand" />
           View the Crate
-          <Icon icon={ArrowUpRight01Icon} size={16} />
+          <Icon icon={ArrowUpRight01Icon} size={16} className="button-arrow" />
         </a>
       </nav>
     </header>

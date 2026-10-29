@@ -4,27 +4,33 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Floodwall | Policy Gates for Agent-Driven DevOps</title>
-    <meta
-      name="description"
-      content="A Rust control plane for high-volume, agent-driven DevOps: admission control, policy gates, and a tamper-evident decision ledger."
-    />
-    <meta property="og:title" content="Floodwall | Policy Gates for Agent-Driven DevOps" />
-    <meta
-      property="og:description"
-      content="Hold the line when agents flood production with infrastructure changes."
-    />
-    <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://floodwall.ai/" />
-    <link rel="canonical" href="https://floodwall.ai/" />
+    <!-- Description, canonical, Open Graph, Twitter card and JSON-LD are injected by vite.config.ts from structured-data.mjs. -->
     <meta name="theme-color" content="#f2f2f2" />
     <meta name="color-scheme" content="light dark" />
     <script src="/theme.js"></script>
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- Favicon set (sizes as on erpai.studio); regenerate with scripts/generate-favicons.sh. -->
+    <link rel="icon" href="/favicon/floodwall-search-icon-96.png" type="image/png" sizes="96x96" />
+    <link rel="icon" href="/favicon/floodwall-search-icon-192.png" type="image/png" sizes="192x192" />
+    <link rel="icon" href="/favicon/floodwall-search-icon-256.png" type="image/png" sizes="256x256" />
+    <link rel="icon" href="/favicon/floodwall-browser-light-64.png" type="image/png" sizes="64x64" media="(prefers-color-scheme: light)" />
+    <link rel="icon" href="/favicon/floodwall-browser-dark-64.png" type="image/png" sizes="64x64" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any" />
+    <link rel="icon" href="/favicon/floodwall-browser-light.svg" type="image/svg+xml" sizes="any" media="(prefers-color-scheme: light)" />
+    <link rel="icon" href="/favicon/floodwall-browser-dark.svg" type="image/svg+xml" sizes="any" media="(prefers-color-scheme: dark)" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
+    <link rel="mask-icon" href="/favicon/floodwall-mask-icon.svg" color="#171717" />
+    <link rel="manifest" href="/site.webmanifest" />
     <link rel="preload" href="/fonts/geist-variable.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/geist-mono-variable.woff2" as="font" type="font/woff2" crossorigin />
   </head>
   <body>
     <div id="root"></div>
+    <noscript>
+      <p class="noscript-note page-width">
+        Floodwall&rsquo;s page needs JavaScript. To join the early-access waitlist, use the
+        <a href="https://tally.so/r/6DJeoP">Floodwall early access form on Tally</a>.
+      </p>
+    </noscript>
     <script src="/hairline/kernel.js"></script>
     <script src="/hairline/registry.js"></script>
     <script type="module" src="/src/main.tsx"></script>

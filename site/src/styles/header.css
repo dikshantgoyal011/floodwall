@@ -63,6 +63,10 @@
   .nav-links a { flex: 1; padding-inline: 0; font-size: 14px; }
   .site-header .button { padding-inline: 14px; font-size: 12px; }
 }
+/* Six sections and the call to action only fit narrow phones once Home (the logo) leaves the menu. */
 @media (max-width: 380px) {
-  .site-header .button svg { display: none; }
+  .site-header .button .button-arrow { display: none; }
+  .nav-links a[data-section="home"] { display: none; }
+  .logo { font-size: 20px; }
+  .site-header .button { padding-inline: 10px; }
 }

@@ -35,8 +35,11 @@
   --panel-line: #3a3a3a;
   --admit: #287247;
   --defer: #85600f;
-  --reject: #b8392e;
-  --scroll-thumb: #a3a3a3;
+  --reject: #8a2533;
+  /* The footer print's Golden Gate vermilion; it marks the diagram stage that is current, whether the cycle reached it or a reader chose it. */
+  --bridge: #b8392e;
+  /* Scrollbar thumb on the canvas track: 3.1:1 light, 4:1 dark (WCAG 1.4.11). */
+  --scroll-thumb: #8a8a8a;
   --drawing-edge: #575757;
   --drawing-mid: #a3a3a3;
   --drawing-lo: #d4d4d4;
@@ -56,7 +59,10 @@
   --release-edge: #80632e;
   --release-text: #49340f;
   --release-guide: #b08038;
-  --recording-edge: #a76c22;
+  --reject-fill: #f1d9dd;
+  --reject-edge: var(--reject);
+  --reject-detail: #c4909a;
+  --flood-lane: #dcdcdc;
   --zone-label: #333333;
   --zone-secondary: #636363;
   --footer-artwork-filter: none;
@@ -80,7 +86,10 @@
   --display-md: clamp(32px, 3.3vw, 48px);
   --display-lg: clamp(36px, 4.2vw, 60px);
   --display-xl: clamp(52px, 6.5vw, 96px);
-  --leading-body: 1.65;
+  --leading-body: 1.55;
+  /* Small uppercase mono labels share one size and tracking, matching the diagram callouts. */
+  --label-size: 11px;
+  --label-tracking: .08em;
   --content-width: 1280px;
   --gutter: clamp(20px, 4vw, 64px);
   --header-height: 80px;
@@ -113,7 +122,8 @@
   --panel-line: #494949;
   --admit: #8cc69e;
   --defer: #d7ba79;
-  --reject: #ed9a91;
+  --reject: #e8a0ab;
+  --bridge: #ec7a68;
   --scroll-thumb: #737373;
   --drawing-edge: #b9b9b9;
   --drawing-mid: #858585;
@@ -134,7 +144,10 @@
   --release-edge: #eed3a3;
   --release-text: #221b11;
   --release-guide: #cfab68;
-  --recording-edge: #d3a45f;
+  --reject-fill: #43222a;
+  --reject-edge: var(--reject);
+  --reject-detail: #9c6670;
+  --flood-lane: #3a3a3a;
   --zone-label: #dedede;
   --zone-secondary: #b2b2b2;
   --footer-artwork-filter: invert(1) hue-rotate(180deg);
@@ -147,10 +160,25 @@
   --footer-fog-low-opacity: .06;
 }
 
+/* Primary-input policy, as on erpai.studio: touch and non-hovering pens keep native bounce and
+   pull-to-refresh; a hovering fine pointer (mouse, trackpad) stops at the edges on both axes. */
+html, body { overscroll-behavior: auto; }
+@media (hover: hover) and (pointer: fine) {
+  html, body { overscroll-behavior: none; }
+}
+
 html {
   scroll-behavior: smooth;
   scroll-padding-top: var(--header-height);
+  /* Native sizing keeps macOS overlay and Windows/Linux classic scrollbars; only the colours are ours.
+     color-scheme (set per theme above and by theme.js) picks the native dark scrollbar chrome. */
+  scrollbar-width: thin;
   scrollbar-color: var(--scroll-thumb) var(--canvas);
+}
+
+/* Forced colours: hand scrollbars back to the system palette. */
+@media (forced-colors: active) {
+  html { scrollbar-width: auto; scrollbar-color: auto; }
 }
 
 body {
@@ -300,6 +328,9 @@ p { text-wrap: pretty; }
 .button:hover {
   background: var(--accent-hover);
 }
+
+/* The GitHub mark leads the label it names; the trailing arrow keeps the button's wider gap. */
+.button .button-brand { margin-inline-end: -8px; }
 
 .button:active {
   background: var(--accent-active);

@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { PauseIcon, PlayIcon } from "@hugeicons/core-free-icons";
 import { Icon } from "./Icon";
 import { StageBreadcrumb } from "./StageBreadcrumb";
+import { CountUp } from "./CountUp";
 
 type FigureName = "processing-line" | "control-stack";
 type Tour = { stop(): void };
 type HoldState = { count: number; available: number; busy: boolean; paused: boolean; completed: number; point: [number, number]; frame: { x: number; y: number; width: number; height: number } };
-type FigureHandle = { release?(): void; set(value: number): void; destroy(): void; play?(): void; setPaused?(paused: boolean): void };
+type FigureHandle = { release?(): void; set(value: number): void; destroy(): void; play?(): void; setPaused?(paused: boolean): void; pin?(stage: string | null): void };
 type Figure = {
   name: FigureName;
   means: string;
@@ -55,6 +56,8 @@ export function IsometricDiagram({ variant, stats }: { variant: FigureName; stat
   const [failed, setFailed] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(false);
   const [activeStage, setActiveStage] = useState("");
+  const [pinned, setPinned] = useState<string | null>(null);
+  const pinRef = useRef<(stage: string | null) => void>(() => {});
   const stages = STAGES[variant];
   const playbackLabel = reducedMotion ? "Animation disabled for reduced motion"
     : continuous ? paused ? "Resume diagram animation" : "Pause diagram animation" : "Play diagram animation";
@@ -67,6 +70,7 @@ export function IsometricDiagram({ variant, stats }: { variant: FigureName; stat
     setReady(false);
     setFailed(false);
     setActiveStage("");
+    setPinned(null);
     setHold(null);
     setLabels([]);
     setReleaseAnnouncement("");
@@ -96,6 +100,7 @@ export function IsometricDiagram({ variant, stats }: { variant: FigureName; stat
         handle?.destroy();
         pauseRef.current = () => {};
         releaseRef.current = () => {};
+        pinRef.current = () => {};
         svg?.remove();
         stage.style.removeProperty("aspect-ratio");
         playRef.current = () => {};
@@ -122,6 +127,7 @@ export function IsometricDiagram({ variant, stats }: { variant: FigureName; stat
         } }, figure.range[1]);
       handle.setPaused?.(media.matches || pausedRef.current);
       releaseRef.current = () => handle?.release?.();
+      pinRef.current = stage => handle?.pin?.(stage);
       pauseRef.current = (paused) => handle?.setPaused?.(media.matches || paused);
       function play() {
         tour?.stop();
@@ -158,7 +164,7 @@ export function IsometricDiagram({ variant, stats }: { variant: FigureName; stat
         data-hairline={variant}
         role="img"
         aria-label={variant === "processing-line"
-          ? "A flood of intents passes through admission, scheduler, and policy gate. Deferred intents branch to hold. The main path continues through the ledger to dry ground: production. Checked, recorded changes accumulate there as green boxes."
+          ? "A flood of intents passes through admission and the scheduler to the policy gate. The gate sends deferred intents to hold, where they wait until a person presses release and then pass the gate. Admitted intents continue through the ledger to dry ground: production. Checked, recorded changes accumulate there as green boxes."
           : "Exploded isometric control plane. Admission, policy, and ledger layers separate to reveal how they fit together."}
       />
       <div className="diagram-labels" aria-hidden="true">
@@ -166,9 +172,12 @@ export function IsometricDiagram({ variant, stats }: { variant: FigureName; stat
       </div>
       {continuous && hold && <button type="button" className="hold-release-control"
         style={{ left: `${(hold.point[0] - hold.frame.x) / hold.frame.width * 100}%`, top: `${(hold.point[1] - hold.frame.y) / hold.frame.height * 100}%` }}
-        disabled={!ready || failed || hold.busy || hold.paused || hold.available === 0}
+        // Busy, paused and empty are passing states: aria-disabled keeps focus on the button through them.
+        disabled={!ready || failed}
+        aria-disabled={hold.busy || hold.paused || hold.available === 0 || undefined}
         aria-label={`Release ${hold.available} held intents`} title={`Press to release ${hold.available} held intents`}
         onClick={() => {
+          if (hold.busy || hold.paused || hold.available === 0) return;
           setReleaseAnnouncement(`Releasing ${hold.available} held intents through the ledger to production.`);
           releaseRef.current();
         }} /> }
@@ -180,14 +189,19 @@ export function IsometricDiagram({ variant, stats }: { variant: FigureName; stat
           <dt>On hold</dt>
           <dd>
             <span>{hold?.count ?? 0}</span>
-            <span className="diagram-hold-instruction">{hold?.busy ? "Recording and delivering" : hold && hold.completed > 0 ? `${hold.completed} released to production` : hold?.count === 0 ? "Incoming intents continue" : `Press release for ${hold?.available ?? 2}`}</span>
+            <span className="diagram-hold-instruction">{hold?.busy ? "Recording and delivering" : hold && hold.completed > 0 ? `${hold.completed} released to production` : hold?.count === 0 ? "Incoming intents continue" : hold?.paused ? "Resume to release held intents" : `Release ${hold?.available ?? 2} held intents`}</span>
           </dd>
         </div>}
-        {stats.map(({ value, label }) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+        {stats.map(({ value, label }) => <div key={label}><dt>{label}</dt><dd className="diagram-stat"><CountUp value={value} /></dd></div>)}
       </dl>
       <p className="sr-only" role="status">{releaseAnnouncement}</p>
       <div className="diagram-caption">
-        <StageBreadcrumb stages={stages} activeStage={activeStage} paused={paused || reducedMotion} />
+        <StageBreadcrumb stages={stages} activeStage={pinned ?? activeStage} paused={paused || reducedMotion}
+          pinned={pinned ?? undefined} onSelect={continuous && ready && !failed ? stage => {
+            const next = pinned === stage ? null : stage;
+            setPinned(next);
+            pinRef.current(next);
+          } : undefined} />
           <button type="button" className="diagram-motion-control" disabled={!ready || failed || reducedMotion} onClick={() => {
             if (continuous) { const next = !pausedRef.current; pausedRef.current = next; setPaused(next); pauseRef.current(next); }
             else playRef.current();

@@ -8,7 +8,7 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm run test && npm run build",
-    "test": "node --test crate-stats.test.mjs"
+    "test": "node --test crate-stats.test.mjs structured-data.test.mjs"
   },
   "dependencies": {
     "@hugeicons/core-free-icons": "^4.4.0",

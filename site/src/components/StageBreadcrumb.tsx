@@ -2,9 +2,9 @@ import { useCallback, useLayoutEffect, useRef } from "react";
 import { ArrowRight01Icon } from "@hugeicons/core-free-icons";
 import { Icon } from "./Icon";
 
-type Props = { stages: readonly string[]; activeStage: string; paused: boolean };
+type Props = { stages: readonly string[]; activeStage: string; paused: boolean; pinned?: string; onSelect?(stage: string): void };
 
-export function StageBreadcrumb({ stages, activeStage, paused }: Props) {
+export function StageBreadcrumb({ stages, activeStage, paused, pinned, onSelect }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLSpanElement>(null);
   const positionRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
@@ -59,7 +59,11 @@ export function StageBreadcrumb({ stages, activeStage, paused }: Props) {
     <ol className="diagram-stages" aria-label="Processing stages">
       {stages.map((stage, index) => <li key={stage} aria-current={activeStage === stage.toLowerCase() ? "step" : undefined}>
         {index > 0 && <Icon icon={ArrowRight01Icon} size={16} />}
-        <span className="diagram-stage-label" data-label={stage}><span>{stage}</span></span>
+        {onSelect
+          ? <button type="button" className="diagram-stage-label" data-label={stage} aria-pressed={pinned === stage.toLowerCase()}
+            title={pinned === stage.toLowerCase() ? "Unpin this stage" : `Show ${stage} in the diagram`}
+            onClick={() => onSelect(stage.toLowerCase())}><span>{stage}</span></button>
+          : <span className="diagram-stage-label" data-label={stage}><span>{stage}</span></span>}
       </li>)}
     </ol>
   </div>;
