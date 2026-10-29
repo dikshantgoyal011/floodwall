@@ -112,6 +112,10 @@
 .diagram-hold-block { grid-column: 1 / -1; }
 .diagram-title-block dt { color: var(--muted); font: 500 var(--label-size)/1.4 var(--mono); text-transform: uppercase; letter-spacing: var(--label-tracking); overflow-wrap: anywhere; }
 .diagram-title-block dd { margin: 6px 0 0; color: var(--ink); font-size: 18px; font-weight: 550; line-height: 1.2; font-variant-numeric: tabular-nums; }
+/* Until CountUp takes over the prerendered figures, keep them hidden so they never flash before counting;
+   if the script never runs, they appear after 2.5s. */
+:root[data-count-up="pending"] .count-up { animation: count-up-fallback 0s 2.5s both; }
+@keyframes count-up-fallback { from { opacity: 0; } to { opacity: 1; } }
 /* Recorded figures read as data: fixed-width digits that never jitter while they count. */
 .diagram-title-block .diagram-stat,
 .diagram-hold-block dd > span:first-child { font-family: var(--mono); font-weight: 500; letter-spacing: -.02em; font-variant-numeric: tabular-nums slashed-zero; }

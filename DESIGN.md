@@ -138,6 +138,10 @@ Dark mode keeps the same drawing geometry on a #111111 canvas with #1b1b1b sheet
 
 The first visit follows the system color scheme. The footer's keyboard-accessible sun/moon control remembers an explicit light/dark choice in local storage; blocked storage still permits a choice for the visit. Theme setup runs before the app renders. The root background, body, masthead and `theme-color` metadata all use the active canvas color, so supporting browser chrome can match the background surface. A theme change preserves paused animation frames and in-flight diagram state.
 
+The build prerenders the page: `vite build --ssr src/entry-server.tsx` renders the app once, and `site/scripts/prerender.mjs` writes that HTML into `docs/index.html`'s `#root`, which `main.tsx` then hydrates. Every heading, paragraph, stat and link is in the HTML before any script runs; only the diagram, the waitlist form and the motion need JavaScript, and the `noscript` note now says just that. Browser-only values read during render (media queries, the `?hero=` variant, the theme) render one agreed server value and update after hydration, so hydration never mismatches. The hero counts are prerendered as their final values; a pre-paint flag hides them until CountUp takes them over, and CSS shows them after 2.5s if the bundle never runs.
+
+Section links keep their own history positions. Each history entry carries an id, and scroll positions by id are kept in session storage (the 50 most recent, written when the page is hidden or left), so a reload returns to the exact position and Back/Forward after a reload still restore each entry's place. A fresh visit starts at the top or at its fragment, and a link, history step or hash change made before fonts load cancels a pending restore.
+
 ## Typography
 
 **Display Font:** Geist Variable (with ui-sans-serif, sans-serif fallbacks)

@@ -1,4 +1,5 @@
-import { IsometricDiagram } from "../components/IsometricDiagram";
+import { IsometricDiagram, type FigureName } from "../components/IsometricDiagram";
+import { useClientValue } from "../hooks";
 import { ArrowRight02Icon, GithubIcon } from "@hugeicons/core-free-icons";
 import { Icon } from "../components/Icon";
 import { REPO_URL } from "../content";
@@ -10,7 +11,10 @@ const CRATE_STATS = [
 ];
 
 export function Hero() {
-  const variant = new URLSearchParams(location.search).get("hero") === "stack" ? "control-stack" : "processing-line";
+  const variant = useClientValue<FigureName>(
+    () => new URLSearchParams(location.search).get("hero") === "stack" ? "control-stack" : "processing-line",
+    "processing-line",
+  );
   return (
     <section className="hero" id="home" aria-labelledby="hero-title">
       <div className="hero-content">

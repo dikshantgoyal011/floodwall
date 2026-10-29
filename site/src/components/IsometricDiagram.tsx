@@ -3,8 +3,9 @@ import { PauseIcon, PlayIcon } from "@hugeicons/core-free-icons";
 import { Icon } from "./Icon";
 import { StageBreadcrumb } from "./StageBreadcrumb";
 import { CountUp } from "./CountUp";
+import { useMediaQuery } from "../hooks";
 
-type FigureName = "processing-line" | "control-stack";
+export type FigureName = "processing-line" | "control-stack";
 type Tour = { stop(): void };
 type HoldState = { count: number; available: number; busy: boolean; paused: boolean; completed: number; point: [number, number]; frame: { x: number; y: number; width: number; height: number } };
 type FigureHandle = { release?(): void; set(value: number): void; destroy(): void; play?(): void; setPaused?(paused: boolean): void; pin?(stage: string | null): void };
@@ -35,13 +36,7 @@ const STAGES = {
 };
 
 export function IsometricDiagram({ variant, stats }: { variant: FigureName; stats: readonly { value: string | number; label: string }[] }) {
-  const [mobileLayout, setMobileLayout] = useState(() => matchMedia("(max-width: 600px)").matches);
-  useEffect(() => {
-    const media = matchMedia("(max-width: 600px)");
-    const update = () => setMobileLayout(media.matches);
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, []);
+  const mobileLayout = useMediaQuery("(max-width: 600px)");
   const stageRef = useRef<HTMLDivElement>(null);
   const playRef = useRef<() => void>(() => {});
   const releaseRef = useRef<() => void>(() => {});

@@ -8,6 +8,8 @@
     <meta name="theme-color" content="#f2f2f2" />
     <meta name="color-scheme" content="light dark" />
     <script src="/theme.js"></script>
+    <!-- Hide the prerendered hero figures until CountUp swaps them for its count; hero.css reveals them anyway after 2.5s. -->
+    <script>if (!matchMedia("(prefers-reduced-motion: reduce)").matches) document.documentElement.dataset.countUp = "pending";</script>
     <!-- Favicon set (sizes as on erpai.studio); regenerate with scripts/generate-favicons.sh. -->
     <link rel="icon" href="/favicon/floodwall-search-icon-96.png" type="image/png" sizes="96x96" />
     <link rel="icon" href="/favicon/floodwall-search-icon-192.png" type="image/png" sizes="192x192" />
@@ -24,13 +26,13 @@
     <link rel="preload" href="/fonts/geist-mono-variable.woff2" as="font" type="font/woff2" crossorigin />
   </head>
   <body>
-    <div id="root"></div>
     <noscript>
       <p class="noscript-note page-width">
-        Floodwall&rsquo;s page needs JavaScript. To join the early-access waitlist, use the
+        The diagram and the waitlist form need JavaScript. To join the early-access waitlist, use the
         <a href="https://tally.so/r/6DJeoP">Floodwall early access form on Tally</a>.
       </p>
     </noscript>
+    <div id="root"></div>
     <script src="/hairline/kernel.js"></script>
     <script src="/hairline/registry.js"></script>
     <script type="module" src="/src/main.tsx"></script>

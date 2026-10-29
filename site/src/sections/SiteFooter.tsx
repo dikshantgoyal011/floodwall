@@ -4,6 +4,7 @@ import { FOOTER_GROUPS, PROTO_URL } from "../content";
 import { BrandMark } from "../components/BrandMark";
 import { FooterArtwork } from "../components/FooterArtwork";
 import { Icon } from "../components/Icon";
+import { useMediaQuery } from "../hooks";
 import { useTheme } from "../theme";
 
 export function SiteFooter() {
@@ -11,7 +12,7 @@ export function SiteFooter() {
   const artworkRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
   const [paused, setPaused] = useState(false);
-  const [reducedMotion, setReducedMotion] = useState(() => matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const running = visible && !paused && !reducedMotion;
 
   useLayoutEffect(() => {
@@ -31,20 +32,16 @@ export function SiteFooter() {
   useEffect(() => {
     const artwork = artworkRef.current;
     if (!artwork) return;
-    const media = matchMedia("(prefers-reduced-motion: reduce)");
     let intersecting = false;
     const syncVisibility = () => setVisible(intersecting && !document.hidden);
-    const syncPreference = () => setReducedMotion(media.matches);
     const observer = new IntersectionObserver(([entry]) => {
       intersecting = entry.isIntersecting;
       syncVisibility();
     });
     observer.observe(artwork);
-    media.addEventListener("change", syncPreference);
     document.addEventListener("visibilitychange", syncVisibility);
     return () => {
       observer.disconnect();
-      media.removeEventListener("change", syncPreference);
       document.removeEventListener("visibilitychange", syncVisibility);
     };
   }, []);
@@ -91,7 +88,7 @@ export function SiteFooter() {
         </div>
 
         <div className="footer-bottom">
-          <span className="footer-copyright">&copy; {new Date().getFullYear()} Floodwall.</span>
+          <span className="footer-copyright" suppressHydrationWarning>&copy; {new Date().getFullYear()} Floodwall.</span>
           <span className="footer-credit">
             An <a href="https://www.erp.ai">ERP•AI</a>{" "}
             project. · Built with{" "}

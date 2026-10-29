@@ -1,24 +1,36 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 const DURATION = 900;
 const easeOut = (t: number) => 1 - (1 - t) ** 3;
 
+/** Lets the prerendered digits show again once a count has taken them over (see index.html). */
+function releaseGate() {
+  delete document.documentElement.dataset.countUp;
+}
+
 /**
- * Counts a whole number up from zero the first time it enters view. Anything
- * else (a version string, zero) renders as is. Assistive technology reads
- * only the final value; reduced motion skips the count.
+ * Counts a whole number up from zero the first time it is in view. Anything
+ * else (a version string, zero) renders as is. The prerendered HTML and
+ * assistive technology carry the final value; reduced motion skips the count.
  */
 export function CountUp({ value }: { value: string | number }) {
   const target = typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
   const ref = useRef<HTMLSpanElement>(null);
-  const [shown, setShown] = useState(() => target === null || matchMedia("(prefers-reduced-motion: reduce)").matches ? value : 0);
+  const [shown, setShown] = useState(value);
+  const [counting, setCounting] = useState(false);
+
+  // Before the hydrated page first paints, swap the prerendered final value for zero.
+  useLayoutEffect(() => {
+    if (target !== null && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setShown(0);
+      setCounting(true);
+    }
+    releaseGate();
+  }, [target]);
 
   useEffect(() => {
     const element = ref.current;
-    if (target === null || !element || matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      setShown(value);
-      return;
-    }
+    if (!counting || target === null || !element) return;
     let frame = 0;
     const observer = new IntersectionObserver(([entry]) => {
       if (!entry.isIntersecting) return;
@@ -33,10 +45,10 @@ export function CountUp({ value }: { value: string | number }) {
     }, { threshold: .6 });
     observer.observe(element);
     return () => { observer.disconnect(); cancelAnimationFrame(frame); };
-  }, [target, value]);
+  }, [counting, target]);
 
   return <>
-    <span ref={ref} aria-hidden="true">{shown}</span>
+    <span ref={ref} className="count-up" aria-hidden="true">{shown}</span>
     <span className="sr-only">{value}</span>
   </>;
 }

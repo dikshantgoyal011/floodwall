@@ -2,7 +2,11 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
 const SECTION_NAVIGATION_EVENT = "floodwall:section-navigation";
 
-function useMediaQuery(query: string) {
+/**
+ * A media query's live result. The prerendered HTML and the hydrating render use `serverValue`;
+ * React then re-renders with the browser's answer.
+ */
+export function useMediaQuery(query: string, serverValue = false) {
   const subscribe = useCallback(
     (onChange: () => void) => {
       const list = window.matchMedia(query);
@@ -11,7 +15,14 @@ function useMediaQuery(query: string) {
     },
     [query],
   );
-  return useSyncExternalStore(subscribe, () => window.matchMedia(query).matches);
+  return useSyncExternalStore(subscribe, () => window.matchMedia(query).matches, () => serverValue);
+}
+
+const staticSubscribe = () => () => {};
+
+/** A value only the browser knows and that never changes during the visit, such as the URL's query. */
+export function useClientValue<T>(read: () => T, serverValue: T) {
+  return useSyncExternalStore(staticSubscribe, read, () => serverValue);
 }
 
 /**
@@ -152,10 +163,37 @@ export function useActiveSection(ids: readonly string[]) {
   return active;
 }
 
+const POSITIONS_KEY = "floodwall:scroll-positions";
+const POSITIONS_LIMIT = 50;
+
+/** Scroll positions by history entry id, kept for the tab's session so they survive a reload. */
+function loadPositions() {
+  try {
+    const saved: unknown = JSON.parse(sessionStorage.getItem(POSITIONS_KEY) ?? "{}");
+    if (saved && typeof saved === "object") {
+      return new Map(Object.entries(saved).filter((pair): pair is [string, number] => Number.isFinite(pair[1])));
+    }
+  } catch { /* Storage blocked or corrupt: positions last for this page only. */ }
+  return new Map<string, number>();
+}
+
+function savePositions(positions: Map<string, number>) {
+  // Keep the most recently used entries; a long session never grows the store without bound.
+  const recent = [...positions].slice(-POSITIONS_LIMIT);
+  try { sessionStorage.setItem(POSITIONS_KEY, JSON.stringify(Object.fromEntries(recent))); } catch { /* Optional. */ }
+}
+
+/** How this document was reached: "reload" and "back_forward" bring their history entry back. */
+function navigationType() {
+  const [entry] = performance.getEntriesByType("navigation") as PerformanceNavigationTiming[];
+  return entry?.type ?? "navigate";
+}
+
 /**
  * Align each section surface flush below the sticky navigation.
  * Also aligns a section named in the URL on first load; a
- * malformed or unknown fragment is ignored.
+ * malformed or unknown fragment is ignored. A reload, or returning to
+ * the page through history, restores the exact position its entry had.
  */
 export function useCenteredSectionLinks() {
   useEffect(() => {
@@ -164,12 +202,26 @@ export function useCenteredSectionLinks() {
     history.scrollRestoration = "manual";
     let disposed = false;
     const positionKey = "floodwallScrollEntry";
-    // Track scrolls in memory; history state only carries an entry id, never per-frame writes.
-    const positions = new Map<string, number>();
-    let entry: string = crypto.randomUUID();
+    // Track scrolls in memory and persist them when the page is hidden or left; history state only
+    // carries an entry id, never per-frame writes.
+    const positions = loadPositions();
+    const savedEntry: unknown = history.state?.[positionKey];
+    let entry: string = typeof savedEntry === "string" ? savedEntry : crypto.randomUUID();
+    const restored = navigationType() === "navigate" ? undefined : positions.get(entry);
+    // Until a restoring load has scrolled back, the top of the page is not a position worth saving.
+    let restoring = restored !== undefined;
     let traversedUrl: string | null = null;
     const markEntry = () => history.replaceState({ ...history.state, [positionKey]: entry }, "");
-    const rememberPosition = () => positions.set(entry, window.scrollY);
+    const rememberPosition = () => {
+      if (restoring) return;
+      positions.delete(entry);
+      positions.set(entry, window.scrollY);
+    };
+    const persist = () => {
+      rememberPosition();
+      savePositions(positions);
+    };
+    const onVisibilityChange = () => { if (document.visibilityState === "hidden") persist(); };
     markEntry();
     rememberPosition();
 
@@ -197,6 +249,7 @@ export function useCenteredSectionLinks() {
       if (!id || !document.getElementById(id)) return;
 
       event.preventDefault();
+      restoring = false;
       traversedUrl = null;
       // Capture before moving, including instant jumps and interrupted smooth scrolling.
       rememberPosition();
@@ -208,10 +261,19 @@ export function useCenteredSectionLinks() {
     };
 
     const initial = fragmentId(location.hash);
-    if (initial) void document.fonts.ready.then(() => {
+    if (restored !== undefined) void document.fonts.ready.then(() => {
+      // A link, history step or hash change made before fonts load wins over the restore.
+      if (disposed || !restoring) return;
+      restoring = false;
+      window.scrollTo({ top: restored, behavior: "instant" });
+      document.dispatchEvent(new CustomEvent(SECTION_NAVIGATION_EVENT, { detail: "" }));
+      rememberPosition();
+    });
+    else if (initial) void document.fonts.ready.then(() => {
       if (!disposed && fragmentId(location.hash) === initial) scrollToSection(initial, "instant");
     });
     const onPopState = () => {
+      restoring = false;
       rememberPosition();
       traversedUrl = location.href;
       const restoredEntry: unknown = history.state?.[positionKey];
@@ -227,6 +289,7 @@ export function useCenteredSectionLinks() {
       rememberPosition();
     };
     const onHashChange = () => {
+      restoring = false;
       const traversed = traversedUrl === location.href;
       traversedUrl = null;
       if (!traversed) {
@@ -241,8 +304,13 @@ export function useCenteredSectionLinks() {
     window.addEventListener("scroll", rememberPosition, { passive: true });
     window.addEventListener("popstate", onPopState);
     window.addEventListener("hashchange", onHashChange);
+    window.addEventListener("pagehide", persist);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       disposed = true;
+      persist();
+      window.removeEventListener("pagehide", persist);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       history.scrollRestoration = previousRestoration;
       document.removeEventListener("click", onClick);
       window.removeEventListener("scroll", rememberPosition);

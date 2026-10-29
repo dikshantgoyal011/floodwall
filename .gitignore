@@ -8,3 +8,4 @@ npm-debug.log*
 
 # Local Claude Code session config
 /.claude/
+/site/.ssr
