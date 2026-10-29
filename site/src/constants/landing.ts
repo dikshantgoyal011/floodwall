@@ -1,18 +1,22 @@
-// Copy for the landing page, kept apart from the markup.
+// Copy and links for the landing page, kept apart from the markup.
 
-import type { Verdict } from "../types";
+export const REPO_URL = "https://github.com/erphq/floodwall";
 
-/** The hero heading, one span per line, each ending in an emphasized phrase. */
-export const HERO_TITLE_LINES = [
-  { text: "When ", emphasis: "agents flood" },
-  { text: "production, ", emphasis: "hold the line." },
-];
+export const HERO_VIDEO_URL = "/hero-sf.mp4";
+export const FOOTER_PRINT_URL = "/footer-water.webp";
 
-export const CRATE_STATS = [
-  { value: __CRATE_STATS__.version, label: "shipped" },
-  { value: __CRATE_STATS__.dependencies, label: "dependencies" },
-  { value: __CRATE_STATS__.tests, label: "tests" },
-];
+export type Link = { label: string; href: string };
+
+/** In-page sections the primary nav links to, in page order. */
+export const NAV_SECTIONS = [
+  { id: "home", label: "Home" },
+  { id: "model", label: "Model" },
+  { id: "gate", label: "Gate" },
+  { id: "ledger", label: "Ledger" },
+  { id: "roadmap", label: "Roadmap" },
+] as const;
+
+export const NAV_SECTION_IDS = NAV_SECTIONS.map((section) => section.id);
 
 export const MODEL_STAGES = [
   {
@@ -20,14 +24,20 @@ export const MODEL_STAGES = [
     copy: "Per-agent token buckets and a bounded priority queue keep one loop from taking the whole lane.",
   },
   {
+    title: "Scheduler",
+    copy: "Wide changes run alone, narrow ones run in parallel per resource, and a waiting change is never overtaken by lower-priority work.",
+  },
+  {
     title: "Gate",
-    copy: "A deny-overrides policy stack evaluates every intent before it gets near production.",
+    copy: "A deny-overrides policy stack and a conflict check rule on every intent. Deferred changes wait on hold for a human.",
   },
   {
     title: "Ledger",
     copy: "Every verdict is appended to a hash chain so retroactive edits break verification.",
   },
 ];
+
+export type Verdict = "admit" | "defer" | "reject";
 
 /** The reference policies in src/policy.rs and the verdict each one hands down. */
 export const GATE_POLICIES: { name: string; rule: string; verdict: Verdict }[] = [
@@ -64,7 +74,7 @@ export const LEDGER_ENTRIES: { verdict: Verdict; agent: string; intent: string }
 ];
 
 /** Head digest from the README's demo run, shortened for display. */
-export const LEDGER_HEAD_DIGEST = "d68d4329…1236b16c";
+export const LEDGER_HEAD_DIGEST = "189f5d55…0f84c3ca";
 
 export const ROADMAP = [
   {
@@ -75,7 +85,7 @@ export const ROADMAP = [
   {
     version: "0.2",
     title: "Scheduler",
-    copy: "Serialize wide-blast and same-resource changes while narrow work proceeds.",
+    copy: "Wide changes serialize, narrow work runs in parallel per resource, and contradictions wait for a human.",
   },
   {
     version: "0.3",
@@ -88,3 +98,34 @@ export const ROADMAP = [
     copy: "Durable append-only state that rebuilds the plane after restart.",
   },
 ];
+
+export const FOOTER_GROUPS: { title: string; links: Link[] }[] = [
+  {
+    title: "Explore",
+    links: [
+      { label: "Model", href: "#model" },
+      { label: "Gate", href: "#gate" },
+      { label: "Ledger", href: "#ledger" },
+    ],
+  },
+  {
+    title: "Crate",
+    links: [
+      { label: "Roadmap", href: "#roadmap" },
+      { label: "Repository", href: REPO_URL },
+      { label: "Goals", href: `${REPO_URL}/blob/main/GOALS.md` },
+      { label: "Status", href: `${REPO_URL}/blob/main/STATUS.md` },
+    ],
+  },
+  {
+    title: "Related projects",
+    links: [
+      { label: "VMyard agent runtimes", href: "https://www.vmyard.com/" },
+      { label: "knockstat server-log analytics", href: "https://www.knockstat.com/" },
+      { label: "ERP•AI", href: "https://www.erp.ai/" },
+    ],
+  },
+];
+
+// A subdomain: www.proto.erp.ai only redirects back here.
+export const PROTO_URL = "https://proto.erp.ai/";

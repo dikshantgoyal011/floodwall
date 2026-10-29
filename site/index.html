@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="scroll-smooth scroll-pt-header bg-paper font-body text-ink scheme-light motion-reduce:scroll-auto">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -16,18 +16,17 @@
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://floodwall.ai/" />
     <link rel="canonical" href="https://floodwall.ai/" />
-    <meta name="theme-color" content="#f7fbff" />
+    <meta name="theme-color" content="#f2f2f2" />
+    <meta name="color-scheme" content="light dark" />
+    <script src="/theme.js"></script>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600;700&display=swap"
-    />
+    <link rel="preload" href="/fonts/geist-variable.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/geist-mono-variable.woff2" as="font" type="font/woff2" crossorigin />
   </head>
-  <!-- clip, not hidden: hidden would break the sticky header. -->
-  <body class="min-w-[320px] overflow-x-clip bg-paper text-base leading-normal text-ink [-webkit-font-smoothing:antialiased]">
+  <body>
     <div id="root"></div>
+    <script src="/hairline/kernel.js"></script>
+    <script src="/hairline/registry.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

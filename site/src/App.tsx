@@ -1,18 +1,27 @@
-import { LandingGateSection } from "./components/landing/LandingGateSection";
-import { LandingHero } from "./components/landing/LandingHero";
-import { LandingLedgerSection } from "./components/landing/LandingLedgerSection";
-import { LandingModelSection } from "./components/landing/LandingModelSection";
-import { LandingRoadmapSection } from "./components/landing/LandingRoadmapSection";
+import { useCenteredSectionLinks } from "./hooks";
+import { GateSection } from "./sections/GateSection";
+import { Hero } from "./sections/Hero";
+import { LedgerSection } from "./sections/LedgerSection";
+import { ModelSection } from "./sections/ModelSection";
+import { RoadmapSection } from "./sections/RoadmapSection";
+import { SiteFooter } from "./sections/SiteFooter";
+import { SiteHeader } from "./sections/SiteHeader";
 
-/** The landing page's sections; SiteLayout puts the header and footer around them. */
 export default function App() {
+  useCenteredSectionLinks();
+
   return (
     <>
-      <LandingHero />
-      <LandingModelSection />
-      <LandingGateSection />
-      <LandingLedgerSection />
-      <LandingRoadmapSection />
+      <a className="skip-link" href="#main-content">Skip to content</a>
+      <SiteHeader />
+      <main id="main-content" tabIndex={-1}>
+        <Hero />
+        <ModelSection />
+        <GateSection />
+        <LedgerSection />
+        <RoadmapSection />
+      </main>
+      <SiteFooter />
     </>
   );
 }

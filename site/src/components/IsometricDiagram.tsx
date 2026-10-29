@@ -1,0 +1,202 @@
+import { useEffect, useRef, useState } from "react";
+import { PauseIcon, PlayIcon } from "@hugeicons/core-free-icons";
+import { Icon } from "./Icon";
+import { StageBreadcrumb } from "./StageBreadcrumb";
+
+type FigureName = "processing-line" | "control-stack";
+type Tour = { stop(): void };
+type HoldState = { count: number; available: number; busy: boolean; paused: boolean; completed: number; point: [number, number]; frame: { x: number; y: number; width: number; height: number } };
+type FigureHandle = { release?(): void; set(value: number): void; destroy(): void; play?(): void; setPaused?(paused: boolean): void };
+type Figure = {
+  name: FigureName;
+  means: string;
+  range: [number, number, number];
+  tour: ([number, number] | null)[];
+  labels?: { text: string; x: number; y: number }[];
+  mount(context: { stage: HTMLElement; svg: SVGSVGElement; onStageChange?(stage: string): void; onHoldChange?(state: HoldState): void }, value: number): FigureHandle;
+};
+
+declare global {
+  interface Window {
+    floodwallFigures: Partial<Record<FigureName, Figure>>;
+    HL: {
+      inject(root: Document): void;
+      mk(tag: "svg", attributes: Record<string, string>, parent: HTMLElement): SVGSVGElement;
+      setReducedMotion(reduce: boolean): void;
+      tour(stage: HTMLElement, stops: Figure["tour"], onStop: (index: number) => void): Tour;
+    };
+  }
+}
+
+const STAGES = {
+  "processing-line": ["Intents", "Admission", "Scheduler", "Gate", "Ledger", "Production"],
+  "control-stack": ["Admission", "Gate", "Ledger"],
+};
+
+export function IsometricDiagram({ variant, stats }: { variant: FigureName; stats: readonly { value: string | number; label: string }[] }) {
+  const [mobileLayout, setMobileLayout] = useState(() => matchMedia("(max-width: 600px)").matches);
+  useEffect(() => {
+    const media = matchMedia("(max-width: 600px)");
+    const update = () => setMobileLayout(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const playRef = useRef<() => void>(() => {});
+  const releaseRef = useRef<() => void>(() => {});
+  const [hold, setHold] = useState<HoldState | null>(null);
+  const [releaseAnnouncement, setReleaseAnnouncement] = useState("");
+  const pauseRef = useRef<(paused: boolean) => void>(() => {});
+  const pausedRef = useRef(false);
+  const [paused, setPaused] = useState(false);
+  const continuous = variant === "processing-line";
+  const [ready, setReady] = useState(false);
+  const [labels, setLabels] = useState<NonNullable<Figure["labels"]>>([]);
+  const [failed, setFailed] = useState(false);
+  const [reducedMotion, setReducedMotion] = useState(false);
+  const [activeStage, setActiveStage] = useState("");
+  const stages = STAGES[variant];
+  const playbackLabel = reducedMotion ? "Animation disabled for reduced motion"
+    : continuous ? paused ? "Resume diagram animation" : "Pause diagram animation" : "Play diagram animation";
+  const playbackTooltip = reducedMotion ? "Animation disabled for reduced motion"
+    : continuous ? paused ? "Play" : "Pause" : "Play";
+
+  useEffect(() => {
+    let disposed = false;
+    let cleanup = () => {};
+    setReady(false);
+    setFailed(false);
+    setActiveStage("");
+    setHold(null);
+    setLabels([]);
+    setReleaseAnnouncement("");
+
+    async function mount() {
+      await import(/* @vite-ignore */ `/hairline/${variant}.js`);
+      if (disposed || !stageRef.current) return;
+      const figure = window.floodwallFigures[variant];
+      if (!figure) throw new Error("Figure did not register");
+      const stops = figure.tour;
+      setLabels(figure.labels ?? []);
+      const stage = stageRef.current;
+      const { HL } = window;
+      HL.inject(document);
+      const media = matchMedia("(prefers-reduced-motion: reduce)");
+      let tour: Tour | undefined;
+      let handle: FigureHandle | undefined;
+      let svg: SVGSVGElement | undefined;
+      let observer: IntersectionObserver | undefined;
+      let visible = false;
+      let started = false;
+      let completed = 0;
+      cleanup = () => {
+        observer?.disconnect();
+        media.removeEventListener("change", syncMotion);
+        tour?.stop();
+        handle?.destroy();
+        pauseRef.current = () => {};
+        releaseRef.current = () => {};
+        svg?.remove();
+        stage.style.removeProperty("aspect-ratio");
+        playRef.current = () => {};
+      };
+      const syncMotion = () => {
+        HL.setReducedMotion(media.matches);
+        if (media.matches) {
+          tour?.stop();
+        }
+        handle?.setPaused?.(media.matches || pausedRef.current);
+        setReducedMotion(media.matches);
+        if (continuous && visible && !started) play();
+      };
+      syncMotion();
+      media.addEventListener("change", syncMotion);
+      svg = HL.mk("svg", { viewBox: "0 0 400 320", "aria-hidden": "true" }, stage);
+      handle = figure.mount({ stage, svg,
+        onStageChange: stage => { if (!disposed) setActiveStage(stage); },
+        onHoldChange: state => {
+          if (disposed) return;
+          setHold(state);
+          if (state.completed > completed) setReleaseAnnouncement(`${state.completed} held intents recorded and delivered to production.`);
+          completed = state.completed;
+        } }, figure.range[1]);
+      handle.setPaused?.(media.matches || pausedRef.current);
+      releaseRef.current = () => handle?.release?.();
+      pauseRef.current = (paused) => handle?.setPaused?.(media.matches || paused);
+      function play() {
+        tour?.stop();
+        if (media.matches) return;
+        started = true;
+        if (handle?.play) handle.play();
+        else tour = HL.tour(stage, stops, (index) => {
+          if (index === stops.length - 1) tour?.stop();
+        });
+      }
+      playRef.current = play;
+      // The kernel pauses its shared frame loop offscreen and settles reduced motion.
+      observer = new IntersectionObserver(([entry]) => {
+        visible = entry.isIntersecting;
+        // The finite stack tour has no pause handle, so it starts only on request.
+        if (continuous && visible && !started) play();
+      }, { threshold: 0.5 });
+      observer.observe(stage);
+      setReady(true);
+    }
+    mount().catch(() => {
+      cleanup();
+      if (!disposed) { setHold(null); setLabels([]); setFailed(true); }
+    });
+    return () => { disposed = true; cleanup(); };
+  }, [variant, mobileLayout]);
+
+  return (
+    <figure className="hero-diagram">
+      <div className="diagram-scene">
+      <div
+        ref={stageRef}
+        className="isometric-stage"
+        data-hairline={variant}
+        role="img"
+        aria-label={variant === "processing-line"
+          ? "A flood of intents passes through admission, scheduler, and policy gate. Deferred intents branch to hold. The main path continues through the ledger to dry ground: production. Checked, recorded changes accumulate there as green boxes."
+          : "Exploded isometric control plane. Admission, policy, and ledger layers separate to reveal how they fit together."}
+      />
+      <div className="diagram-labels" aria-hidden="true">
+        {labels.map(label => <span key={label.text} style={{left: `${label.x / 4}%`, top: `${label.y / 3.2}%`}}>{label.text}</span>)}
+      </div>
+      {continuous && hold && <button type="button" className="hold-release-control"
+        style={{ left: `${(hold.point[0] - hold.frame.x) / hold.frame.width * 100}%`, top: `${(hold.point[1] - hold.frame.y) / hold.frame.height * 100}%` }}
+        disabled={!ready || failed || hold.busy || hold.paused || hold.available === 0}
+        aria-label={`Release ${hold.available} held intents`} title={`Press to release ${hold.available} held intents`}
+        onClick={() => {
+          setReleaseAnnouncement(`Releasing ${hold.available} held intents through the ledger to production.`);
+          releaseRef.current();
+        }} /> }
+      </div>
+      <figcaption className="diagram-drawing-block">
+      {failed && <p className="diagram-error" role="alert">The diagram could not load. Reload the page to try again.</p>}
+      <dl className="diagram-title-block" data-has-hold={continuous} aria-label="Current crate and queue state">
+        {continuous && <div className="diagram-hold-block">
+          <dt>On hold</dt>
+          <dd>
+            <span>{hold?.count ?? 0}</span>
+            <span className="diagram-hold-instruction">{hold?.busy ? "Recording and delivering" : hold && hold.completed > 0 ? `${hold.completed} released to production` : hold?.count === 0 ? "Incoming intents continue" : `Press release for ${hold?.available ?? 2}`}</span>
+          </dd>
+        </div>}
+        {stats.map(({ value, label }) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+      </dl>
+      <p className="sr-only" role="status">{releaseAnnouncement}</p>
+      <div className="diagram-caption">
+        <StageBreadcrumb stages={stages} activeStage={activeStage} paused={paused || reducedMotion} />
+          <button type="button" className="diagram-motion-control" disabled={!ready || failed || reducedMotion} onClick={() => {
+            if (continuous) { const next = !pausedRef.current; pausedRef.current = next; setPaused(next); pauseRef.current(next); }
+            else playRef.current();
+          }} aria-label={playbackLabel} title={playbackTooltip}>
+            <Icon icon={continuous && !paused ? PauseIcon : PlayIcon} size={20} />
+          </button>
+      </div>
+      {variant === "processing-line" && <p className="diagram-note">Hold: deferred intents wait for human release or expiry. The ledger records every verdict and outcome. Green boxes show checked, recorded changes in production.</p>}
+      </figcaption>
+    </figure>
+  );
+}

@@ -1,0 +1,309 @@
+.hero {
+  --hero-inset: 24px;
+  display: flex;
+  flex-direction: column;
+  padding: var(--hero-inset);
+}
+.hero-content {
+  display: grid;
+  grid-template-columns: .8fr 1.2fr;
+  align-items: center;
+  gap: clamp(24px, 4vw, 64px);
+  min-height: 0;
+}
+.hero-intro {
+  min-width: 0;
+  padding-block: 0;
+  overflow-wrap: anywhere;
+}
+.hero-content h1 {
+  max-width: 490px;
+  font-size: clamp(36px, 3.9vw, 56px);
+  line-height: 1.06;
+  letter-spacing: -.04em;
+  text-wrap: balance;
+}
+.hero-lead {
+  max-width: 46ch;
+  margin-top: 24px;
+  color: var(--muted);
+  font-size: var(--text-base);
+  line-height: var(--leading-body);
+}
+.hero-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  margin-top: 32px;
+}
+.hero-actions > * { max-width: 100%; white-space: normal; }
+.hero-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.hero-link:hover { text-decoration: underline; }
+.hero-diagram {
+  min-width: 0;
+  width: 100%;
+  margin: 0;
+}
+.isometric-stage {
+  --hairline-plate: var(--paper);
+  --hairline-hi: var(--ink);
+  --hairline-edge: var(--drawing-edge);
+  --hairline-mid: var(--drawing-mid);
+  --hairline-lo: var(--drawing-lo);
+  --hairline-stroke: 1;
+  width: 100%;
+  aspect-ratio: 5 / 4;
+}
+/* Outer silhouettes carry the mass; inset creases describe the surface. */
+.isometric-stage .sil { stroke-width: 1.8; }
+.isometric-stage .lo { stroke-width: .7; }
+.isometric-stage .hi { stroke-width: 2; }
+.isometric-stage[data-hairline="processing-line"] { aspect-ratio: 435 / 281; }
+.isometric-stage[data-hairline="processing-line"] .sil { stroke-width: 1.25; }
+.isometric-stage[data-hairline="processing-line"] .hi { stroke-width: 1.5; }
+.isometric-stage[data-hairline="processing-line"] .lo { stroke-width: .5; }
+.diagram-caption {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 48px;
+  align-items: stretch;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+.diagram-motion-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 48px;
+  align-self: stretch;
+  border: 0;
+  border-left: 1px solid var(--line);
+  padding: 0;
+  color: var(--ink);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.diagram-motion-control:hover { color: var(--accent); background: var(--canvas); }
+.diagram-motion-control:disabled { color: var(--muted); cursor: default; }
+.diagram-drawing-block {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+}
+.diagram-error { padding: 12px; border-bottom: 1px solid var(--line); }
+.diagram-title-block {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(min-content, 1fr));
+  gap: 1px;
+  margin: 0;
+  background: var(--line);
+}
+.diagram-title-block > div { min-width: 0; padding: 12px; background: var(--paper); }
+.diagram-hold-block { grid-column: 1 / -1; }
+.diagram-title-block dt { color: var(--muted); font: 450 10px/1.4 var(--mono); text-transform: uppercase; letter-spacing: .03em; overflow-wrap: anywhere; }
+.diagram-title-block dd { margin: 6px 0 0; color: var(--ink); font-size: 18px; font-weight: 550; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.diagram-hold-block dd { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.diagram-title-block .diagram-hold-instruction { color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.5; }
+@media (max-width: 1000px) {
+  .hero-content { grid-template-columns: .85fr 1.15fr; gap: 24px; }
+  .hero-actions { gap: 12px; }
+}
+@media (max-width: 760px) {
+  .hero-content { grid-template-columns: 1fr; gap: 0; }
+  .hero-diagram { order: -1; max-width: none; justify-self: stretch; }
+  .hero-intro { padding-block: 32px 0; }
+  .hero-content h1 { max-width: 540px; font-size: clamp(34px, 5.6vw, 44px); }
+  .hero-lead { max-width: 58ch; }
+}
+@media (max-width: 500px) {
+  .diagram-title-block > div { padding: 10px 8px; }
+  .diagram-title-block dt { font-size: 9px; }
+  .diagram-caption { font-size: 11px; }
+}
+
+.diagram-scene { position: relative; }
+.diagram-labels { position: absolute; inset: 0; pointer-events: none; }
+.diagram-labels > span {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  white-space: pre;
+  text-transform: uppercase;
+  width: max-content;
+}
+.diagram-breadcrumb { position: relative; min-width: 0; padding: 8px; isolation: isolate; }
+.diagram-stage-highlight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  transform-origin: top left;
+  background: var(--canvas);
+  visibility: hidden;
+  pointer-events: none;
+  transition: transform 260ms cubic-bezier(.25, 1, .5, 1);
+}
+.diagram-stages {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  line-height: 16px;
+}
+.diagram-stages li { display: inline-flex; align-items: center; gap: 4px; }
+.diagram-stages .ui-icon { color: var(--muted); }
+.diagram-stage-label { position: relative; display: grid; align-items: center; padding: 6px 8px; font-weight: 450; }
+.diagram-stage-label > span, .diagram-stage-label::after { grid-area: 1 / 1; }
+/* Reserve the bold label width so the cycle never reflows the breadcrumb. */
+.diagram-stage-label::after { content: attr(data-label); font-weight: 650; visibility: hidden; }
+.diagram-stages [aria-current="step"] .diagram-stage-label {
+  color: var(--ink);
+  font-weight: 650;
+}
+.diagram-note { margin: 0; padding: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; line-height: 1.6; }
+@media (max-width: 500px) { .diagram-labels > span { font-size: 9px; } }
+
+.isometric-stage .platform-side { fill: var(--platform-side); stroke: none; }
+.isometric-stage .platform-top { fill: var(--platform-top); stroke: var(--platform-edge); stroke-width: 1.2; }
+.isometric-stage .platform-bottom { stroke: var(--drawing-mid); stroke-width: 1; }
+.isometric-stage[data-hairline="processing-line"] .platform-top { stroke-width: 1.2; }
+.isometric-stage[data-hairline="processing-line"] .platform-bottom { stroke-width: 1; }
+
+/* Final cartons share the same geometry and finish during transfer and at rest. */
+.isometric-stage .production-box .sil,
+.isometric-stage .recorded-intent .sil { fill: var(--production-fill); stroke: var(--production-edge); stroke-width: 1.35; }
+.isometric-stage .production-box .lo,
+.isometric-stage .recorded-intent .lo { stroke: var(--production-detail); stroke-width: .55; }
+.isometric-stage .production-check { stroke: var(--production-mark); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.isometric-stage .production-record { stroke: var(--production-mark); stroke-width: 1.05; stroke-linecap: round; stroke-linejoin: round; }
+.isometric-stage[data-hairline="processing-line"] .production-box .sil,
+.isometric-stage[data-hairline="processing-line"] .recorded-intent .sil { stroke-width: 1.1; }
+.isometric-stage[data-hairline="processing-line"] .production-check { stroke-width: 1.35; }
+.isometric-stage[data-hairline="processing-line"] .production-record { stroke-width: .85; }
+.isometric-stage .guide-rail { stroke: var(--guide-rail); stroke-width: .65; stroke-linecap: round; stroke-linejoin: round; }
+.isometric-stage .held-intent .sil,
+.isometric-stage .deferred-intent .sil { fill: var(--hold-fill); stroke: var(--hold-edge); stroke-width: 1.5; }
+.isometric-stage .held-intent .lo,
+.isometric-stage .deferred-intent .lo { stroke: var(--hold-detail); stroke-width: .55; }
+.isometric-stage[data-hairline="processing-line"] .held-intent .sil,
+.isometric-stage[data-hairline="processing-line"] .deferred-intent .sil { stroke-width: 1.2; }
+.isometric-stage [data-flow-route] .sil { transition: fill 260ms ease-out, stroke 260ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .isometric-stage [data-flow-route] .sil { transition: none; }
+}
+
+/* A native, keyboard-accessible hit target sits directly over the illustrated round button. */
+.hold-release-control {
+  position: absolute;
+  width: max(44px, 7%);
+  height: 44px;
+  transform: translate(-50%, -50%);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.hold-release-control:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.hold-release-control:active { background: transparent; }
+.hold-release-control:disabled { cursor: default; }
+@media (hover: hover) and (pointer: fine) {
+  .diagram-scene:has(.hold-release-control:not(:disabled):hover) .release-button-face .sil { fill: var(--release-hover); }
+}
+
+.isometric-stage .release-button-face .sil { fill: var(--release-fill); stroke: var(--release-edge); stroke-width: 1.7; }
+.isometric-stage[data-hairline="processing-line"] .release-button-face .sil { stroke-width: 1.25; }
+.isometric-stage .release-button-text { fill: var(--release-text); stroke: none; font-family: var(--mono); font-weight: 600; pointer-events: none; }
+.isometric-stage .human-released-intent .sil { stroke-width: 2.3; }
+.isometric-stage.manual-release-active .release-guide { stroke: var(--release-guide); stroke-width: 1.2; }
+
+@media (max-width: 500px) { .isometric-stage .release-button-text { font-size: 8px; } }
+
+/* Detached zone labels retain the isometric axes while clearing all solids. */
+.isometric-stage .zone-label {
+  fill: var(--zone-label);
+  stroke: none;
+  font-family: var(--mono);
+  font-weight: 500;
+  letter-spacing: .03em;
+  pointer-events: none;
+}
+.isometric-stage .zone-label-secondary { fill: var(--zone-secondary); }
+
+@media (max-width: 600px) {
+  .hero { --hero-inset: 16px; }
+  /* Reserve the portrait frame before the illustration mounts. */
+  .isometric-stage[data-hairline="processing-line"] { aspect-ratio: 260 / 371; }
+  .hero-diagram .diagram-scene { width: 100%; margin-inline: 0; }
+}
+
+.isometric-stage .is-recording .sil,
+.isometric-stage .ledger-recording .sil { stroke: var(--recording-edge); stroke-width: 2; }
+.isometric-stage .is-recording .sil { fill: var(--hold-fill); }
+.isometric-stage .ledger-chain-link { stroke-width: 1.35; }
+.isometric-stage .ledger-chain-link.is-appending { stroke: var(--ink); stroke-width: 2; }
+.isometric-stage .ledger-write-link { stroke: var(--ink); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+
+@media (min-width: 761px) {
+  .hero-content {
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 16px 24px;
+  }
+  .hero-intro { grid-column: 1; grid-row: 1; z-index: 1; }
+  .hero-diagram {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-row: 1 / 3;
+    grid-template-columns: subgrid;
+    grid-template-rows: subgrid;
+    align-items: center;
+    max-width: none;
+  }
+  .hero-diagram .diagram-scene {
+    grid-column: 2;
+    grid-row: 1;
+    width: 100%;
+    justify-self: center;
+  }
+  .diagram-drawing-block { grid-column: 1 / -1; grid-row: 2; margin-top: 0; }
+}
+
+@media (min-width: 1100px) {
+  .hero { --hero-inset: 32px; }
+  .hero-content {
+    flex: 1;
+    min-height: 0;
+    grid-template-columns: minmax(360px, .65fr) minmax(0, 1.35fr);
+  }
+  .hero-lead { margin-top: 20px; }
+  .hero-content h1 { font-size: clamp(36px, 3.5vw, 50px); }
+  .hero-actions { margin-top: 24px; gap: 12px 16px; }
+  .hero-diagram .diagram-scene {
+    max-width: min(100%, calc((var(--slide-height) - 256px) * 5 / 4));
+  }
+  .hero-diagram:has([data-hairline="processing-line"]) .diagram-scene {
+    max-width: min(100%, calc((var(--slide-height) - 256px) * 435 / 281));
+  }
+  .diagram-title-block[data-has-hold="true"] { grid-template-columns: minmax(0, 1.8fr) repeat(3, minmax(0, 1fr)); }
+  .diagram-hold-block { grid-column: auto; }
+}
