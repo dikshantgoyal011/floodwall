@@ -93,6 +93,7 @@ pub use ledger::{Digest, Evidence, Ledger, Record, SignatureError, SignatureProb
 pub use merkle::FrontierFull;
 pub use policy::{Policy, Verdict};
 pub use replay::ResumeError;
+pub use rules::BundleId;
 pub use scheduler::{InFlight, SchedulerConfig};
 
 use hold::Hold;
@@ -244,6 +245,10 @@ pub struct Floodwall {
     /// ledger shows that pass ruling on, whether its signature check
     /// passed (see [`crate::replay`]).
     replayed_checks: Option<HashMap<IntentKey, bool>>,
+    /// While [`Floodwall::resume`] replays a pass: for each intent the
+    /// ledger shows that pass ruling on, the bundles its decision records
+    /// (see [Policy bundles](crate::replay#policy-bundles)).
+    replayed_bundles: Option<HashMap<IntentKey, Vec<BundleId>>>,
     clock: u64,
 }
 
@@ -291,6 +296,7 @@ impl Floodwall {
             keyring: None,
             authenticated: HashSet::new(),
             replayed_checks: None,
+            replayed_bundles: None,
         })
     }
 
@@ -394,7 +400,7 @@ impl Floodwall {
             self.authenticated.insert(key.clone());
         }
         self.live.insert(key);
-        self.record(&intent, QUEUED, None, Vec::new());
+        self.record(&intent, QUEUED, None, Vec::new(), Vec::new());
         self.persist();
         Ok(())
     }
@@ -520,7 +526,15 @@ impl Floodwall {
             .iter()
             .map(|(name, verdict)| (name.clone(), verdict.label().to_string()))
             .collect();
-        self.record(&intent, verdict.label(), reason, policies);
+        // Replaying, a decision keeps the bundles the ledger shows when the
+        // gate holds bundles of the same names: a restart may move to
+        // another revision of them (see crate::replay#policy-bundles).
+        let gate_bundles = self.gate.bundles();
+        let bundles = match self.replayed_bundles.as_ref().and_then(|b| b.get(&key)) {
+            Some(recorded) if same_names(recorded, gate_bundles) => recorded.clone(),
+            _ => gate_bundles.to_vec(),
+        };
+        self.record(&intent, verdict.label(), reason, policies, bundles);
         match &verdict {
             Verdict::Admit => self.scheduler.start(intent.clone(), now),
             Verdict::Defer(why) => {
@@ -556,7 +570,13 @@ impl Floodwall {
     /// Record a held intent's expiry and forget it.
     fn expire_held(&mut self, held: Held, reason: String, report: &mut TickReport) {
         self.forget(&held.intent.key());
-        self.record(&held.intent, "expired", Some(reason), Vec::new());
+        self.record(
+            &held.intent,
+            "expired",
+            Some(reason),
+            Vec::new(),
+            Vec::new(),
+        );
         report.expired.push(held);
     }
 
@@ -587,7 +607,13 @@ impl Floodwall {
             "released by {by}; held since tick {} for: {}",
             held.since, held.reason
         );
-        self.record(&held.intent, "released", Some(reason), Vec::new());
+        self.record(
+            &held.intent,
+            "released",
+            Some(reason),
+            Vec::new(),
+            Vec::new(),
+        );
         self.persist();
         self.admission
             .requeue(held.intent, now)
@@ -615,6 +641,7 @@ impl Floodwall {
             &held.intent,
             "expired",
             Some(format!("expired by {by}")),
+            Vec::new(),
             Vec::new(),
         );
         self.persist();
@@ -645,7 +672,13 @@ impl Floodwall {
             Outcome::Succeeded => None,
             Outcome::Failed(why) => Some(why.clone()),
         };
-        self.record(&finished.intent, outcome.label(), reason, Vec::new());
+        self.record(
+            &finished.intent,
+            outcome.label(),
+            reason,
+            Vec::new(),
+            Vec::new(),
+        );
         self.persist();
         Ok(finished.intent)
     }
@@ -659,6 +692,7 @@ impl Floodwall {
         label: &str,
         reason: Option<String>,
         policies: Vec<(String, String)>,
+        bundles: Vec<BundleId>,
     ) {
         let tick = self.ledger.advance_clock(self.clock);
         debug_assert_eq!(
@@ -667,7 +701,7 @@ impl Floodwall {
         );
         if let Err(e) = self
             .ledger
-            .write_intent(intent, label, reason, policies, false)
+            .write_intent(intent, label, reason, policies, bundles, false)
         {
             ledger::write_failed(e);
         }
@@ -754,6 +788,12 @@ impl Floodwall {
     pub fn checkpoint(&mut self) -> Checkpoint {
         self.ledger.checkpoint()
     }
+}
+
+/// Whether two lists of bundles name the same bundles, in the same order,
+/// whatever their revisions.
+fn same_names(a: &[BundleId], b: &[BundleId]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.name == y.name)
 }
 
 /// The ledger reason for a decision on a released intent: who released

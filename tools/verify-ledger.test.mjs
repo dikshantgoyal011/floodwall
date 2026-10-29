@@ -8,6 +8,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -265,6 +266,64 @@ test("records are checked against the exact schema before hashing", () => {
   // recordDigest itself refuses to hash a malformed record.
   assert.throws(() => recordDigest({ ...r, policies: [["a", "b", "c"]] }), /is not a \[name, label\] pair/);
   assert.throws(() => recordDigest({ ...r, intent_id: 1 }), /intent_id is not a u64/);
+});
+
+test("a record's policy bundles are covered by its digest", () => {
+  // Record 2 of the fixture names two bundles.
+  const [i, r] = recordLines(edge)[2];
+  assert.equal(r.bundles.length, 2);
+  for (const [what, change] of [
+    ["a revision", (o) => (o.bundles[0].revision = "2026.10.28-2")],
+    ["a name", (o) => (o.bundles[0].name = "staging")],
+    ["a digest", (o) => (o.bundles[1].digest = "0".repeat(64))],
+    ["a dropped bundle", (o) => o.bundles.pop()],
+    ["the order", (o) => o.bundles.reverse()],
+    ["an added bundle", (o) => o.bundles.push({ ...o.bundles[0] })],
+  ]) {
+    assert.throws(() => verifyLedger(edit(edge, i, change), edgeKeys), /record 2 does not match its digest/, what);
+    // With the record re-hashed, the checkpoint after it (at 3) no longer
+    // has its head.
+    const rehashed = edit(edge, i, (o) => {
+      change(o);
+      o.digest = recordDigest(o);
+    });
+    assert.throws(() => verifyLedger(rehashed, edgeKeys), /checkpoint 3 has the wrong head/, what);
+  }
+});
+
+test("bundles are checked against the exact schema before hashing", () => {
+  const [i, r] = recordLines(edge)[1];
+  assert.equal(r.bundles.length, 1);
+  fails(edit(edge, i, (o) => (o.bundles = {})), edgeKeys, /bundles is not an array/);
+  fails(edit(edge, i, (o) => delete o.bundles), edgeKeys, /the record has no "bundles"/);
+  fails(edit(edge, i, (o) => (o.bundles = [["production", "1", o.bundles[0].digest]])), edgeKeys, /bundles\[0\] is not a JSON object/);
+  fails(edit(edge, i, (o) => delete o.bundles[0].revision), edgeKeys, /bundles\[0\] has no "revision"/);
+  fails(edit(edge, i, (o) => (o.bundles[0].by = "ci")), edgeKeys, /bundles\[0\] has an unknown field "by"/);
+  fails(edit(edge, i, (o) => (o.bundles[0] = { revision: o.bundles[0].revision, name: o.bundles[0].name, digest: o.bundles[0].digest })), edgeKeys, /bundles\[0\] does not have its fields in the documented order/);
+  fails(edit(edge, i, (o) => (o.bundles[0].name = 7)), edgeKeys, /bundles\[0\]\.name is not a string/);
+  fails(edit(edge, i, (o) => (o.bundles[0].revision = null)), edgeKeys, /bundles\[0\]\.revision is not a string/);
+  fails(edit(edge, i, (o) => (o.bundles[0].digest = o.bundles[0].digest.toUpperCase())), edgeKeys, /bundles\[0\]\.digest is not 32 bytes of lowercase hex/);
+  fails(edit(edge, i, (o) => (o.bundles[0].digest = o.bundles[0].digest.slice(2))), edgeKeys, /bundles\[0\]\.digest is not 32 bytes of lowercase hex/);
+  // A ledger in the encoding before bundles were recorded is refused.
+  fails(editText(edge, 0, (l) => l.replace("record/v4", "record/v3")), edgeKeys, /record_encoding is "floodwall\/ledger\/record\/v3"/);
+});
+
+test("the summary names each bundle and how many records name it", () => {
+  const s = verifyLedger(edge, edgeKeys);
+  assert.deepEqual(
+    s.bundles.map((b) => [b.name, b.revision, b.records]),
+    [
+      ["production", "2026.10.28-1", 5],
+      ['équipe "a\\b"', "", 2],
+    ],
+  );
+  // The production digest is the SHA-256 of its file, here "format 1\n".
+  assert.equal(s.bundles[0].digest, createHash("sha256").update("format 1\n").digest("hex"));
+  assert.deepEqual(verifyLedger(whole, keys).bundles, []);
+  const run = cli(edge, JSON.stringify(edgeKeys));
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, new RegExp(`ok: bundle "production" revision "2026\\.10\\.28-1" \\(sha256 ${s.bundles[0].digest}\\) on 5 records\\n`));
+  assert.match(run.stdout, /ok: bundle "équipe \\"a\\\\b\\"" revision "" \(sha256 f{64}\) on 2 records\n/);
 });
 
 test("an intent's action kind and other names must be exactly one of their strings", () => {

@@ -1,9 +1,14 @@
 format 1
+bundle "production" revision "2026.10.28-1"
 
 # Production guardrails for a fleet of agents: the worked example of
 # writing OPA/Rego-style policies as floodwall rules. policies/README.md
 # shows the Rego each policy stands for, and walks through the gate's
 # decisions with `cargo run --example production`.
+#
+# The bundle line names this file and its revision: every decision the
+# gate makes with it records both, with the file's SHA-256. Release a
+# change to these rules under a new revision.
 
 # Supply chain: deploy only images that CI built and pushed to the internal
 # registry. The classic admission-control rule.

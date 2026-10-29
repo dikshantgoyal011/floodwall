@@ -37,7 +37,7 @@ You cannot review your way out of that. You have to **govern throughput**: admit
 | **Scheduler** | [`scheduler`](src/scheduler.rs) | Decides when each waiting intent may start. A `Global` change runs alone; `Region` changes run one at a time with their resource to themselves; narrow changes run in parallel across resources, up to a per-resource in-flight limit. A blocked intent keeps what it waits for from lower-priority work, so wide changes are never starved. Two agents' contradictory changes to one resource within a conflict window are deferred. |
 | **Gate** | [`gate`](src/gate.rs) / [`policy`](src/policy.rs) | A stack of policies, each a pure function from an intent to a verdict, composed with **deny-overrides**: the harshest verdict wins, so one `Reject` blocks a change no matter how many policies admit it. |
 | **Hold** | [`hold`](src/hold.rs) | A `Defer` is "not yet", not "no". Deferred intents wait here until a human releases them (their deferrals are then waived; rejections still apply) or expires them, or until a TTL runs out. |
-| **Ledger** | [`ledger`](src/ledger.rs) | Every decision, release, expiry and outcome is appended to a SHA-256 hash chain together with its evidence: the action, the reason, and each policy's verdict. Each record folds in the previous digest, so any retroactive edit to history breaks the chain. Every so many records the ledger cuts a [checkpoint](src/checkpoint.rs) (chain head + Merkle root), optionally signed by the plane, so an auditor can check the rest of the ledger from a checkpoint without replaying it from genesis. |
+| **Ledger** | [`ledger`](src/ledger.rs) | Every decision, release, expiry and outcome is appended to a SHA-256 hash chain together with its evidence: the action, the reason, each policy's verdict, and, for a decision, the versioned policy bundles its rules came from. Each record folds in the previous digest, so any retroactive edit to history breaks the chain. Every so many records the ledger cuts a [checkpoint](src/checkpoint.rs) (chain head + Merkle root), optionally signed by the plane, so an auditor can check the rest of the ledger from a checkpoint without replaying it from genesis. |
 
 The unit that flows through all of it is an [`Intent`](src/intent.rs): a change an agent *wants* to make, fully attributed, tagged with how urgent it is (`Priority`) and how much it can break (`BlastRadius`). Agents never touch production directly. They submit intents. The floodwall decides what runs, when, and alongside what; the caller applies each admitted change and reports back.
 
@@ -217,7 +217,7 @@ The ledger exports as [JSON Lines](src/export.rs): a header, then every record a
 ```text
 $ cargo run --release -- --export audit/      # the demo writes ledger.jsonl, ledger-suffix.jsonl and keys.json
 $ node tools/verify-ledger.mjs audit/ledger.jsonl audit/keys.json
-ok: 2989 records from genesis; 12 checkpoints; head 42d73075…
+ok: 2989 records from genesis; 12 checkpoints; head d68d4329…
 ok: 2989 agent signatures and every checkpoint signature verified
 ```
 
@@ -278,6 +278,41 @@ Rules test an intent's agent, resource, manifest, kind, replicas, priority and b
 
 For a worked example, [`policies/README.md`](policies/README.md) writes a platform team's production guardrails (a trusted image registry, protected state, service ownership, scale bounds, change risk) as rules, each next to the OPA/Rego it stands for, and `cargo run --example production` runs them at the gate.
 
+A rules file can declare itself a versioned policy bundle. Every decision made with it then records, in the ledger, which revision of which rules decided:
+
+```rust
+use floodwall::{Admission, Floodwall, Gate, RateLimit};
+use floodwall::intent::{Action, AgentId, BlastRadius, Intent, Priority};
+
+let rules = r#"
+format 1
+bundle "production" revision "2026.10.28-1"
+
+policy "protect-state" {
+  reject "{resource} holds state" when destructive and resource matches "*-db"
+}
+"#;
+let gate = Gate::new().with_rules(rules).unwrap();
+let bundle = gate.bundles()[0].clone(); // name, revision, and the file's SHA-256
+assert_eq!(bundle.to_string(), "production 2026.10.28-1");
+
+let mut plane = Floodwall::new(Admission::new(64, RateLimit::new(8.0, 1.0)), gate);
+let intent = Intent::new(
+    1,
+    AgentId::new("cleanup-bot"),
+    Action::Destroy { resource: "orders-db".into() },
+    Priority::Normal,
+    BlastRadius::Service,
+);
+plane.submit(intent, 0).unwrap();
+plane.tick(0);
+let decision = plane.ledger().records().last().unwrap();
+assert_eq!(decision.verdict, "reject");
+assert_eq!(decision.evidence.bundles, [bundle]); // covered by the record's digest
+```
+
+The bundle's digest is the SHA-256 of the file, so an auditor holding it can match it with `sha256sum`. The export carries the bundles, and `tools/verify-ledger.mjs` lists the bundles a ledger names. A plane can restart on a new revision that rules on its history the same way; the earlier decisions keep theirs.
+
 ## Demo
 
 ```text
@@ -311,7 +346,7 @@ floodwall demo - 4000 intents flung at the wall over 200 ticks, settled by tick 
 
   ledger (tamper-evident)
     records        : 2989
-    head digest    : 42d7307564cb7e580727285eac1f7cb088be88178f7eaeda5617a9ad77392d7b
+    head digest    : d68d4329a68a61b6b1fc77d51850f5627982a9dbef07f82e77609c891236b16c
     chain valid    : true
     signatures     : all 2989 records signed by their agents
 
@@ -331,7 +366,7 @@ Five agents (including a `chaos-monkey`) fling 4000 changes at the wall. Admissi
 | 0.2 | Scheduler: wide-blast serialization, narrow work in parallel by resource, per-resource in-flight limits, conflict detection, hold queue with human release and expiry | **done** |
 | 0.3 | Cryptographic ledger: SHA-256 chain, Ed25519-signed records, signed Merkle checkpoints, JSON Lines export with an independent verifier | **done** |
 | 0.4 | Persistence + replay: a durable ledger on disk, every record's tick, and a plane rebuilt exactly by replaying its ledger | **done** |
-| 0.5 | Policy-as-code: declarative rules + a worked OPA-style example          | in progress |
+| 0.5 | Policy-as-code: declarative rules, a worked OPA-style example, and versioned policy bundles recorded with every decision | **done** |
 
 See [GOALS.md](GOALS.md) for the full roadmap and [STATUS.md](STATUS.md) for current state.
 

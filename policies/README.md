@@ -4,7 +4,7 @@ floodwall's gate can load its policies from a rules file instead of Rust (see [`
 
 | File | What it is |
 |------|------------|
-| [`production.rules`](production.rules) | The guardrails in this walkthrough. |
+| [`production.rules`](production.rules) | The guardrails in this walkthrough, released as the policy bundle `production`, revision `2026.10.28-1`. |
 | [`standard.rules`](standard.rules) | The crate's built-in policies (`NoGlobalDestroy`, `BlastNeedsPriority`, `ResourceAllowlist`), written as rules. |
 
 Rules are data, so a plane reads them when it starts, from wherever they are released:
@@ -228,6 +228,28 @@ policy "chaos-in-staging" {
 | `decision`, with a `default` | the gate's deny-overrides, policy by policy |
 | `deny` is a set of every message | each policy gives one verdict, with the reason of its first rule that holds. The ledger records every policy's verdict, and the decision's reason is the first rejecting policy's, in file order. |
 | `time.now_ns()`, `http.send` | nothing like them: a rule depends only on the intent, so a gate decides the same way every time and a plane can be [replayed from its ledger](../src/replay.rs). Change the rules file to change the rules, or write a [`Policy`](../src/policy.rs) in Rust for anything that needs the outside world. |
+| a bundle's `.manifest` `revision`, in each decision log entry | `bundle "production" revision "..."` after the format line: every decision records the bundle's name, its revision and the file's SHA-256 in the ledger |
+
+## A versioned bundle
+
+OPA ships policies as bundles. Each has a revision in its manifest, and every decision log entry says which revision decided it. `production.rules` does the same with its second line:
+
+```text
+format 1
+bundle "production" revision "2026.10.28-1"
+```
+
+Every decision made with this file records the bundle in the ledger, next to the verdict:
+
+- its name;
+- its revision;
+- the SHA-256 of the file.
+
+The record's digest covers all three, so which rules decided a change can be no more rewritten than the decision itself. The export carries them, and `tools/verify-ledger.mjs` lists each bundle a ledger names, with its digest and how many records name it.
+
+An auditor holding the file can check it is the one that decided: `sha256sum policies/production.rules` prints the same digest the ledger shows. The digest also tells apart two files that claim the same revision but differ, by as little as a comment.
+
+To change the rules, release the file under a new revision. A plane can restart on it as long as the new revision rules on the ledger's history the same way (see [`src/replay.rs`](../src/replay.rs), "Policy bundles"). The earlier decisions keep the revision that made them, and the first decision under the new one marks the change in the ledger.
 
 ## Running it
 
@@ -236,6 +258,7 @@ policy "chaos-in-staging" {
 ```text
 $ cargo run --example production
 production guardrails: 6 policies, 9 rules, from policies/production.rules
+bundle production 2026.10.28-1, sha256 e3c40d209bda389299dacffed289567069e42e57e50ac75d69db9e3030991e63
 
 tick 0: 11 intents submitted, 11 ruled on
   reject  cdn-bot#1            destroy cdn
@@ -274,6 +297,7 @@ tick 2: 2 ruled on, their deferrals waived
 
 ledger: 32 records, chain valid: true
   queued 11, reject 5, admit 5, defer 3, succeeded 5, released 2, expired 1
+  13 decisions record bundle production 2026.10.28-1
 ```
 
 Under each decision are the policies that did not admit it, with their reasons.
@@ -282,6 +306,7 @@ Under each decision are the policies that did not admit it, with their reasons.
 - **`chaos-monkey#1` is rejected by two policies.** Both reasons are in the ledger. The decision's reason is the first one, `protect-state`'s.
 - **The three deferred changes are held, not dropped.** alice releases two, which go ahead at the next tick with their deferrals waived. A rejection would still have applied. bob expires the third.
 - **Everything is on the record.** Every arrival (`queued`), decision, release, expiry and outcome is in the ledger, with each policy's verdict.
+- **Each decision says which rules made it.** All 13 decisions, the two released ones included, record the bundle `production 2026.10.28-1` and the file's digest. The arrivals, release, expiry and outcomes record none, since the gate did not decide them.
 
 ## How it is checked
 

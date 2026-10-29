@@ -8,6 +8,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Versioned policy bundles, recorded with every decision (FW-503). A rules
+  file can declare `bundle "<name>" revision "<revision>"` right after its
+  format line; its identity is `BundleId`: the name, the revision, and the
+  SHA-256 of the file, so an auditor holding it can match it with
+  `sha256sum`. `Gate::with_rules` remembers the bundle (`Gate::bundles`;
+  a gate holds a bundle of a given name once), and every decision a
+  `Floodwall` makes records its gate's bundles in `Evidence::bundles`;
+  arrivals, releases, expiries and outcomes record none.
+  `rules::bundle(text)` reads a file's bundle, and
+  `Ledger::append_intent_with` writes an intent's record with bundles.
+  `tools/verify-ledger.mjs` checks them and lists each bundle a ledger
+  names, with on how many records. `Floodwall::resume` keeps the bundles
+  the ledger shows on replayed decisions when the gate has bundles of the
+  same names, so a plane can restart on a new revision that rules on its
+  history the same way; other bundles are `ResumeError::Diverged`.
+  `policies/production.rules` is released as bundle `production`, and
+  `.gitattributes` keeps `policies/` LF so a checkout hashes as released.
+  - **Breaking:** record encoding `floodwall/ledger/record/v4`: a record's
+    digest covers its bundles (their number, then each one's name, revision
+    and digest), so every digest, and the demo's head, changes. The export
+    writes `"bundles"` after `"policies"` on every record line, `[]`
+    when there are none, and names v4 in its header. `Evidence` gains the
+    `bundles` field.
 - A worked example of OPA/Rego-style policies at the gate (FW-502).
   `policies/production.rules` writes a platform team's production
   guardrails as rules: images only from the internal registry, no agent

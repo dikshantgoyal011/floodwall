@@ -64,7 +64,7 @@ export const LEDGER_ENTRIES: { verdict: Verdict; agent: string; intent: string }
 ];
 
 /** Head digest from the README's demo run, shortened for display. */
-export const LEDGER_HEAD_DIGEST = "42d73075…77392d7b";
+export const LEDGER_HEAD_DIGEST = "d68d4329…1236b16c";
 
 export const ROADMAP = [
   {

@@ -17,6 +17,9 @@
 //   - every record is at the next position, links to the one before it,
 //     is at a tick no earlier than it, has the digest its fields give, and
 //     shows the intent it holds: the same intent id, agent and action;
+//   - every policy bundle a record names (its name, revision, and the
+//     SHA-256 of the bundle's rules file) is well formed and covered by the
+//     record's digest;
 //   - every checkpoint matches the records so far: chain head, RFC 6962
 //     Merkle root, and frontier; and checkpoint sizes strictly increase;
 //   - with KEYS.json ({"plane": hex|null, "agents": {name: hex},
@@ -27,7 +30,9 @@
 // second line, which the auditor trusts; it must be there, and signed when
 // a plane key is given.
 //
-// Exits 0 and prints a summary if everything checks out; otherwise prints
+// Exits 0 and prints a summary if everything checks out, including each
+// policy bundle the records name and on how many (compare a bundle's digest
+// with `sha256sum` of the rules file you hold); otherwise prints
 // the first problem, with its line number, and exits 1. A keys file that
 // is given but is not a valid keys object is a failure, never a fallback
 // to checking hashes only.
@@ -113,8 +118,15 @@ function checkIntent(i, what) {
   nullOr(hexOf(64))(i.signature, `${what}.signature`);
 }
 
+function checkBundle(b, what) {
+  fields(b, ["name", "revision", "digest"], what);
+  string(b.name, `${what}.name`);
+  string(b.revision, `${what}.revision`);
+  unhex(b.digest, 32, `${what}.digest`);
+}
+
 function checkRecord(r) {
-  fields(r, ["type", "seq", "tick", "intent_id", "agent", "verdict", "action", "reason", "policies", "intent", "prev", "digest"], "the record");
+  fields(r, ["type", "seq", "tick", "intent_id", "agent", "verdict", "action", "reason", "policies", "bundles", "intent", "prev", "digest"], "the record");
   count(r.seq, "seq");
   decimalU64(r.tick, "tick");
   decimalU64(r.intent_id, "intent_id");
@@ -126,6 +138,8 @@ function checkRecord(r) {
     string(p[0], `policies[${n}][0]`);
     string(p[1], `policies[${n}][1]`);
   });
+  if (!Array.isArray(r.bundles)) throw new Error("bundles is not an array");
+  r.bundles.forEach((b, n) => checkBundle(b, `bundles[${n}]`));
   nullOr(checkIntent)(r.intent, "intent");
   unhex(r.prev, 32, "prev");
   unhex(r.digest, 32, "digest");
@@ -148,7 +162,7 @@ const HEADER = {
   from: null,
   hash: "sha256",
   merkle: "rfc6962",
-  record_encoding: "floodwall/ledger/record/v3",
+  record_encoding: "floodwall/ledger/record/v4",
   intent_encoding: "floodwall/intent/v1",
   checkpoint_encoding: "floodwall/checkpoint/v1",
 };
@@ -215,12 +229,12 @@ function summary(a) {
   }
 }
 
-// The record encoding (src/ledger.rs, "Record encoding", v3).
+// The record encoding (src/ledger.rs, "Record encoding", v4).
 export function recordDigest(r) {
   checkRecord(r);
   return hex(
     sha256(
-      field("floodwall/ledger/record/v3"),
+      field("floodwall/ledger/record/v4"),
       unhex(r.prev, 32, "prev"),
       u64(r.seq),
       u64(BigInt(r.tick)),
@@ -233,6 +247,8 @@ export function recordDigest(r) {
       optional(r.reason === null ? null : field(r.reason)),
       u64(r.policies.length),
       ...r.policies.flatMap(([name, label]) => [field(name), field(label)]),
+      u64(r.bundles.length),
+      ...r.bundles.flatMap((b) => [field(b.name), field(b.revision), unhex(b.digest, 32, "bundle digest")]),
     ),
   );
 }
@@ -347,6 +363,9 @@ export function verifyLedger(text, keys = null) {
   let records = 0;
   let checkpoints = 0;
   let signatures = 0;
+  // Each policy bundle the records name, in order of first appearance, and
+  // how many records name it.
+  const bundles = new Map();
 
   lines.forEach((line, i) => {
     const at = i + 1;
@@ -412,6 +431,12 @@ export function verifyLedger(text, keys = null) {
           if (!candidates.some((key) => signedBy(key, digest, intent.signature))) fail(`record ${seq} is not signed by ${intent.agent}`);
           signatures += 1;
         }
+        for (const b of obj.bundles) {
+          const id = JSON.stringify([b.name, b.revision, b.digest]);
+          const seen = bundles.get(id) ?? { name: b.name, revision: b.revision, digest: b.digest, records: 0 };
+          seen.records += 1;
+          bundles.set(id, seen);
+        }
         frontier.push(Buffer.from(obj.digest, "hex"));
         prev = obj.digest;
         lastTick = BigInt(obj.tick);
@@ -434,7 +459,7 @@ export function verifyLedger(text, keys = null) {
     }
   });
   if (!anchored) throw new Error(`line ${lines.length + 1}: the export ends before the checkpoint at ${from} it starts from`);
-  return { from, records, checkpoints, signatures, head: prev, size: seq };
+  return { from, records, checkpoints, signatures, head: prev, size: seq, bundles: [...bundles.values()] };
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
@@ -461,6 +486,9 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     const scope = s.from > 0 ? `records ${s.from}..${s.size}, from the checkpoint at ${s.from}` : `${s.size} records from genesis`;
     console.log(`ok: ${scope}; ${s.checkpoints} checkpoints; head ${s.head}`);
     if (keys) console.log(`ok: ${s.signatures} agent signatures${keys.plane ? " and every checkpoint signature" : ""} verified`);
+    for (const b of s.bundles) {
+      console.log(`ok: bundle ${JSON.stringify(b.name)} revision ${JSON.stringify(b.revision)} (sha256 ${b.digest}) on ${b.records} records`);
+    }
   } catch (e) {
     console.error(`FAILED: ${ledgerPath} ${e.message}`);
     process.exit(1);

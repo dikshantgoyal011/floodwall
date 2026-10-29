@@ -22,6 +22,10 @@
 //!   verdict), and re-hashing the chain so the ledger still verifies, makes
 //!   resuming fail at exactly that record.
 //!
+//! Half the planes also load a rules file that declares itself a policy
+//! bundle, so their decisions record it, and every property holds with the
+//! bundles in the ledger too.
+//!
 //! The gate's policies are deterministic, as replay requires: a policy that
 //! decides differently for the same intent, like the invariant test's
 //! time-switched ban, cannot be replayed (see `floodwall::replay`). Signed
@@ -92,6 +96,8 @@ struct Config {
     ttl: Option<u64>,
     signed: bool,
     checkpoints: Option<u64>,
+    /// The revision of the policy bundle the gate loads, if it loads one.
+    bundle: Option<&'static str>,
 }
 
 impl Config {
@@ -117,6 +123,9 @@ impl Config {
             ttl: *rng.pick(&[None, Some(0), Some(3), Some(15)]),
             signed,
             checkpoints: rng.chance(50).then(|| *rng.pick(&[1, 3, 16])),
+            bundle: rng
+                .chance(50)
+                .then(|| *rng.pick(&["1", "2026.10.28-1", "a1b2c3d"])),
         }
     }
 
@@ -130,6 +139,18 @@ impl Config {
         }
         if let Some(list) = &self.allowlist {
             gate = gate.with(ResourceAllowlist::new(list.iter().copied()));
+        }
+        if let Some(revision) = self.bundle {
+            let rules = format!(
+                "format 1\n\
+                 bundle \"fleet\" revision \"{revision}\"\n\
+                 policy \"fleet\" {{\n\
+                 \x20 defer \"scaling {{resource}} to zero waits for a human\" when replicas == 0\n\
+                 \x20 reject \"{{agent}} may not destroy {{resource}}\"\n\
+                 \x20   when kind == destroy and priority < urgent\n\
+                 }}\n"
+            );
+            gate = gate.with_rules(&rules).expect("the fleet's rules parse");
         }
         let mut scheduler = SchedulerConfig::default()
             .with_default_limit(self.default_limit)
@@ -233,11 +254,12 @@ fn rebuild(records: &[Record], at: Option<usize>, change: &dyn Fn(&mut Record)) 
             change(&mut r);
         }
         ledger.advance_clock(r.tick);
-        ledger.append_intent(
+        ledger.append_intent_with(
             r.intent.as_ref().expect("a plane only records intents"),
             &r.verdict,
             r.evidence.reason,
             r.evidence.policies,
+            r.evidence.bundles,
         );
     }
     assert!(ledger.verify());
@@ -450,6 +472,8 @@ struct Coverage {
     released: usize,
     expired: usize,
     completed: usize,
+    /// Decisions that record a policy bundle.
+    bundled: usize,
 }
 
 /// Every property, for one seed.
@@ -553,6 +577,9 @@ fn check(seed: u64, signed: bool, cov: &mut Coverage) {
     cov.restarts += restarted.restarts;
     cov.finished_ticks += restarted.finished_ticks;
     for r in records {
+        if !r.evidence.bundles.is_empty() {
+            cov.bundled += 1;
+        }
         match r.verdict.as_str() {
             QUEUED => cov.queued += 1,
             "admit" => cov.admitted += 1,
@@ -585,6 +612,7 @@ fn replay_reproduces_the_live_decisions() {
         cov.released,
         cov.expired,
         cov.completed,
+        cov.bundled,
     ] {
         assert!(count > 100, "{cov:?}");
     }

@@ -16,7 +16,7 @@
 //! so field boundaries are unambiguous (`"ab" + "c"` never hashes like
 //! `"a" + "bc"`).
 //!
-//! 1. the field `floodwall/ledger/record/v3` (domain separation, so a record
+//! 1. the field `floodwall/ledger/record/v4` (domain separation, so a record
 //!    digest is never mistaken for any other hash the crate computes);
 //! 2. `prev`: the previous record's digest, 32 bytes ([`Digest::GENESIS`],
 //!    all zeros, for the first record);
@@ -32,7 +32,18 @@
 //! 9. `evidence.reason`: the byte `0` if there is none, or the byte `1`
 //!    followed by the reason as a field;
 //! 10. the number of `evidence.policies` as a `u64`, then for each, its name
-//!     and its label as fields.
+//!     and its label as fields;
+//! 11. the number of `evidence.bundles` as a `u64`, then for each, its name
+//!     and its revision as fields, then its 32-byte digest.
+//!
+//! # Policy bundles
+//!
+//! A decision records the policy bundles its gate's rules came from
+//! ([`Evidence::bundles`]; see [Bundles](crate::rules#bundles)): each
+//! bundle's name, its revision, and the SHA-256 of its file. They are
+//! covered by the record's digest, so which revision of which rules decided
+//! a change can be no more rewritten than the verdict. A record that is not
+//! a decision (an arrival, a release, an expiry, an outcome) records none.
 //!
 //! # Time
 //!
@@ -67,6 +78,7 @@ use crate::export::{checkpoint_line, record_line};
 use crate::intent::Intent;
 use crate::keyring::Keyring;
 use crate::merkle::{self, Frontier};
+use crate::rules::BundleId;
 use crate::sha256::Sha256;
 
 /// A SHA-256 digest: one record's fingerprint, or the head of the chain.
@@ -100,7 +112,7 @@ impl fmt::Debug for Digest {
     }
 }
 
-const RECORD_DOMAIN: &[u8] = b"floodwall/ledger/record/v3";
+const RECORD_DOMAIN: &[u8] = b"floodwall/ledger/record/v4";
 
 /// Feed one variable-length field: its length, then its bytes.
 fn field(h: &mut Sha256, bytes: &[u8]) {
@@ -117,6 +129,9 @@ pub struct Evidence {
     pub reason: Option<String>,
     /// Each policy's name and its verdict label, in evaluation order.
     pub policies: Vec<(String, String)>,
+    /// For a decision, the policy bundles its gate's rules came from, in
+    /// the order the gate loaded them (see [Policy bundles](self#policy-bundles)).
+    pub bundles: Vec<BundleId>,
 }
 
 /// One immutable decision in the chain.
@@ -185,6 +200,12 @@ impl Record {
         for (name, label) in &self.evidence.policies {
             field(&mut h, name.as_bytes());
             field(&mut h, label.as_bytes());
+        }
+        h.update(&(self.evidence.bundles.len() as u64).to_le_bytes());
+        for bundle in &self.evidence.bundles {
+            field(&mut h, bundle.name.as_bytes());
+            field(&mut h, bundle.revision.as_bytes());
+            h.update(bundle.digest.as_bytes());
         }
         Digest(h.finalize())
     }
@@ -384,7 +405,7 @@ impl Ledger {
         reason: Option<String>,
         policies: Vec<(String, String)>,
     ) -> &Record {
-        match self.write_intent(intent, verdict, reason, policies, true) {
+        match self.write_intent(intent, verdict, reason, policies, Vec::new(), true) {
             Ok(seq) => &self.records[seq],
             Err(e) => write_failed(e),
         }
@@ -400,7 +421,43 @@ impl Ledger {
         reason: Option<String>,
         policies: Vec<(String, String)>,
     ) -> Result<&Record, WriteError> {
-        let seq = self.write_intent(intent, verdict, reason, policies, true)?;
+        let seq = self.write_intent(intent, verdict, reason, policies, Vec::new(), true)?;
+        Ok(&self.records[seq])
+    }
+
+    /// Like [`Ledger::append_intent`], with the policy bundles the decision's
+    /// rules came from (see [Policy bundles](self#policy-bundles)).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the ledger is on disk and writing to it fails; see
+    /// [`Ledger::try_append_intent_with`].
+    pub fn append_intent_with(
+        &mut self,
+        intent: &Intent,
+        verdict: &str,
+        reason: Option<String>,
+        policies: Vec<(String, String)>,
+        bundles: Vec<BundleId>,
+    ) -> &Record {
+        match self.write_intent(intent, verdict, reason, policies, bundles, true) {
+            Ok(seq) => &self.records[seq],
+            Err(e) => write_failed(e),
+        }
+    }
+
+    /// Like [`Ledger::append_intent_with`], but a ledger on disk that cannot
+    /// be written returns [`WriteError`] instead of panicking. The record is
+    /// then not added.
+    pub fn try_append_intent_with(
+        &mut self,
+        intent: &Intent,
+        verdict: &str,
+        reason: Option<String>,
+        policies: Vec<(String, String)>,
+        bundles: Vec<BundleId>,
+    ) -> Result<&Record, WriteError> {
+        let seq = self.write_intent(intent, verdict, reason, policies, bundles, true)?;
         Ok(&self.records[seq])
     }
 
@@ -448,12 +505,14 @@ impl Ledger {
         verdict: &str,
         reason: Option<String>,
         policies: Vec<(String, String)>,
+        bundles: Vec<BundleId>,
         sync: bool,
     ) -> Result<usize, WriteError> {
         let evidence = Evidence {
             action: intent.action.to_string(),
             reason,
             policies,
+            bundles,
         };
         self.push(
             intent.id,
@@ -864,6 +923,7 @@ mod tests {
                 ("no-global-destroy".into(), "reject".into()),
                 ("resource-allowlist".into(), "admit".into()),
             ],
+            bundles: vec![],
         }
     }
 
@@ -928,6 +988,7 @@ mod tests {
                     ("no-global-destroy".into(), "admit".into()),
                     ("conflict-window".into(), "admit".into()),
                 ],
+                bundles: vec![],
             },
         );
         l.advance_clock(3);
@@ -939,6 +1000,7 @@ mod tests {
                 action: "apply billing".into(),
                 reason: Some("resource 'billing' is not on the allowlist".into()),
                 policies: vec![("resource-allowlist".into(), "defer".into())],
+                bundles: vec![],
             },
         );
         // Non-ASCII: lengths are in bytes, not characters.
@@ -961,6 +1023,29 @@ mod tests {
         // the intents themselves.
         l.append_intent(&signed_intent(), "admit", None, vec![]);
         l.append_intent(&unsigned_intent(), "succeeded", None, vec![]);
+        // A decision with two policy bundles; the second's name is not
+        // ASCII, so its length in bytes is not its length in characters.
+        l.append_intent_with(
+            &unsigned_intent(),
+            "reject",
+            Some("scaling web to 3 needs a human".into()),
+            vec![
+                ("scale-bounds".into(), "reject".into()),
+                ("conflict-window".into(), "admit".into()),
+            ],
+            vec![
+                BundleId {
+                    name: "production".into(),
+                    revision: "2026.10.28-1".into(),
+                    digest: Digest(crate::sha256::sha256(b"format 1\n")),
+                },
+                BundleId {
+                    name: "\u{e9}quipe".into(),
+                    revision: "r2".into(),
+                    digest: Digest([0x5a; 32]),
+                },
+            ],
+        );
         l
     }
 
@@ -998,24 +1083,35 @@ mod tests {
     #[test]
     fn digests_follow_the_documented_encoding() {
         // Computed by an independent implementation (Node's crypto) written
-        // from the "Record encoding" section of this module's docs and the
-        // "Signing" section of `Intent`'s, with Node's Ed25519 signature.
+        // from the "Record encoding" section of this module's docs (v4) and
+        // the "Signing" section of `Intent`'s, with Node's Ed25519 signature.
         let want = [
-            "06f09d72dfd66b2ddfdc43daa6691f316ee1dd63e00b4044d5b72526c6a67426",
-            "2d45c70c235fc8ff13ed6b699ae41c9aab84a6476de49c663c1f1e402b61c809",
-            "5d124b8591b128a8c82c351f269d6ebaf1a994721cac2520e2ad7a6bbe604a7a",
-            "ce723558775024942c51ff539f87cdb133798306cce75ba26ea3c78988af307c",
-            "72f963e64ec03fa4f00478606b65d1a9f1d50d2ecd56154238f91d4d5f6d894e",
-            "6265b28d3bd1d47db1aa9da6eb816c1239ffc884f8e73360ea9d6ca1b349f0b0",
+            "1de0ba75fa2b80b6d5b549b66ccb278ba07390629af9f6d2ae9576f78a984349",
+            "c2d38f398bd5748931944f0d44de8e38674cf7f3ffc3366ea77eed3c850b8f5d",
+            "4cd45250e147b5467d5d73563c55362583195658704cda9b31d4bdf0e390f47f",
+            "8124caf1460c3cf2ff8a51e1363349378ed56b9904ac770e4545cf68e221f9d1",
+            "077bbcd229eb9424e88cfa4a571aa743cc94cd1b841595ec9ea036a0e9982968",
+            "dbf8ea20a9124c80cfba5ba3d7e6f4a2559fab688ebe236b4f6bce32e7b9f229",
+            "dde925d2a75e213421b70f5d62a308089fb392bd9b36b9dc11e1ce907638e003",
         ];
         let l = reference_ledger();
         let got: Vec<String> = l.records().iter().map(|r| r.digest.to_string()).collect();
         assert_eq!(got, want);
         let ticks: Vec<u64> = l.records().iter().map(|r| r.tick).collect();
         let big = 9_007_199_254_740_993;
-        assert_eq!(ticks, [0, 3, 3, big, big, big]);
+        assert_eq!(ticks, [0, 3, 3, big, big, big, big]);
         assert_eq!(l.clock(), big);
-        assert_eq!(l.head().to_string(), want[5]);
+        assert_eq!(l.head().to_string(), want[6]);
+        // The bundles are covered: the same record without them, or with
+        // one revision changed, has another digest.
+        let decision = &l.records()[6];
+        assert_eq!(decision.evidence.bundles.len(), 2);
+        let mut without = decision.clone();
+        without.evidence.bundles.clear();
+        assert_ne!(without.compute_digest(), decision.digest);
+        let mut revised = decision.clone();
+        revised.evidence.bundles[0].revision = "2026.10.28-2".into();
+        assert_ne!(revised.compute_digest(), decision.digest);
         assert!(l.verify());
         let signed = &l.records()[4];
         assert_eq!(signed.intent.as_ref(), Some(&signed_intent()));
@@ -1040,7 +1136,7 @@ mod tests {
         let l = reference_ledger();
         assert_eq!(l.records()[0].prev, Digest::GENESIS);
         let d = l.records()[0].digest;
-        assert_eq!(d.as_bytes()[0], 0x06);
+        assert_eq!(d.as_bytes()[0], 0x1d);
         assert_eq!(format!("{d:?}"), format!("Digest({d})"));
     }
 

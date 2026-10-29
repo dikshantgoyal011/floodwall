@@ -81,6 +81,32 @@
 //! the test, so `replicas < 2` never holds for a destroy; and `not` of it
 //! is true.
 //!
+//! # Bundles
+//!
+//! A file can declare itself a versioned policy bundle, right after its
+//! format line:
+//!
+//! ```text
+//! format 1
+//! bundle "production" revision "2026.10.28-1"
+//! ```
+//!
+//! The name follows the rules for policy names. The revision is 1 to 64
+//! letters, digits, `.`, `_`, `-`, `+` and `:`: a date, a version number or
+//! a commit, whatever the team releases its rules by. A bundle is known by
+//! its [`BundleId`]: its name, its revision, and the SHA-256 of the file
+//! (of the text, as UTF-8, exactly as given), so two files that claim the
+//! same revision but differ are told apart, and an auditor holding the file
+//! can check it is the one, with `sha256sum` or any SHA-256 tool.
+//!
+//! [`Gate::with_rules`] remembers the bundle a file declares
+//! ([`Gate::bundles`]), and every decision a [`Floodwall`](crate::Floodwall)
+//! makes with that gate records it in the ledger, next to the verdict (see
+//! [`crate::ledger`]), so the ledger says which revision of which rules
+//! decided each change. A gate holds a bundle of a given name once. A file
+//! that declares no bundle loads as before, and its policies' decisions
+//! record no bundle for it.
+//!
 //! # Determinism
 //!
 //! A rule's verdict depends only on the intent, never on the time, the
@@ -92,11 +118,39 @@ use std::fmt;
 
 use crate::gate::Gate;
 use crate::intent::{Action, BlastRadius, Intent, Priority};
+use crate::ledger::Digest;
 use crate::policy::{Policy, Verdict};
+use crate::sha256::sha256;
 use crate::{CONFLICT_CHECK, SIGNATURE_CHECK};
 
 /// The format version this module reads: a file starts with `format 1`.
 pub const FORMAT: u64 = 1;
+
+/// A policy bundle, as a decision records it: the name and revision a rules
+/// file declares, and the SHA-256 of the file (see [Bundles](self#bundles)).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct BundleId {
+    /// The bundle's name, such as `production`.
+    pub name: String,
+    /// The revision it was released under, such as `2026.10.28-1`.
+    pub revision: String,
+    /// The SHA-256 of the rules file, exactly as given, as `sha256sum`
+    /// prints it.
+    pub digest: Digest,
+}
+
+impl fmt::Display for BundleId {
+    /// `production 2026.10.28-1`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {}", self.name, self.revision)
+    }
+}
+
+/// The bundle a rules file declares, if it declares one (see
+/// [Bundles](self#bundles)). Fails if the file does not parse.
+pub fn bundle(text: &str) -> Result<Option<BundleId>, ParseError> {
+    Ok(read(text)?.bundle.map(|declared| declared.id))
+}
 
 /// How deeply `not`s and parentheses may nest in one condition.
 const MAX_DEPTH: usize = 64;
@@ -167,10 +221,24 @@ impl Policy for RulePolicy {
 
 impl Gate {
     /// Add every policy in a rules file to the stack, in the file's order
-    /// (see [`crate::rules`]). Fails, adding nothing, if the file does not
-    /// parse.
-    pub fn with_rules(self, text: &str) -> Result<Gate, ParseError> {
-        Ok(parse(text)?
+    /// (see [`crate::rules`]), and remember the bundle the file declares, if
+    /// it declares one, so every decision records it (see
+    /// [Bundles](crate::rules#bundles)). Fails, adding nothing, if the file
+    /// does not parse, or declares a bundle of a name the gate already has.
+    pub fn with_rules(mut self, text: &str) -> Result<Gate, ParseError> {
+        let file = read(text)?;
+        if let Some(declared) = file.bundle {
+            if self.bundles.iter().any(|b| b.name == declared.id.name) {
+                return Err(error(
+                    declared.line,
+                    declared.column,
+                    format!("the gate already has a bundle named {:?}", declared.id.name),
+                ));
+            }
+            self.bundles.push(declared.id);
+        }
+        Ok(file
+            .policies
             .into_iter()
             .fold(self, |gate, policy| gate.with(policy)))
     }
@@ -178,13 +246,61 @@ impl Gate {
 
 /// Read the policies in a rules file (see [`crate::rules`]), in order.
 pub fn parse(text: &str) -> Result<Vec<RulePolicy>, ParseError> {
+    Ok(read(text)?.policies)
+}
+
+/// A rules file, read.
+struct File {
+    bundle: Option<Declared>,
+    policies: Vec<RulePolicy>,
+}
+
+/// A file's bundle line: the name and revision, and where the name is.
+type BundleLine = (String, String, usize, usize);
+
+/// The bundle a file declares, and where its name is.
+struct Declared {
+    id: BundleId,
+    line: usize,
+    column: usize,
+}
+
+fn read(text: &str) -> Result<File, ParseError> {
     let tokens = lex(text)?;
     let mut p = Parser {
         tokens,
         next: 0,
         end: end_of(text),
     };
-    p.file()
+    let (bundle, policies) = p.file()?;
+    let bundle = bundle.map(|(name, revision, line, column)| Declared {
+        id: BundleId {
+            name,
+            revision,
+            digest: Digest(sha256(text.as_bytes())),
+        },
+        line,
+        column,
+    });
+    Ok(File { bundle, policies })
+}
+
+/// A policy or bundle name: 1 to 64 lowercase letters, digits and `-`,
+/// starting with a letter.
+fn is_name(name: &str) -> bool {
+    (1..=64).contains(&name.len())
+        && name.starts_with(|c: char| c.is_ascii_lowercase())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// A bundle revision: 1 to 64 letters, digits, `.`, `_`, `-`, `+` and `:`.
+fn is_revision(revision: &str) -> bool {
+    (1..=64).contains(&revision.len())
+        && revision
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '+' | ':'))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -694,7 +810,8 @@ impl Parser {
         }
     }
 
-    fn file(&mut self) -> Result<Vec<RulePolicy>, ParseError> {
+    /// The whole file: its format, the bundle it declares, and its policies.
+    fn file(&mut self) -> Result<(Option<BundleLine>, Vec<RulePolicy>), ParseError> {
         if !self.at_word("format") {
             return self.fail(format!(
                 "a rules file starts with 'format {FORMAT}', found {}",
@@ -717,9 +834,20 @@ impl Parser {
                 ))
             }
         }
+        let bundle = if self.at_word("bundle") {
+            self.next += 1;
+            Some(self.bundle()?)
+        } else {
+            None
+        };
         let mut policies: Vec<RulePolicy> = Vec::new();
         while self.peek().is_some() {
             let (line, column) = self.here();
+            if self.at_word("bundle") {
+                return self.fail(format!(
+                    "a file declares one bundle, right after 'format {FORMAT}'"
+                ));
+            }
             let policy = self.policy()?;
             if policies.iter().any(|p| p.name == policy.name) {
                 return Err(error(
@@ -730,18 +858,41 @@ impl Parser {
             }
             policies.push(policy);
         }
-        Ok(policies)
+        Ok((bundle, policies))
+    }
+
+    /// `"<name>" revision "<revision>"`, after the word `bundle`.
+    fn bundle(&mut self) -> Result<BundleLine, ParseError> {
+        let (name, line, column) = self.string("the bundle's name")?;
+        if !is_name(&name) {
+            return Err(error(
+                line,
+                column,
+                format!(
+                    "the bundle name {name:?} is not 1 to 64 lowercase letters, digits and \
+                     '-', starting with a letter"
+                ),
+            ));
+        }
+        self.expect_word("revision")?;
+        let (revision, at_line, at_column) = self.string("the bundle's revision")?;
+        if !is_revision(&revision) {
+            return Err(error(
+                at_line,
+                at_column,
+                format!(
+                    "the revision {revision:?} is not 1 to 64 letters, digits, '.', '_', \
+                     '-', '+' and ':'"
+                ),
+            ));
+        }
+        Ok((name, revision, line, column))
     }
 
     fn policy(&mut self) -> Result<RulePolicy, ParseError> {
         self.expect_word("policy")?;
         let (name, line, column) = self.string("the policy's name")?;
-        let valid = (1..=64).contains(&name.len())
-            && name.starts_with(|c: char| c.is_ascii_lowercase())
-            && name
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
-        if !valid {
+        if !is_name(&name) {
             return Err(error(
                 line,
                 column,
@@ -1392,6 +1543,22 @@ mod tests {
             ("format 2".into(), 1, 8, "this is rules format 2; only format 1 is understood"),
             ("format x".into(), 1, 8, "expected the format number, found 'x'"),
             ("format 1 rule".into(), 1, 10, "expected 'policy', found 'rule'"),
+            // The bundle line.
+            ("format 1 bundle production revision \"1\"".into(), 1, 17, "expected the bundle's name (a string), found 'production'"),
+            ("format 1 bundle \"Prod\" revision \"1\"".into(), 1, 17, "the bundle name \"Prod\" is not 1 to 64 lowercase letters"),
+            ("format 1 bundle \"\" revision \"1\"".into(), 1, 17, "the bundle name \"\" is not 1 to 64 lowercase letters"),
+            (format!("format 1 bundle \"{}\" revision \"1\"", "b".repeat(65)), 1, 17, "is not 1 to 64 lowercase letters"),
+            ("format 1 bundle \"p\" \"1\"".into(), 1, 21, "expected 'revision', found the string \"1\""),
+            ("format 1 bundle \"p\" version \"1\"".into(), 1, 21, "expected 'revision', found 'version'"),
+            ("format 1 bundle \"p\" revision 1".into(), 1, 30, "expected the bundle's revision (a string), found the number 1"),
+            ("format 1 bundle \"p\" revision \"\"".into(), 1, 30, "the revision \"\" is not 1 to 64 letters"),
+            ("format 1 bundle \"p\" revision \"a b\"".into(), 1, 30, "the revision \"a b\" is not 1 to 64 letters"),
+            ("format 1 bundle \"p\" revision \"main/abc\"".into(), 1, 30, "the revision \"main/abc\" is not"),
+            ("format 1 bundle \"p\" revision \"r\u{e9}v\"".into(), 1, 30, "is not 1 to 64 letters"),
+            (format!("format 1 bundle \"p\" revision \"{}\"", "7".repeat(65)), 1, 30, "is not 1 to 64 letters"),
+            ("format 1 bundle \"p\" revision \"1\" bundle \"q\" revision \"2\"".into(), 1, 34, "a file declares one bundle, right after 'format 1'"),
+            ("format 1 policy \"p\" { reject \"r\" when true } bundle \"q\" revision \"2\"".into(), 1, 46, "a file declares one bundle, right after 'format 1'"),
+            ("format 1 bundle \"p\" revision \"1\"\npolicy".into(), 2, 7, "expected the policy's name (a string), found the end of the file"),
             ("format 1 policy p {}".into(), 1, 17, "expected the policy's name (a string), found 'p'"),
             ("format 1 policy \"Bad Name\" { reject \"r\" when true }".into(), 1, 17, "is not 1 to 64 lowercase letters"),
             ("format 1 policy \"\" { reject \"r\" when true }".into(), 1, 17, "is not 1 to 64 lowercase letters"),
@@ -1616,6 +1783,149 @@ mod tests {
             other.resume(ledger(), 1),
             Err(ResumeError::Diverged { .. })
         ));
+    }
+
+    const BUNDLED: &str = "format 1\nbundle \"production\" revision \"2026.10.28-1\"\n\n\
+        policy \"freeze-billing\" {\n  reject \"billing is frozen\" when resource == \"billing\"\n}\n";
+
+    #[test]
+    fn a_file_can_declare_itself_a_versioned_bundle() {
+        let id = bundle(BUNDLED).unwrap().unwrap();
+        assert_eq!(id.name, "production");
+        assert_eq!(id.revision, "2026.10.28-1");
+        assert_eq!(id.to_string(), "production 2026.10.28-1");
+        // The digest is the file's SHA-256, as `sha256sum` prints it
+        // (computed with Node's crypto).
+        assert_eq!(
+            id.digest.to_string(),
+            "2bd374cb7cc636dc3f3e6ca35c6b02f336d1960e57b58276cd0c39610946cd2e"
+        );
+        // Its policies read as ever, and a file with no bundle line declares
+        // none.
+        assert_eq!(parse(BUNDLED).unwrap().len(), 1);
+        assert_eq!(bundle(STANDARD).unwrap(), None);
+        // Any change to the file changes the digest, a comment included,
+        // even under the same revision.
+        let commented = BUNDLED.replace("policy", "# reviewed by bob\npolicy");
+        let edited = bundle(&commented).unwrap().unwrap();
+        assert_eq!((&edited.name, &edited.revision), (&id.name, &id.revision));
+        assert_ne!(edited.digest, id.digest);
+        // The longest revision, and every kind of character one may hold.
+        for revision in ["7".repeat(64), "AZaz09._-+:".into()] {
+            let text = format!("format 1 bundle \"p\" revision \"{revision}\" policy \"q\" {{ defer \"d\" when true }}");
+            assert_eq!(bundle(&text).unwrap().unwrap().revision, revision);
+        }
+        // A file that does not parse has no bundle to report.
+        assert!(bundle("format 1 bundle \"p\" revision \"1\" policy").is_err());
+    }
+
+    #[test]
+    fn a_gate_records_the_bundles_its_rules_came_from() {
+        let team = "format 1\nbundle \"team\" revision \"r9\"\npolicy \"quota\" { defer \"q\" when replicas > 9 }";
+        let plain = "format 1 policy \"plain\" { reject \"no\" when resource == \"x\" }";
+        let gate = Gate::new()
+            .with(NoGlobalDestroy)
+            .with_rules(BUNDLED)
+            .unwrap()
+            .with_rules(plain)
+            .unwrap()
+            .with_rules(team)
+            .unwrap();
+        let ids: Vec<String> = gate.bundles().iter().map(BundleId::to_string).collect();
+        assert_eq!(ids, ["production 2026.10.28-1", "team r9"]);
+        assert_eq!(gate.len(), 4);
+        // A built-in policy or an unbundled file records nothing.
+        assert!(Gate::new().with(NoGlobalDestroy).bundles().is_empty());
+        assert!(Gate::new().with_rules(plain).unwrap().bundles().is_empty());
+        // A gate holds a bundle of a given name once, whatever the revision.
+        let again = BUNDLED.replace("2026.10.28-1", "2026.10.29-1");
+        let err = Gate::new()
+            .with_rules(BUNDLED)
+            .unwrap()
+            .with_rules(&again)
+            .err()
+            .unwrap();
+        assert_eq!((err.line, err.column), (2, 8));
+        assert_eq!(
+            err.problem,
+            "the gate already has a bundle named \"production\""
+        );
+    }
+
+    #[test]
+    fn every_decision_records_the_gates_bundles_and_nothing_else_does() {
+        let team = "format 1\nbundle \"team\" revision \"r9\"\npolicy \"quota\" { defer \"q\" when replicas > 9 }";
+        let gate = Gate::new()
+            .with_rules(BUNDLED)
+            .unwrap()
+            .with_rules(team)
+            .unwrap();
+        let want = gate.bundles().to_vec();
+        let mut plane = Floodwall::new(Admission::new(64, RateLimit::new(8.0, 1.0)), gate);
+        let submit = |plane: &mut Floodwall, agent: &str, action| {
+            let i = intent(agent, action, Priority::Normal, BlastRadius::Service);
+            plane.submit(i, 0).unwrap();
+        };
+        submit(&mut plane, "a", apply("billing", "v2")); // rejected
+        submit(&mut plane, "b", scale("web", 12)); // deferred
+        submit(&mut plane, "c", scale("api", 3)); // admitted
+        plane.tick(0);
+        plane.release(&IntentKey::new("b", 1), "alice", 1).unwrap();
+        plane.tick(2); // b's change goes ahead
+        for key in [IntentKey::new("b", 1), IntentKey::new("c", 1)] {
+            plane.complete(&key, crate::Outcome::Succeeded, 3).unwrap();
+        }
+        let kinds: Vec<(&str, bool)> = plane
+            .ledger()
+            .records()
+            .iter()
+            .map(|r| {
+                let decision = matches!(r.verdict.as_str(), "admit" | "defer" | "reject");
+                assert_eq!(
+                    r.evidence.bundles,
+                    if decision { want.clone() } else { vec![] },
+                    "{}",
+                    r.verdict
+                );
+                (r.verdict.as_str(), decision)
+            })
+            .collect();
+        // Arrivals, decisions (the released one too), the release and the
+        // outcomes: only the decisions carry the bundles.
+        let verdicts: Vec<&str> = kinds.iter().map(|(v, _)| *v).collect();
+        assert_eq!(
+            verdicts,
+            [
+                "queued",
+                "queued",
+                "queued",
+                "reject",
+                "defer",
+                "admit",
+                "released",
+                "admit",
+                "succeeded",
+                "succeeded"
+            ]
+        );
+        assert!(plane.ledger().verify());
+        // And a gate of built-in policies records none on its decisions.
+        let mut builtin = Floodwall::new(
+            Admission::new(8, RateLimit::new(8.0, 1.0)),
+            Gate::new().with(NoGlobalDestroy),
+        );
+        builtin
+            .submit(
+                intent("a", scale("api", 3), Priority::Normal, BlastRadius::Service),
+                0,
+            )
+            .unwrap();
+        builtin.tick(0);
+        assert!(builtin
+            .ledger()
+            .records()
+            .iter()
+            .all(|r| r.evidence.bundles.is_empty()));
     }
 
     /// Mangled versions of the standard file never panic.

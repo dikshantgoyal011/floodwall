@@ -407,7 +407,7 @@ fn load(bytes: &[u8]) -> Result<Ledger, ReadError> {
             }
             (0, _) => return Err(invalid("the first line must be the header".into())),
             (_, Line::Header { .. }) => return Err(invalid("a second header".into())),
-            (_, Line::Record(r)) => ledger.restore_record(r).map_err(invalid)?,
+            (_, Line::Record(r)) => ledger.restore_record(*r).map_err(invalid)?,
             (_, Line::Checkpoint(c)) => ledger.restore_checkpoint(c).map_err(invalid)?,
         }
         offset += raw.len() as u64;
@@ -508,6 +508,7 @@ mod tests {
                 action: "scale web to 0".into(),
                 reason: None,
                 policies: vec![],
+                bundles: vec![],
             },
         );
     }
@@ -775,8 +776,9 @@ mod tests {
             1,
             "a suffix export",
         );
+        // A file in the encoding before bundles were recorded.
         check(
-            edit(1, &|l| l.replace("record/v3", "record/v2")),
+            edit(1, &|l| l.replace("record/v4", "record/v3")),
             1,
             "unsupported record_encoding",
         );
