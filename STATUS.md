@@ -21,8 +21,9 @@ and narrow changes in parallel across resources up to a per-resource
 in-flight limit. Each intent that can start is ruled on by the
 deny-overrides policy `Gate` plus a conflict check against other agents'
 recent changes to the same resource. Admitted intents are in flight until
-the caller reports back; deferred intents wait in a hold queue for a human
-to release or expire them.
+the caller reports back, or, on a lease, until the plane reports them
+overdue or fails them as `lapsed` (FW-906); deferred intents wait in a
+hold queue for a human to release or expire them.
 
 Every decision, release, expiry and outcome lands in a SHA-256 hash-chained
 `Ledger`, and a decision records the policy bundles its rules came from:
@@ -48,18 +49,19 @@ left unfinished; any other bad line is refused and the file left alone.
 
 The plane counts what it does (FW-904): `Floodwall::stats` gives, per
 agent and in all, every refusal at the door by its reason, every
-decision, release, expiry and outcome, and the queue's depth and peak,
-what is in flight and what is held, and `Stats::prometheus` writes them
-in the Prometheus text format. The counts start when the plane is built
-or resumed, and are kept per agent for the first 1024 agents (with a
-keyring, only for the agents in it).
+decision, release, expiry, outcome and lapse, and the queue's depth and
+peak, what is in flight (and overdue) and what is held, and
+`Stats::prometheus` writes them in the Prometheus text format. The
+counts start when the plane is built or resumed, and are kept per agent
+for the first 1024 agents (with a keyring, only for the agents in it).
 
 Still zero dependencies (SHA-256, SHA-512, Ed25519 and the JSON reader are
-from scratch) and pinned to Rust 1.95. 241 unit tests, 15 doctests
+from scratch) and pinned to Rust 1.95. 250 unit tests, 17 doctests
 (including the README examples), a randomized invariant test (300 seeded
-floods plus 6 signed ones, each ending in checkpoint audits), a replay
-property test (150 random floods plus 6 signed ones, with 300-odd
-restarts, half of them with a policy bundle), a stats property test (150
+floods plus 6 signed ones, most of them on a lease, each ending in
+checkpoint audits), a replay property test (150 random floods plus 6
+signed ones, with 300-odd restarts, half of them with a policy bundle and
+most on a lease), a stats property test (150
 random floods, 30 of them signed, with about 700 restarts, the stats
 checked against what every call returned), the worked example's
 guardrails checked against their Rego on 24,576 intents, an edge-case
@@ -71,6 +73,11 @@ GitHub Pages) describes the scheduler and hold queue.
 
 ## Recently shipped
 
+- **FW-906** - in-flight leases: `SchedulerConfig::with_lease` puts what
+  is in flight on a lease of so many ticks. Past it, `Lease::Report`
+  lists the intent in every tick's report until the caller completes it,
+  and `Lease::Fail` fails it, recorded as `lapsed`, freeing its place for
+  the same pass. Lapses replay like any other record of a tick.
 - **FW-904** - observability: `Floodwall::stats` counts what the plane
   does, per agent and in all (refusals at the door by reason, decisions,
   releases, expiries and outcomes) with the queue's depth and peak, what
@@ -123,9 +130,9 @@ GitHub Pages) describes the scheduler and hold queue.
 ## Next up
 
 - **Later** - no milestone is planned past v0.5. Of what GOALS.md lists
-  could come next (FW-901 to FW-908), FW-904 is done; the rest run from
-  backpressure signalling and in-flight leases to a TLA+ model of the
-  protocol.
+  could come next (FW-901 to FW-908), FW-904 and FW-906 are done; the rest
+  run from backpressure signalling and authenticated release to a TLA+
+  model of the protocol.
 
 ## Known gaps
 
@@ -163,7 +170,10 @@ GitHub Pages) describes the scheduler and hold queue.
   could be limited to the records before its retirement, but the keyring
   does not record when a key was retired yet.
 
-- An intent the caller never completes holds its place forever (FW-906).
+- Without a lease, an intent the caller never completes holds its place
+  forever. With `Lease::Fail`, a lapse frees the resource but cannot stop
+  a caller that is still applying the change: it suits callers whose own
+  timeout is shorter than the lease.
 - The `by` in a release or expiry is free text, not a verified identity
   (FW-907).
 - Priority is strict, so `Bulk` work can starve under a constant stream of

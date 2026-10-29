@@ -4,7 +4,9 @@
 //! around an Admission that already has work queued and a clock that has
 //! moved on), floods it with
 //! random intents from several agents, ticks it, completes in-flight work
-//! at random, and has a human release or expire held intents at random.
+//! at random (and, under a lease, sees what it was slow to complete
+//! reported or lapsed), and has a human release or expire held intents at
+//! random.
 //! After every step it checks the invariants the scheduler and hold queue
 //! document, against an independent model kept by this test.
 
@@ -18,7 +20,7 @@ use floodwall::policy::{BlastNeedsPriority, NoGlobalDestroy, Policy, ResourceAll
 use floodwall::sha256::sha256;
 use floodwall::{audit_suffix, Keyring, Ledger, SigningKey};
 use floodwall::{
-    Admission, Floodwall, Gate, HoldConfig, HoldError, Outcome, RateLimit, Rejected,
+    Admission, Floodwall, Gate, HoldConfig, HoldError, Lease, Outcome, RateLimit, Rejected,
     SchedulerConfig, Verdict, CONFLICT_CHECK,
 };
 
@@ -112,7 +114,13 @@ fn random_config(rng: &mut Rng) -> SchedulerConfig {
             config = config.with_limit(resource, 1 + rng.below(4) as usize);
         }
     }
-    config
+    config.with_lease(*rng.pick(&[
+        None,
+        None,
+        Some(Lease::Report(3)),
+        Some(Lease::Fail(2)),
+        Some(Lease::Fail(6)),
+    ]))
 }
 
 fn is_wide(i: &Intent) -> bool {
@@ -136,6 +144,7 @@ struct Model {
     completions: usize,
     releases: usize,
     expiries: usize,
+    lapses: usize,
 }
 
 impl Model {
@@ -213,6 +222,10 @@ struct Coverage {
     released_but_rejected: usize,
     expired_by_tick: usize,
     expired_by_human: usize,
+    /// Intents failed by the plane, past their lease.
+    lapsed: usize,
+    /// Overdue intents reported, under a reporting lease.
+    overdue_reported: usize,
     not_held_errors: usize,
     /// Intents already queued in the Admission the plane was built from.
     adopted: usize,
@@ -356,6 +369,7 @@ fn run_with(seed: u64, cov: &mut Coverage, signed: bool) {
         plane = plane.with_keyring(keyring.clone());
     }
     let window = plane.scheduler_config().conflict_window();
+    let lease = plane.scheduler_config().lease();
     assert_eq!(
         plane.clock(),
         start,
@@ -423,9 +437,43 @@ fn run_with(seed: u64, cov: &mut Coverage, signed: bool) {
         }
 
         let before: Vec<Intent> = plane.queued().cloned().collect();
+        let overdue_before: Vec<IntentKey> = plane
+            .in_flight()
+            .filter(|f| lease.is_some_and(|l| now >= f.since.saturating_add(l.ticks())))
+            .map(|f| f.intent.key())
+            .collect();
         let report = plane.tick(now);
         let ruled: HashSet<IntentKey> = report.decisions.iter().map(|d| d.intent.key()).collect();
         check_no_overtaking(&before, &ruled, seed, cov);
+
+        // Leases are dealt with before the pass: exactly what was in flight
+        // past its lease is reported, or lapsed, and a lapse closes its
+        // claim as a completion does.
+        let reported: Vec<IntentKey> = report.overdue.iter().map(|f| f.intent.key()).collect();
+        let lapsed: Vec<IntentKey> = report.lapsed.iter().map(|f| f.intent.key()).collect();
+        match lease {
+            Some(Lease::Report(_)) => {
+                assert_eq!(reported, overdue_before, "seed {seed}: overdue");
+                assert!(lapsed.is_empty(), "seed {seed}: lapsed under Report");
+                cov.overdue_reported += reported.len();
+            }
+            Some(Lease::Fail(_)) => {
+                assert_eq!(lapsed, overdue_before, "seed {seed}: lapsed");
+                assert!(reported.is_empty(), "seed {seed}: reported under Fail");
+            }
+            None => assert!(reported.is_empty() && lapsed.is_empty(), "seed {seed}"),
+        }
+        for key in lapsed {
+            cov.lapsed += 1;
+            model.lapses += 1;
+            model.live.remove(&key);
+            let claim = model
+                .claims
+                .iter_mut()
+                .find(|(k, _, done)| *k == key && done.is_none())
+                .expect("model has the claim");
+            claim.2 = Some(now);
+        }
 
         for d in &report.decisions {
             model.decisions += 1;
@@ -493,9 +541,18 @@ fn run_with(seed: u64, cov: &mut Coverage, signed: bool) {
         }
         check_hold(&plane, &model, seed);
         check_in_flight(&plane, seed, cov);
+        if let Some(Lease::Fail(ticks)) = lease {
+            assert!(
+                plane
+                    .in_flight()
+                    .all(|f| now < f.since.saturating_add(ticks)),
+                "seed {seed}: in flight past its lease"
+            );
+        }
         // Maximal: a second pass at the same tick finds nothing new.
+        let again = plane.tick(now);
         assert!(
-            plane.tick(now).decisions.is_empty(),
+            again.decisions.is_empty() && again.lapsed.is_empty() && again.expired.is_empty(),
             "seed {seed}: a pass left ready work waiting"
         );
 
@@ -585,8 +642,13 @@ fn run_with(seed: u64, cov: &mut Coverage, signed: bool) {
     );
     assert_eq!(
         plane.ledger().len(),
-        model.arrivals + model.decisions + model.completions + model.releases + model.expiries,
-        "seed {seed}: one record per arrival, decision, completion, release and expiry"
+        model.arrivals
+            + model.decisions
+            + model.completions
+            + model.releases
+            + model.expiries
+            + model.lapses,
+        "seed {seed}: one record per arrival, decision, completion, release, expiry and lapse"
     );
     assert!(plane.ledger().verify(), "seed {seed}: ledger chain broken");
     if signed {
@@ -665,6 +727,8 @@ fn scheduler_invariants_hold_across_random_floods() {
     assert!(cov.released_but_rejected > 0, "{cov:?}");
     assert!(cov.expired_by_tick > 100, "{cov:?}");
     assert!(cov.expired_by_human > 100, "{cov:?}");
+    assert!(cov.lapsed > 100, "{cov:?}");
+    assert!(cov.overdue_reported > 100, "{cov:?}");
     assert!(cov.adopted > 1_000, "{cov:?}");
     assert!(cov.adopted_duplicates_refused > 10, "{cov:?}");
     assert!(cov.suffix_audits > 1_000, "{cov:?}");

@@ -3,8 +3,9 @@
 //! [`Floodwall::stats`](crate::Floodwall::stats) returns a [`Stats`]: for
 //! each agent and for the whole fleet, how many intents were refused at the
 //! door and why, got into the queue, were admitted, deferred or rejected,
-//! released or expired, and succeeded or failed; and how deep the queue is
-//! now and has been at most, and how much is in flight and held.
+//! released or expired, and succeeded, failed, or lapsed past their lease;
+//! and how deep the queue is now and has been at most, how much is in
+//! flight and how much of that is overdue, and how much is held.
 //! [`Stats::prometheus`] writes it in the Prometheus text exposition format,
 //! with no dependency, for whatever scrapes the plane.
 //!
@@ -55,6 +56,7 @@ pub(crate) enum Event {
     Expired,
     Succeeded,
     Failed,
+    Lapsed,
 }
 
 /// What happened to one agent's intents, or the fleet's.
@@ -88,12 +90,15 @@ pub struct Counts {
     pub succeeded: u64,
     /// Reported failed.
     pub failed: u64,
+    /// Failed by the plane: in flight past its lease (see
+    /// [Leases](crate::scheduler#leases)).
+    pub lapsed: u64,
 }
 
 impl Counts {
     /// Every count, with the name it has in [`Stats::prometheus`], in a
     /// fixed order: refusals, the queue, the gate, the hold, outcomes.
-    pub fn events(&self) -> [(&'static str, u64); 14] {
+    pub fn events(&self) -> [(&'static str, u64); 15] {
         [
             ("unsigned", self.unsigned),
             ("unknown_agent", self.unknown_agent),
@@ -109,6 +114,7 @@ impl Counts {
             ("expired", self.expired),
             ("succeeded", self.succeeded),
             ("failed", self.failed),
+            ("lapsed", self.lapsed),
         ]
     }
 
@@ -140,6 +146,7 @@ impl Counts {
             Event::Expired => &mut self.expired,
             Event::Succeeded => &mut self.succeeded,
             Event::Failed => &mut self.failed,
+            Event::Lapsed => &mut self.lapsed,
         };
         *count += 1;
     }
@@ -189,7 +196,13 @@ impl Counters {
         self.peak_queue_depth = depth;
     }
 
-    pub(crate) fn snapshot(&self, queue_depth: usize, in_flight: usize, held: usize) -> Stats {
+    pub(crate) fn snapshot(
+        &self,
+        queue_depth: usize,
+        in_flight: usize,
+        overdue: usize,
+        held: usize,
+    ) -> Stats {
         Stats {
             total: self.total,
             agents: self.agents.clone(),
@@ -197,6 +210,7 @@ impl Counters {
             queue_depth,
             peak_queue_depth: self.peak_queue_depth,
             in_flight,
+            overdue,
             held,
         }
     }
@@ -218,6 +232,11 @@ pub struct Stats {
     pub peak_queue_depth: usize,
     /// Intents dispatched and not yet completed.
     pub in_flight: usize,
+    /// Of those, the ones past their lease (see
+    /// [Leases](crate::scheduler#leases)): reported in every tick under
+    /// [`Lease::Report`](crate::Lease::Report), lapsed at the next under
+    /// [`Lease::Fail`](crate::Lease::Fail).
+    pub overdue: usize,
     /// Intents held for a human.
     pub held: usize,
 }
@@ -298,6 +317,11 @@ impl Stats {
                 "Intents dispatched and not yet completed.",
                 self.in_flight,
             ),
+            (
+                "floodwall_overdue",
+                "Intents in flight past their lease.",
+                self.overdue,
+            ),
             ("floodwall_held", "Intents held for a human.", self.held),
         ] {
             writeln!(
@@ -331,7 +355,8 @@ mod tests {
     use crate::intent::{Action, AgentId, BlastRadius, Intent, IntentKey, Priority};
     use crate::policy::{NoGlobalDestroy, ResourceAllowlist};
     use crate::{
-        Admission, Floodwall, Gate, HoldConfig, Keyring, Ledger, Outcome, RateLimit, SigningKey,
+        Admission, Floodwall, Gate, HoldConfig, Keyring, Lease, Ledger, Outcome, RateLimit,
+        SchedulerConfig, SigningKey,
     };
 
     fn key(agent: &str) -> SigningKey {
@@ -500,6 +525,46 @@ mod tests {
     }
 
     #[test]
+    fn lapses_and_overdue_intents_are_counted() {
+        let leased = |lease| {
+            Floodwall::new(Admission::new(8, RateLimit::new(8.0, 1.0)), Gate::new())
+                .with_scheduler(SchedulerConfig::default().with_lease(Some(lease)))
+        };
+        // Reported: overdue from tick 2 on, until completed.
+        let mut plane = leased(Lease::Report(2));
+        plane.submit(scale("a", 1, "web"), 0).unwrap();
+        plane.tick(0);
+        plane.tick(1);
+        assert_eq!(plane.stats().overdue, 0);
+        plane.tick(2);
+        assert_eq!((plane.stats().in_flight, plane.stats().overdue), (1, 1));
+        plane
+            .complete(&IntentKey::new("a", 1), Outcome::Succeeded, 3)
+            .unwrap();
+        let stats = plane.stats();
+        assert_eq!(stats.overdue, 0);
+        assert_eq!(
+            stats.agent("a").map(|c| (c.succeeded, c.lapsed)),
+            Some((1, 0))
+        );
+        // Failed: overdue once the clock reaches the lease, lapsed at the
+        // next tick, and counted then.
+        let mut plane = leased(Lease::Fail(2));
+        plane.submit(scale("a", 1, "web"), 0).unwrap();
+        plane.tick(0);
+        plane.submit(scale("a", 2, "api"), 2).unwrap(); // the clock is at 2
+        assert_eq!(plane.stats().overdue, 1);
+        assert_eq!(plane.stats().total.lapsed, 0);
+        plane.tick(2);
+        let stats = plane.stats();
+        assert_eq!((stats.in_flight, stats.overdue), (1, 0)); // a#2, just admitted
+        assert_eq!(stats.agent("a").map(|c| (c.lapsed, c.failed)), Some((1, 0)));
+        assert!(stats
+            .prometheus()
+            .contains("floodwall_intents_total{agent=\"a\",event=\"lapsed\"} 1\n"));
+    }
+
+    #[test]
     fn a_plane_built_on_a_queue_starts_at_its_depth() {
         // What the Admission held already was not queued by this plane, so
         // it is not counted, but the queue's peak is at least its depth.
@@ -605,7 +670,7 @@ mod tests {
         plane.tick(1);
         plane.submit(scale("bot", 2, "web"), 2).unwrap();
         let text = plane.stats().prometheus();
-        let samples = |agent: &str, counts: [u64; 14]| -> String {
+        let samples = |agent: &str, counts: [u64; 15]| -> String {
             Counts::default()
                 .events()
                 .iter()
@@ -624,9 +689,9 @@ mod tests {
         // feeds.
         want += &samples(
             "a\\\"b\\\\c\\nd",
-            [0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0],
         );
-        want += &samples("bot", [0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 0, 0, 0, 0]);
+        want += &samples("bot", [0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 0, 0, 0, 0, 0]);
         want += "# HELP floodwall_untracked_intents_total Intents of agents past the \
                  per-agent limit, by what happened to them.\n\
                  # TYPE floodwall_untracked_intents_total counter\n";
@@ -643,6 +708,9 @@ mod tests {
                  # HELP floodwall_in_flight Intents dispatched and not yet completed.\n\
                  # TYPE floodwall_in_flight gauge\n\
                  floodwall_in_flight 1\n\
+                 # HELP floodwall_overdue Intents in flight past their lease.\n\
+                 # TYPE floodwall_overdue gauge\n\
+                 floodwall_overdue 0\n\
                  # HELP floodwall_held Intents held for a human.\n\
                  # TYPE floodwall_held gauge\n\
                  floodwall_held 1\n";

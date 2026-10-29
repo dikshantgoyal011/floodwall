@@ -8,6 +8,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- In-flight leases (FW-906). `SchedulerConfig::with_lease(Some(lease))`
+  puts every intent in flight on a lease of so many ticks (`Lease::ticks`;
+  0 is refused). An intent in flight that long is overdue, and every
+  `Floodwall::tick` deals with it before its pass: under `Lease::Report`,
+  it is listed in `TickReport::overdue` until the caller completes it;
+  under `Lease::Fail`, it lapses: it is recorded with the new verdict
+  `LAPSED` (`"lapsed"`), its place is freed for that same pass, its claim
+  stays open for the conflict window, it is listed in `TickReport::lapsed`,
+  and `complete` on it is `NotInFlight`. `Floodwall::resume` replays
+  lapses as part of their tick, so a plane resumes only with the same
+  lease. The stats count lapses (`Counts::lapsed`) and show what is
+  overdue (`Stats::overdue`, `floodwall_overdue`). No lease, the default,
+  changes nothing. `TickReport` gains the `overdue` and `lapsed` fields.
 - Observability (FW-904). `Floodwall::stats` returns a `Stats`: for each
   agent (`Stats::agent`, `Stats::agents`) and in all (`Stats::total`), a
   `Counts` of the intents refused at the door, by reason (unsigned,

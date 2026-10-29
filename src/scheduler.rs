@@ -55,6 +55,31 @@
 //! claims on its resource made by *other* agents; an agent may always
 //! follow up on its own change. A contradiction defers the intent so a
 //! human can decide which change should win.
+//!
+//! # Leases
+//!
+//! An intent in flight keeps its place until the caller reports back, so a
+//! caller that crashes, or loses track of what it was given, would keep
+//! its resource (and, with a wide intent, everything waiting on it) forever.
+//! A *lease* bounds that ([`SchedulerConfig::with_lease`]). An intent that
+//! has been in flight for the lease's ticks is *overdue*, and every
+//! [`tick`](crate::Floodwall::tick) from then on deals with it before its
+//! pass:
+//!
+//! - under [`Lease::Report`], it is reported in the tick's
+//!   [`overdue`](crate::TickReport::overdue), every tick until the caller
+//!   completes it, and keeps its place;
+//! - under [`Lease::Fail`], it *lapses*: the plane records it as
+//!   `lapsed`, as it would a failure, frees its place, and reports it in
+//!   the tick's [`lapsed`](crate::TickReport::lapsed). What was waiting on
+//!   it may start in that same pass. The caller can no longer complete it.
+//!
+//! A lapsed intent's claim stays open for the conflict window, as any
+//! completed one's does: the change may have been partly applied. Lapsing
+//! frees the resource whether or not the caller is still applying the
+//! change, so use `Fail` only where a caller that has not reported back
+//! by the end of the lease never will: one whose own timeout for applying
+//! a change is shorter than the lease, say.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -75,12 +100,44 @@ pub const DEFAULT_CONFLICT_WINDOW: u64 = 10;
 /// assert_eq!(config.conflict_window(), 30);
 /// assert_eq!(config.limit_for("web"), 2);
 /// assert_eq!(config.limit_for("ledger-db"), 1);
+/// assert_eq!(config.lease(), None); // in flight until the caller reports back
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchedulerConfig {
     conflict_window: u64,
     default_limit: usize,
     limits: BTreeMap<String, usize>,
+    lease: Option<Lease>,
+}
+
+/// How long an intent may be in flight before the plane deals with it, and
+/// how (see [Leases](self#leases)).
+///
+/// ```
+/// use floodwall::{Lease, SchedulerConfig};
+///
+/// // A change not reported back within 30 ticks is failed, and its
+/// // resource freed.
+/// let config = SchedulerConfig::default().with_lease(Some(Lease::Fail(30)));
+/// assert_eq!(config.lease().map(|l| l.ticks()), Some(30));
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lease {
+    /// An intent in flight for this many ticks is reported in every tick
+    /// until the caller completes it.
+    Report(u64),
+    /// An intent in flight for this many ticks lapses at the next tick: it
+    /// is recorded as `lapsed` and its place freed.
+    Fail(u64),
+}
+
+impl Lease {
+    /// How many ticks an intent may be in flight before it is overdue.
+    pub fn ticks(&self) -> u64 {
+        match *self {
+            Lease::Report(ticks) | Lease::Fail(ticks) => ticks,
+        }
+    }
 }
 
 impl Default for SchedulerConfig {
@@ -91,6 +148,7 @@ impl Default for SchedulerConfig {
             conflict_window: DEFAULT_CONFLICT_WINDOW,
             default_limit: 1,
             limits: BTreeMap::new(),
+            lease: None,
         }
     }
 }
@@ -151,6 +209,28 @@ impl SchedulerConfig {
     /// The conflict window, in ticks.
     pub fn conflict_window(&self) -> u64 {
         self.conflict_window
+    }
+
+    /// Put intents in flight on a lease: report or fail each one once it
+    /// has been in flight for the lease's ticks (see [Leases](self#leases)).
+    /// `None`, the default, leaves an intent in flight until the caller
+    /// completes it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the lease is 0 ticks.
+    pub fn with_lease(mut self, lease: Option<Lease>) -> Self {
+        assert!(
+            lease.is_none_or(|l| l.ticks() >= 1),
+            "a lease must be at least 1 tick; 0 would be up before the change could be applied"
+        );
+        self.lease = lease;
+        self
+    }
+
+    /// The lease on intents in flight, if any.
+    pub fn lease(&self) -> Option<Lease> {
+        self.lease
     }
 }
 
@@ -419,6 +499,16 @@ impl Scheduler {
     pub(crate) fn is_in_flight(&self, key: &IntentKey) -> bool {
         self.in_flight.contains_key(key)
     }
+
+    /// Everything in flight past its lease at tick `now`, ordered by intent
+    /// key: in flight since `now - ticks` or earlier. Nothing without a
+    /// lease.
+    pub(crate) fn overdue(&self, now: u64) -> impl Iterator<Item = &InFlight> {
+        let ticks = self.config.lease.map(|l| l.ticks());
+        self.in_flight
+            .values()
+            .filter(move |f| ticks.is_some_and(|t| now >= f.since.saturating_add(t)))
+    }
 }
 
 #[cfg(test)]
@@ -615,6 +705,37 @@ mod tests {
     #[should_panic(expected = "in-flight limit must be at least 1")]
     fn a_zero_resource_limit_is_refused() {
         let _ = SchedulerConfig::default().with_limit("web", 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "a lease must be at least 1 tick")]
+    fn a_zero_lease_is_refused() {
+        let _ = SchedulerConfig::default().with_lease(Some(Lease::Fail(0)));
+    }
+
+    #[test]
+    fn an_intent_is_overdue_once_in_flight_for_its_lease() {
+        let lease = |l| Scheduler::new(SchedulerConfig::default().with_lease(l));
+        let overdue = |s: &Scheduler, now| s.overdue(now).map(|f| f.intent.id).collect::<Vec<_>>();
+        for l in [Lease::Report(3), Lease::Fail(3)] {
+            let mut s = lease(Some(l));
+            s.start(intent(1, "web", Cell), 2);
+            s.start(intent(2, "api", Cell), 4);
+            s.start(intent(3, "db", Cell), 5);
+            assert!(overdue(&s, 4).is_empty());
+            assert_eq!(overdue(&s, 5), [1], "{l:?}: in flight for 3 ticks");
+            assert_eq!(overdue(&s, 8), [1, 2, 3], "{l:?}: in key order");
+            finish(&mut s, 2);
+            assert_eq!(overdue(&s, 8), [1, 3], "{l:?}: completed is not overdue");
+        }
+        // No lease: never overdue. A huge one does not overflow.
+        let mut s = lease(None);
+        s.start(intent(1, "web", Cell), 0);
+        assert!(overdue(&s, u64::MAX).is_empty());
+        let mut s = lease(Some(Lease::Fail(u64::MAX)));
+        s.start(intent(1, "web", Cell), 7);
+        assert!(overdue(&s, u64::MAX - 1).is_empty());
+        assert_eq!(overdue(&s, u64::MAX), [1]);
     }
 
     #[test]

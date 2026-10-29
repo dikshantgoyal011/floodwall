@@ -24,7 +24,9 @@
 //!
 //! Half the planes also load a rules file that declares itself a policy
 //! bundle, so their decisions record it, and every property holds with the
-//! bundles in the ledger too.
+//! bundles in the ledger too. Some put what is in flight on a lease, which
+//! reports or lapses what the flood is slow to complete, and every property
+//! holds with lapses in the ledger, and overdue intents in the reports.
 //!
 //! The gate's policies are deterministic, as replay requires: a policy that
 //! decides differently for the same intent, like the invariant test's
@@ -38,8 +40,8 @@ use floodwall::intent::{Action, AgentId, BlastRadius, Intent, IntentKey, Priorit
 use floodwall::policy::{BlastNeedsPriority, NoGlobalDestroy, ResourceAllowlist};
 use floodwall::sha256::sha256;
 use floodwall::{
-    Admission, Floodwall, Gate, Held, HoldConfig, Keyring, Ledger, Outcome, RateLimit, Record,
-    ResumeError, SchedulerConfig, SigningKey, QUEUED,
+    Admission, Floodwall, Gate, Held, HoldConfig, Keyring, Lease, Ledger, Outcome, RateLimit,
+    Record, ResumeError, SchedulerConfig, SigningKey, LAPSED, QUEUED,
 };
 
 /// A tiny xorshift PRNG, so every seed is reproducible.
@@ -98,6 +100,7 @@ struct Config {
     checkpoints: Option<u64>,
     /// The revision of the policy bundle the gate loads, if it loads one.
     bundle: Option<&'static str>,
+    lease: Option<Lease>,
 }
 
 impl Config {
@@ -126,6 +129,13 @@ impl Config {
             bundle: rng
                 .chance(50)
                 .then(|| *rng.pick(&["1", "2026.10.28-1", "a1b2c3d"])),
+            lease: *rng.pick(&[
+                None,
+                None,
+                Some(Lease::Report(2)),
+                Some(Lease::Fail(1)),
+                Some(Lease::Fail(4)),
+            ]),
         }
     }
 
@@ -154,7 +164,8 @@ impl Config {
         }
         let mut scheduler = SchedulerConfig::default()
             .with_default_limit(self.default_limit)
-            .with_conflict_window(self.window);
+            .with_conflict_window(self.window)
+            .with_lease(self.lease);
         if let Some(limit) = self.db_limit {
             scheduler = scheduler.with_limit("db", limit);
         }
@@ -286,6 +297,7 @@ struct Run {
     state: String,
     restarts: usize,
     finished_ticks: usize,
+    overdue: usize,
 }
 
 /// Stop `plane` and start a new one from its ledger, at the tick the old
@@ -367,6 +379,12 @@ fn flood(seed: u64, config: &Config, restarts: &[(usize, Restart)], file: Option
                 .map(|h| format!("{} expired", h.intent.key()))
                 .chain(
                     report
+                        .lapsed
+                        .iter()
+                        .map(|f| format!("{} {LAPSED}", f.intent.key())),
+                )
+                .chain(
+                    report
                         .decisions
                         .iter()
                         .map(|d| format!("{} {}", d.intent.key(), d.verdict.label())),
@@ -383,7 +401,16 @@ fn flood(seed: u64, config: &Config, restarts: &[(usize, Restart)], file: Option
                 "seed {seed} step {step}: report vs ledger"
             );
             assert!(written.iter().all(|r| r.tick == plane.clock()));
-            run.results.push(format!("tick {reported:?}"));
+            // Overdue intents are reported, not recorded: from `since`,
+            // which a restart must bring back as it was.
+            let overdue: Vec<(IntentKey, u64)> = report
+                .overdue
+                .iter()
+                .map(|f| (f.intent.key(), f.since))
+                .collect();
+            run.overdue += overdue.len();
+            run.results
+                .push(format!("tick {reported:?} overdue {overdue:?}"));
             if restart_at(step, Restart::Crash) {
                 let keep = (written.len() >= 2).then_some(before + 1);
                 let want = state(&plane);
@@ -472,6 +499,9 @@ struct Coverage {
     released: usize,
     expired: usize,
     completed: usize,
+    lapsed: usize,
+    /// Overdue intents reported, under a reporting lease.
+    overdue: usize,
     /// Decisions that record a policy bundle.
     bundled: usize,
 }
@@ -537,10 +567,16 @@ fn check(seed: u64, signed: bool, cov: &mut Coverage) {
         fs::remove_file(file).unwrap();
     }
 
-    // One decision changed, the chain re-hashed: refused at that record.
+    // One decision (or lapse) changed, the chain re-hashed: refused at that
+    // record.
     let records = ledger.records();
     let decisions: Vec<usize> = (0..records.len())
-        .filter(|&n| matches!(records[n].verdict.as_str(), "admit" | "defer" | "reject"))
+        .filter(|&n| {
+            matches!(
+                records[n].verdict.as_str(),
+                "admit" | "defer" | "reject" | LAPSED
+            )
+        })
         .collect();
     if !decisions.is_empty() {
         let at = decisions[rng.below(decisions.len() as u64) as usize];
@@ -576,6 +612,7 @@ fn check(seed: u64, signed: bool, cov: &mut Coverage) {
     cov.records += records.len();
     cov.restarts += restarted.restarts;
     cov.finished_ticks += restarted.finished_ticks;
+    cov.overdue += straight.overdue;
     for r in records {
         if !r.evidence.bundles.is_empty() {
             cov.bundled += 1;
@@ -587,6 +624,7 @@ fn check(seed: u64, signed: bool, cov: &mut Coverage) {
             "reject" => cov.rejected += 1,
             "released" => cov.released += 1,
             "expired" => cov.expired += 1,
+            LAPSED => cov.lapsed += 1,
             _ => cov.completed += 1,
         }
     }
@@ -612,6 +650,8 @@ fn replay_reproduces_the_live_decisions() {
         cov.released,
         cov.expired,
         cov.completed,
+        cov.lapsed,
+        cov.overdue,
         cov.bundled,
     ] {
         assert!(count > 100, "{cov:?}");

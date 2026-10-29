@@ -3,15 +3,16 @@
 //! Each seed builds a randomly configured plane and floods it with random
 //! calls: submissions from several agents (duplicates, rate-limited and
 //! backpressured ones, and in signed floods unsigned, forged and unknown
-//! ones), ticks, releases, expiries by hand and by TTL or eviction, and
-//! outcomes of both kinds, with restarts from the ledger at random points.
+//! ones), ticks, releases, expiries by hand and by TTL or eviction,
+//! outcomes of both kinds, and, under a lease, what it is slow to complete
+//! reported or lapsed, with restarts from the ledger at random points.
 //!
 //! Alongside, it keeps its own tally from nothing but what each public call
 //! returned: a submission's `Result`, a tick's decisions and expiries, a
 //! release's or expiry's or completion's `Ok`. After every call the plane's
 //! stats must be that tally, agent by agent and in all, and its gauges must
 //! be what the plane shows: the queue, its peak since the plane was built
-//! or resumed, what is in flight and what is held. A restart starts both
+//! or resumed, what is in flight and past its lease, and what is held. A restart starts both
 //! afresh. On a signed plane, what is refused at the door in the name of an
 //! agent outside the keyring is untracked.
 
@@ -20,8 +21,8 @@ use std::collections::BTreeMap;
 use floodwall::intent::{Action, AgentId, BlastRadius, Intent, IntentKey, Priority};
 use floodwall::policy::{NoGlobalDestroy, ResourceAllowlist};
 use floodwall::{
-    Admission, Counts, Floodwall, Gate, HoldConfig, Keyring, Ledger, Outcome, RateLimit, Rejected,
-    SchedulerConfig, SigningKey, Verdict,
+    Admission, Counts, Floodwall, Gate, HoldConfig, Keyring, Lease, Ledger, Outcome, RateLimit,
+    Rejected, SchedulerConfig, SigningKey, Verdict,
 };
 
 const AGENTS: [&str; 4] = ["a", "b", "c", "d"];
@@ -60,6 +61,7 @@ struct Config {
     hold_capacity: usize,
     ttl: Option<u64>,
     signed: bool,
+    lease: Option<Lease>,
 }
 
 impl Config {
@@ -78,6 +80,12 @@ impl Config {
             hold_capacity: *rng.pick(&[1, 3, 64]),
             ttl: *rng.pick(&[None, Some(2), Some(6)]),
             signed,
+            lease: *rng.pick(&[
+                None,
+                Some(Lease::Report(2)),
+                Some(Lease::Fail(2)),
+                Some(Lease::Fail(5)),
+            ]),
         }
     }
 
@@ -90,7 +98,11 @@ impl Config {
             Admission::new(self.capacity, RateLimit::new(self.burst, self.refill)),
             gate,
         )
-        .with_scheduler(SchedulerConfig::default().with_conflict_window(self.window))
+        .with_scheduler(
+            SchedulerConfig::default()
+                .with_conflict_window(self.window)
+                .with_lease(self.lease),
+        )
         .with_hold(
             HoldConfig::default()
                 .with_capacity(self.hold_capacity)
@@ -123,6 +135,7 @@ fn field<'a>(c: &'a mut Counts, event: &str) -> &'a mut u64 {
         "expired" => &mut c.expired,
         "succeeded" => &mut c.succeeded,
         "failed" => &mut c.failed,
+        "lapsed" => &mut c.lapsed,
         _ => unreachable!("{event}"),
     }
 }
@@ -218,6 +231,12 @@ fn check(plane: &Floodwall, tally: &Tally, seed: u64, step: usize) {
         plane.in_flight().count(),
         "{at}: in flight"
     );
+    let lease = plane.scheduler_config().lease();
+    let overdue = plane
+        .in_flight()
+        .filter(|f| lease.is_some_and(|l| plane.clock() >= f.since.saturating_add(l.ticks())))
+        .count();
+    assert_eq!(stats.overdue, overdue, "{at}: overdue");
     assert_eq!(stats.held, plane.held().count(), "{at}: held");
 }
 
@@ -227,6 +246,8 @@ struct Coverage {
     events: BTreeMap<&'static str, u64>,
     /// Refusals in the name of an agent outside the keyring.
     untracked: u64,
+    /// Overdue intents, summed over the checks.
+    overdue: u64,
     restarts: u64,
 }
 
@@ -271,6 +292,9 @@ fn flood(seed: u64, signed: bool, cov: &mut Coverage) {
                 }
                 for held in &report.expired {
                     tally.count(held.intent.agent.as_str(), "expired");
+                }
+                for lapsed in &report.lapsed {
+                    tally.count(lapsed.intent.agent.as_str(), "lapsed");
                 }
             }
             7 => {
@@ -320,6 +344,7 @@ fn flood(seed: u64, signed: bool, cov: &mut Coverage) {
         // the deepest it has been is the deepest seen after any call.
         tally.peak = tally.peak.max(plane.pending());
         check(&plane, &tally, seed, step);
+        cov.overdue += plane.stats().overdue as u64;
     }
     cov.add(&tally);
 }
@@ -334,8 +359,8 @@ fn the_stats_are_what_the_calls_returned() {
         flood(seed, true, &mut cov);
     }
     println!(
-        "{:#?} untracked {} restarts {}",
-        cov.events, cov.untracked, cov.restarts
+        "{:#?} untracked {} overdue {} restarts {}",
+        cov.events, cov.untracked, cov.overdue, cov.restarts
     );
     // Every event happened, many times over, and so did restarts.
     for (event, _) in Counts::default().events() {
@@ -343,5 +368,6 @@ fn the_stats_are_what_the_calls_returned() {
         assert!(n >= 10, "{event} happened {n} times");
     }
     assert!(cov.untracked >= 10, "{}", cov.untracked);
+    assert!(cov.overdue >= 10, "{}", cov.overdue);
     assert!(cov.restarts > 50, "{}", cov.restarts);
 }

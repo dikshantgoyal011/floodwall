@@ -3,8 +3,9 @@
 //! A plane's ledger records everything that changes its state, each at the
 //! tick it happened (see [`crate::ledger#time`]): every intent that got into
 //! the queue (`queued`), every decision a [`tick`](Floodwall::tick) made
-//! (`admit`, `defer`, `reject`, and the `expired` it wrote for an intent
-//! held too long or evicted), every release and expiry by a human
+//! (`admit`, `defer`, `reject`, the `expired` it wrote for an intent
+//! held too long or evicted, and the `lapsed` it wrote for one in flight
+//! past its lease), every release and expiry by a human
 //! (`released`, `expired`), and every outcome (`succeeded`, `failed`).
 //! Calls that change nothing record nothing: a refused submission, a pass
 //! that rules on nothing.
@@ -51,7 +52,8 @@
 //! The replayed plane must be built exactly as the one that wrote the
 //! ledger: the same admission capacity and rate limit, the same gate (the
 //! same policies, in the same order, deciding the same way), the same
-//! scheduler and hold settings, and a keyring if it had one. Of the
+//! scheduler settings (its lease, if any, included) and hold settings, and
+//! a keyring if it had one. Of the
 //! configuration, only the gate's policy bundles are in the ledger (see
 //! [Policy bundles](#policy-bundles)). A difference that changes any
 //! decision is caught, as [`ResumeError::Diverged`] at the first record
@@ -154,7 +156,7 @@ use crate::intent::{Intent, IntentKey};
 use crate::keyring::Keyring;
 use crate::ledger::{Digest, Ledger, Record, SignatureError, SignatureProblem};
 use crate::rules::BundleId;
-use crate::{Floodwall, Outcome, QUEUED, SIGNATURE_CHECK};
+use crate::{Floodwall, Outcome, LAPSED, QUEUED, SIGNATURE_CHECK};
 
 /// Why [`Floodwall::resume`] could not pick up from a ledger.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -479,7 +481,7 @@ impl Floodwall {
         let reason = record.evidence.reason.as_deref();
         Ok(match record.verdict.as_str() {
             QUEUED => Call::Submit(intent.clone()),
-            "admit" | "defer" | "reject" => Call::Tick,
+            "admit" | "defer" | "reject" | LAPSED => Call::Tick,
             "expired" => match reason.and_then(|r| r.strip_prefix("expired by ")) {
                 Some(by) => Call::Expire(key, by.to_string()),
                 // A TTL or eviction expiry, which a tick writes.
@@ -542,8 +544,8 @@ mod tests {
     use crate::intent::{Action, AgentId, BlastRadius, Priority};
     use crate::policy::{NoGlobalDestroy, ResourceAllowlist};
     use crate::{
-        Admission, Gate, HoldConfig, Keyring, RateLimit, Rejected, SchedulerConfig, SigningKey,
-        Verdict,
+        Admission, Gate, HoldConfig, Keyring, Lease, RateLimit, Rejected, SchedulerConfig,
+        SigningKey, Verdict,
     };
 
     fn key(agent: &str) -> SigningKey {
@@ -1379,6 +1381,49 @@ mod tests {
         assert_eq!(revisions(&after), ["1", "2"]);
         assert_eq!(after.in_flight().count(), 2);
         assert!(after.ledger().verify());
+    }
+
+    #[test]
+    fn lapses_are_replayed_and_need_the_same_lease() {
+        let leased = |lease| {
+            plane().with_scheduler(
+                SchedulerConfig::default()
+                    .with_conflict_window(5)
+                    .with_lease(lease),
+            )
+        };
+        // a#1 is never reported back and lapses at tick 4; a#2, waiting for
+        // web, starts in that same pass.
+        let mut before = leased(Some(Lease::Fail(3)));
+        before.submit(scale("a", 1, "web", 2), 0).unwrap();
+        before.tick(1);
+        before.submit(scale("a", 2, "web", 3), 2).unwrap();
+        assert!(before.tick(2).decisions.is_empty());
+        let report = before.tick(4);
+        assert_eq!((report.lapsed.len(), report.decisions.len()), (1, 1));
+        let after = leased(Some(Lease::Fail(3)))
+            .resume(reread(before.ledger()), 4)
+            .unwrap();
+        assert_eq!(state(&after), state(&before));
+        // Without that lease, the lapse is not what the plane does.
+        let lapse = before
+            .ledger()
+            .records()
+            .iter()
+            .find(|r| r.verdict == LAPSED)
+            .unwrap()
+            .seq;
+        for other in [
+            None,
+            Some(Lease::Report(3)),
+            Some(Lease::Fail(2)),
+            Some(Lease::Fail(4)),
+        ] {
+            match leased(other).resume(reread(before.ledger()), 4) {
+                Err(ResumeError::Diverged { seq, .. }) => assert_eq!(seq, lapse, "{other:?}"),
+                r => panic!("{other:?}: {:?}", r.map(|p| state(&p))),
+            }
+        }
     }
 
     #[test]

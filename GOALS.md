@@ -148,9 +148,13 @@ independent model).
   format.
 - **FW-905** *(new)* Throughput benchmarks for admission and the gate, so
   the scheduler and SHA-256 work can be measured against v0.1.
-- **FW-906** *(new)* Optional in-flight leases: surface (or auto-fail)
-  intents in flight longer than a configured number of ticks. Today an
-  intent the caller never completes holds its resource forever.
+- **FW-906** ✓ *(new)* Optional in-flight leases: surface (or auto-fail)
+  intents in flight longer than a configured number of ticks. Without one,
+  an intent the caller never completes holds its resource forever.
+  `SchedulerConfig::with_lease`: under `Lease::Report(n)`, every tick
+  reports what has been in flight for `n` ticks or more
+  (`TickReport::overdue`); under `Lease::Fail(n)`, the tick records it
+  `lapsed` and frees its place for that same pass (`TickReport::lapsed`).
 - **FW-907** *(new)* Authenticated release and expiry. `by` is a free-text
   name recorded in the ledger; tie it to a verified operator identity
   (and sign it once records are signed, FW-302).

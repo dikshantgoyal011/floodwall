@@ -152,7 +152,8 @@ pub struct Record {
     pub agent: String,
     /// What happened to the intent. A decision is `admit`, `defer` (held)
     /// or `reject`; afterwards an admitted intent is `succeeded` or
-    /// `failed`, and a held one is `released` or `expired`.
+    /// `failed`, or `lapsed` past its lease, and a held one is `released`
+    /// or `expired`.
     pub verdict: String,
     /// What the change was and why it got this verdict.
     pub evidence: Evidence,

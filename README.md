@@ -116,6 +116,34 @@ assert_eq!(report.decisions[0].verdict, Verdict::Admit);
 assert_eq!(report.decisions[0].released_by.as_deref(), Some("alice"));
 ```
 
+An admitted intent holds its place until you report back. If a caller may never (it crashed, or lost track of what it was given), put what is in flight on a lease:
+
+```rust
+use floodwall::{Admission, Floodwall, Gate, Lease, NotInFlight, Outcome, RateLimit, SchedulerConfig, LAPSED};
+use floodwall::intent::{Action, AgentId, BlastRadius, Intent, Priority};
+
+// A change not reported back within 30 ticks has failed, and frees its resource.
+let mut plane = Floodwall::new(Admission::new(64, RateLimit::new(8.0, 1.0)), Gate::new())
+    .with_scheduler(SchedulerConfig::default().with_lease(Some(Lease::Fail(30))));
+let intent = Intent::new(
+    1,
+    AgentId::new("deployer"),
+    Action::Apply { resource: "web".into(), manifest: "v2".into() },
+    Priority::Normal,
+    BlastRadius::Service,
+);
+let key = intent.key();
+plane.submit(intent, 0).unwrap();
+plane.tick(0); // dispatched, and then the deployer goes quiet
+
+let report = plane.tick(30);
+assert_eq!(report.lapsed[0].intent.key(), key);
+assert_eq!(plane.ledger().records().last().unwrap().verdict, LAPSED);
+assert_eq!(plane.complete(&key, Outcome::Succeeded, 31), Err(NotInFlight(key)));
+```
+
+`Lease::Report(30)` instead lists it in every tick's `overdue` until you report back, and leaves it in flight. A lapse frees the resource whether or not the caller is still applying the change, so `Fail` suits callers whose own timeout is shorter than the lease.
+
 With a keyring, every agent signs its intents, and the ledger proves who asked for what:
 
 ```rust
@@ -315,7 +343,7 @@ The bundle's digest is the SHA-256 of the file, so an auditor holding it can mat
 
 ### Watching the plane
 
-The plane counts what it does as it goes: for each agent, and for the whole fleet, what was refused at the door and why, admitted, deferred, rejected, released, expired, and how it turned out; and how deep the queue is, how much is in flight and how much is held. `Stats::prometheus` writes the same numbers in the Prometheus text format, with no dependency, for a `/metrics` endpoint:
+The plane counts what it does as it goes: for each agent, and for the whole fleet, what was refused at the door and why, admitted, deferred, rejected, released, expired, and how it turned out (lapses included); and how deep the queue is, how much is in flight, how much of that is overdue, and how much is held. `Stats::prometheus` writes the same numbers in the Prometheus text format, with no dependency, for a `/metrics` endpoint:
 
 ```rust
 use floodwall::{Admission, Floodwall, Gate, RateLimit};
@@ -409,7 +437,7 @@ See [GOALS.md](GOALS.md) for the full roadmap and [STATUS.md](STATUS.md) for cur
 - **Auditable without this crate.** The JSON Lines export plus the documented encodings are enough to verify everything; `tools/verify-ledger.mjs` proves it in CI, sharing no code with the Rust implementation.
 - **Signing is not side-channel audited.** Verification only handles public data. Signing avoids secret-dependent branches where it is easy to, but agents holding long-lived production keys may prefer a vetted library: the signatures are standard Ed25519 and verify here all the same.
 - **No wall clock.** Time is a logical tick supplied by the caller, so the whole plane is deterministic and testable. Time never moves backwards: a tick earlier than the latest one seen is treated as the latest.
-- **You apply the changes.** floodwall decides; it does not execute. An admitted intent is in flight until you call `complete`, so report back even when a change fails or times out.
+- **You apply the changes.** floodwall decides; it does not execute. An admitted intent is in flight until you call `complete`, so report back even when a change fails or times out. A lease (`SchedulerConfig::with_lease`) reports, or fails, what is not reported back in time.
 - **`unsafe` is forbidden** at the crate level.
 - **Tested against its own spec.** Besides unit tests and these README examples (compiled as doctests), [`tests/scheduler_invariants.rs`](tests/scheduler_invariants.rs) runs 300 seeded random floods and checks every scheduling, conflict and hold guarantee above after each step, [`tests/replay_property.rs`](tests/replay_property.rs) checks that replaying a ledger reproduces the live decisions, through random restarts and crashes, [`tests/stats_property.rs`](tests/stats_property.rs) checks the plane's stats are exactly what its calls returned, and [`tests/production_policies.rs`](tests/production_policies.rs) checks the worked example's rules decide exactly as their Rego does.
 

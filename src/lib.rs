@@ -95,7 +95,7 @@ pub use merkle::FrontierFull;
 pub use policy::{Policy, Verdict};
 pub use replay::ResumeError;
 pub use rules::BundleId;
-pub use scheduler::{InFlight, SchedulerConfig};
+pub use scheduler::{InFlight, Lease, SchedulerConfig};
 pub use stats::{Counts, Stats};
 
 use hold::Hold;
@@ -119,6 +119,10 @@ pub const SIGNATURE_CHECK: &str = "agent-signature";
 /// The ledger verdict for an intent that got through admission into the
 /// queue ([`Floodwall::submit`]).
 pub const QUEUED: &str = "queued";
+
+/// The ledger verdict for an intent in flight past its lease, which a
+/// [`Floodwall::tick`] failed (see [`Lease::Fail`]).
+pub const LAPSED: &str = "lapsed";
 
 /// The outcome of ruling on one intent: the intent itself, the combined
 /// verdict, and the per-policy breakdown that produced it.
@@ -145,6 +149,13 @@ pub struct TickReport {
     /// Held intents that expired in this tick: past their TTL, or evicted
     /// from a full hold queue.
     pub expired: Vec<Held>,
+    /// Under [`Lease::Report`], the intents in flight past their lease, by
+    /// key. Every tick reports each one until the caller completes it.
+    pub overdue: Vec<InFlight>,
+    /// Under [`Lease::Fail`], the intents in flight past their lease that
+    /// lapsed in this tick, by key: recorded as [`LAPSED`], and no longer in
+    /// flight. Do not apply them.
+    pub lapsed: Vec<InFlight>,
 }
 
 impl TickReport {
@@ -439,8 +450,10 @@ impl Floodwall {
     }
 
     /// One scheduling pass at logical time `now`: first expire held
-    /// intents past their TTL or over the hold's capacity, then walk the
-    /// queue in priority order and rule on every intent that may start now.
+    /// intents past their TTL or over the hold's capacity, and report or
+    /// lapse intents in flight past their lease (see
+    /// [Leases](scheduler#leases)), then walk the queue in priority order
+    /// and rule on every intent that may start now.
     /// Everything is recorded in the ledger. Admitted intents are
     /// dispatched: apply them, then call [`Floodwall::complete`]. Deferred
     /// intents are held: see [`Floodwall::release`].
@@ -463,6 +476,7 @@ impl Floodwall {
             }
         }
         self.trim_hold(&mut report);
+        self.mind_leases(now, &mut report);
         let mut pass = self.scheduler.begin(now);
         for position in self.admission.queued_keys() {
             if pass.is_closed() {
@@ -494,6 +508,35 @@ impl Floodwall {
         }
         self.persist();
         report
+    }
+
+    /// Deal with the intents in flight past their lease at tick `now`:
+    /// report them, or lapse them, freeing their place for this pass.
+    fn mind_leases(&mut self, now: u64, report: &mut TickReport) {
+        let Some(lease) = self.scheduler.config().lease() else {
+            return;
+        };
+        let overdue: Vec<InFlight> = self.scheduler.overdue(now).cloned().collect();
+        let Lease::Fail(ticks) = lease else {
+            report.overdue = overdue;
+            return;
+        };
+        for lapsed in overdue {
+            let key = lapsed.intent.key();
+            self.scheduler
+                .finish(&key, now)
+                .expect("an overdue intent is in flight");
+            self.forget(&key);
+            let reason = format!(
+                "in flight since tick {} for {} ticks, reaching the lease of {ticks}",
+                lapsed.since,
+                now - lapsed.since
+            );
+            self.record(&lapsed.intent, LAPSED, Some(reason), Vec::new(), Vec::new());
+            self.counters
+                .count(lapsed.intent.agent.as_str(), Event::Lapsed);
+            report.lapsed.push(lapsed);
+        }
     }
 
     /// Rule on an intent that may start now, record the decision, and act
@@ -692,6 +735,10 @@ impl Floodwall {
     /// `now`. Frees its place in the scheduler, records the outcome in the
     /// ledger, and returns the intent.
     ///
+    /// Fails with [`NotInFlight`] if the intent is not in flight: it was
+    /// never dispatched, has been completed already, or lapsed past its
+    /// lease (see [Leases](scheduler#leases)).
+    ///
     /// # Panics
     ///
     /// Panics if the ledger is on disk and cannot be written (see
@@ -782,12 +829,13 @@ impl Floodwall {
 
     /// What the plane has done since it was built or resumed, per agent and
     /// across the fleet, and where it stands now: how deep the queue is, and
-    /// has been at most, and how much is in flight and held (see
-    /// [`crate::stats`]).
+    /// has been at most, how much is in flight and how much of that is past
+    /// its lease, and how much is held (see [`crate::stats`]).
     pub fn stats(&self) -> Stats {
         self.counters.snapshot(
             self.admission.len(),
             self.scheduler.in_flight().count(),
+            self.scheduler.overdue(self.clock).count(),
             self.hold.iter().count(),
         )
     }
@@ -2063,5 +2111,122 @@ mod tests {
         p.submit(scale(1, "web"), 0).unwrap();
         p.tick(0);
         let _ = p.with_ledger(Ledger::new());
+    }
+
+    fn leased(lease: Lease) -> Floodwall {
+        plane().with_scheduler(
+            SchedulerConfig::default()
+                .with_conflict_window(5)
+                .with_lease(Some(lease)),
+        )
+    }
+
+    fn keys(in_flight: &[InFlight]) -> Vec<String> {
+        in_flight
+            .iter()
+            .map(|f| f.intent.key().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_reported_lease_names_what_is_overdue_every_tick_and_records_nothing() {
+        let mut p = leased(Lease::Report(2));
+        p.submit(scale(1, "web"), 0).unwrap();
+        p.submit(scale(2, "web"), 0).unwrap();
+        assert_eq!(p.tick(0).decisions.len(), 1); // bot#2 waits for web
+        assert!(p.tick(1).overdue.is_empty());
+        let records = p.ledger().len();
+        for now in [2, 3] {
+            let report = p.tick(now);
+            assert_eq!(keys(&report.overdue), ["bot#1"], "tick {now}");
+            assert_eq!(report.overdue[0].since, 0);
+            assert!(report.lapsed.is_empty() && report.decisions.is_empty());
+        }
+        assert_eq!(p.ledger().len(), records, "reporting records nothing");
+        assert!(p.is_in_flight(&IntentKey::new("bot", 1)));
+        p.complete(&IntentKey::new("bot", 1), Outcome::Succeeded, 3)
+            .unwrap();
+        let report = p.tick(4);
+        assert!(report.overdue.is_empty());
+        assert_eq!(report.decisions[0].intent.id, 2);
+    }
+
+    #[test]
+    fn a_failing_lease_lapses_what_is_overdue_and_frees_its_place() {
+        let mut p = leased(Lease::Fail(2));
+        p.submit(scale(1, "web"), 0).unwrap();
+        p.submit(scale(2, "web"), 0).unwrap();
+        p.submit(scale(3, "api"), 0).unwrap();
+        p.tick(0); // bot#1 and bot#3 in flight, bot#2 waits for web
+        p.complete(&IntentKey::new("bot", 3), Outcome::Succeeded, 1)
+            .unwrap();
+        assert!(p.tick(1).lapsed.is_empty());
+        let report = p.tick(2);
+        assert_eq!(keys(&report.lapsed), ["bot#1"]);
+        assert!(report.overdue.is_empty());
+        // What waited for web starts in the same pass.
+        assert_eq!(report.decisions.len(), 1);
+        assert_eq!(report.decisions[0].intent.id, 2);
+        let flying: Vec<u64> = p.in_flight().map(|f| f.intent.id).collect();
+        assert_eq!(flying, [2]);
+        // The lapse is recorded before the decision, at the tick.
+        let records = p.ledger().records();
+        let lapse = &records[records.len() - 2];
+        assert_eq!((lapse.intent_id, lapse.verdict.as_str()), (1, LAPSED));
+        assert_eq!(
+            lapse.evidence.reason.as_deref(),
+            Some("in flight since tick 0 for 2 ticks, reaching the lease of 2")
+        );
+        assert_eq!(lapse.tick, 2);
+        assert!(p.ledger().verify());
+        // The caller can no longer report back on it, and its key is free
+        // for a new intent.
+        assert_eq!(
+            p.complete(&IntentKey::new("bot", 1), Outcome::Succeeded, 3),
+            Err(NotInFlight(IntentKey::new("bot", 1)))
+        );
+        p.submit(scale(1, "api"), 3).unwrap();
+    }
+
+    #[test]
+    fn a_lapsed_claim_stays_open_for_the_conflict_window() {
+        // The change may have been partly applied, so another agent's
+        // contradictory one waits out the window, as after a completion.
+        let mut p = leased(Lease::Fail(2));
+        p.submit(scale_by("a", 1, "web", 3), 0).unwrap();
+        p.tick(0);
+        assert_eq!(p.tick(2).lapsed.len(), 1);
+        p.submit(scale_by("b", 1, "web", 9), 3).unwrap();
+        let report = p.tick(3);
+        let Verdict::Defer(why) = &report.decisions[0].verdict else {
+            panic!("{:?}", report.decisions[0].verdict);
+        };
+        assert!(
+            why.contains("by a#1, completed at tick 2; conflict window open until tick 7"),
+            "{why}"
+        );
+    }
+
+    #[test]
+    fn a_lapsed_global_frees_the_floor() {
+        let mut p = leased(Lease::Fail(3));
+        p.submit(global_apply(1, "api"), 0).unwrap();
+        p.tick(0);
+        p.submit(scale(2, "web"), 1).unwrap();
+        assert!(p.tick(1).decisions.is_empty(), "the global has the floor");
+        let report = p.tick(3);
+        assert_eq!(keys(&report.lapsed), ["bot#1"]);
+        assert_eq!(report.decisions[0].intent.id, 2);
+        assert_eq!(report.decisions[0].verdict, Verdict::Admit);
+    }
+
+    #[test]
+    fn without_a_lease_nothing_is_overdue() {
+        let mut p = plane();
+        p.submit(scale(1, "web"), 0).unwrap();
+        p.tick(0);
+        let report = p.tick(u64::MAX);
+        assert!(report.overdue.is_empty() && report.lapsed.is_empty());
+        assert!(p.is_in_flight(&IntentKey::new("bot", 1)));
     }
 }

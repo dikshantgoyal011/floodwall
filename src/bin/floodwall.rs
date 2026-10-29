@@ -387,8 +387,13 @@ fn main() {
         "the plane's stats disagree with the demo's tally: {agree:?}"
     );
     assert_eq!(
-        (stats.duplicate, stats.unsigned, stats.unknown_agent),
-        (0, 0, 0)
+        (
+            stats.duplicate,
+            stats.unsigned,
+            stats.unknown_agent,
+            stats.lapsed
+        ),
+        (0, 0, 0, 0)
     );
     let latest = plane.checkpoint();
     let ledger = plane.ledger();
