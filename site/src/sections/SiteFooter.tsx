@@ -4,7 +4,7 @@ import { FOOTER_GROUPS, PROTO_URL } from "../content";
 import { BrandMark } from "../components/BrandMark";
 import { FooterArtwork } from "../components/FooterArtwork";
 import { Icon } from "../components/Icon";
-import { useMediaQuery } from "../hooks";
+import { useClientValue, useMediaQuery } from "../hooks";
 import { useTheme } from "../theme";
 
 export function SiteFooter() {
@@ -13,6 +13,8 @@ export function SiteFooter() {
   const [visible, setVisible] = useState(false);
   const [paused, setPaused] = useState(false);
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  // The prerendered controls stay disabled until the app hydrates, so without JavaScript they never look usable.
+  const hydrated = useClientValue(() => true, false);
   const running = visible && !paused && !reducedMotion;
 
   useLayoutEffect(() => {
@@ -57,7 +59,7 @@ export function SiteFooter() {
             <div className="footer-brand">
               <a className="logo" href="#home" aria-label="Floodwall home">
                 <BrandMark />
-                <span>Floodwall</span>
+                <span>Floodwall<sup>&reg;</sup></span>
               </a>
             </div>
             <h2 className="display-heading staccato-heading" id="footer-title">
@@ -88,19 +90,20 @@ export function SiteFooter() {
         </div>
 
         <div className="footer-bottom">
-          <span className="footer-copyright" suppressHydrationWarning>&copy; {new Date().getFullYear()} Floodwall.</span>
+          {/* No year: a build-time year would go stale in the committed docs/ and fail CI's sync check each January. */}
+          <span className="footer-copyright">&copy; Floodwall.</span>
           <span className="footer-credit">
             An <a href="https://www.erp.ai">ERP•AI</a>{" "}
-            project. · Built with{" "}
+            project · Built with{" "}
             <a href={PROTO_URL}>Proto</a>
           </span>
-          <button className="footer-control footer-motion-control" type="button" disabled={reducedMotion}
+          <button className="footer-control footer-motion-control" type="button" disabled={!hydrated || reducedMotion}
             aria-label={reducedMotion ? "Footer animation disabled for reduced motion" : paused ? "Resume footer animation" : "Pause footer animation"}
-            title={reducedMotion ? "Animation disabled for reduced motion" : paused ? "Play" : "Pause"}
+            title={reducedMotion ? "Animation disabled for reduced motion" : paused ? "Resume" : "Pause"}
             onClick={() => setPaused(value => !value)}>
             <Icon icon={paused ? PlayIcon : PauseIcon} size={20} />
           </button>
-          <button className="footer-control footer-theme-control" type="button" aria-label="Dark mode"
+          <button className="footer-control footer-theme-control" type="button" aria-label="Dark mode" disabled={!hydrated}
             aria-pressed={theme === "dark"} title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
             onClick={toggleTheme}>
             <Icon icon={theme === "dark" ? Sun01Icon : Moon02Icon} size={20} />

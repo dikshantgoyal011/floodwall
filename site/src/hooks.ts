@@ -25,32 +25,6 @@ export function useClientValue<T>(read: () => T, serverValue: T) {
   return useSyncExternalStore(staticSubscribe, read, () => serverValue);
 }
 
-/**
- * Background video plays only on tablet-width screens and up, and never for
- * visitors who prefer reduced motion or have Save-Data turned on.
- */
-export function useVideoEligibility() {
-  const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
-  const tablet = useMediaQuery("(min-width: 760px)");
-  const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection
-    ?.saveData;
-  return !reducedMotion && tablet && !saveData;
-}
-
-/** True once the page has scrolled away from the very top. */
-export function useIsScrolled() {
-  const [scrolled, setScrolled] = useState(false);
-
-  useEffect(() => {
-    const update = () => setScrolled(window.scrollY > 8);
-    update();
-    window.addEventListener("scroll", update, { passive: true });
-    return () => window.removeEventListener("scroll", update);
-  }, []);
-
-  return scrolled;
-}
-
 function headerHeight() {
   return document.querySelector<HTMLElement>(".site-header")?.offsetHeight ?? 0;
 }
@@ -165,19 +139,47 @@ export function useActiveSection(ids: readonly string[]) {
 
 const POSITIONS_KEY = "floodwall:scroll-positions";
 const POSITIONS_LIMIT = 50;
+/** How long a restored position is held against late layout before scrolling is the reader's again. */
+const RESTORE_SETTLE_MS = 2000;
+
+/**
+ * A scroll position held against the section at the top of the view, so it survives content
+ * above that section changing height (the hero diagram sizing itself, the waitlist form growing).
+ */
+type ScrollPosition = { section: string; offset: number };
+
+/** The section crossing the header line, and how far the view has scrolled into it. */
+function currentPosition(): ScrollPosition {
+  const line = headerHeight();
+  const sections = [...document.querySelectorAll<HTMLElement>("main > section[id]")];
+  const section = sections.filter((element) => element.getBoundingClientRect().top <= line + 1).at(-1) ?? sections[0];
+  if (!section) return { section: "", offset: window.scrollY };
+  return { section: section.id, offset: line - section.getBoundingClientRect().top };
+}
+
+/** The scroll offset that puts a saved position back under the header line. */
+function scrollTopFor({ section, offset }: ScrollPosition) {
+  const element = section ? document.getElementById(section) : null;
+  if (!element) return offset;
+  return window.scrollY + element.getBoundingClientRect().top - headerHeight() + offset;
+}
+
+const isPosition = (value: unknown): value is ScrollPosition =>
+  !!value && typeof value === "object" && typeof (value as ScrollPosition).section === "string"
+  && Number.isFinite((value as ScrollPosition).offset);
 
 /** Scroll positions by history entry id, kept for the tab's session so they survive a reload. */
 function loadPositions() {
   try {
     const saved: unknown = JSON.parse(sessionStorage.getItem(POSITIONS_KEY) ?? "{}");
     if (saved && typeof saved === "object") {
-      return new Map(Object.entries(saved).filter((pair): pair is [string, number] => Number.isFinite(pair[1])));
+      return new Map(Object.entries(saved).filter((pair): pair is [string, ScrollPosition] => isPosition(pair[1])));
     }
   } catch { /* Storage blocked or corrupt: positions last for this page only. */ }
-  return new Map<string, number>();
+  return new Map<string, ScrollPosition>();
 }
 
-function savePositions(positions: Map<string, number>) {
+function savePositions(positions: Map<string, ScrollPosition>) {
   // Keep the most recently used entries; a long session never grows the store without bound.
   const recent = [...positions].slice(-POSITIONS_LIMIT);
   try { sessionStorage.setItem(POSITIONS_KEY, JSON.stringify(Object.fromEntries(recent))); } catch { /* Optional. */ }
@@ -195,7 +197,7 @@ function navigationType() {
  * malformed or unknown fragment is ignored. A reload, or returning to
  * the page through history, restores the exact position its entry had.
  */
-export function useCenteredSectionLinks() {
+export function useSectionLinks() {
   useEffect(() => {
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
     const previousRestoration = history.scrollRestoration;
@@ -215,7 +217,7 @@ export function useCenteredSectionLinks() {
     const rememberPosition = () => {
       if (restoring) return;
       positions.delete(entry);
-      positions.set(entry, window.scrollY);
+      positions.set(entry, currentPosition());
     };
     const persist = () => {
       rememberPosition();
@@ -249,7 +251,7 @@ export function useCenteredSectionLinks() {
       if (!id || !document.getElementById(id)) return;
 
       event.preventDefault();
-      restoring = false;
+      releaseRestore();
       traversedUrl = null;
       // Capture before moving, including instant jumps and interrupted smooth scrolling.
       rememberPosition();
@@ -261,26 +263,53 @@ export function useCenteredSectionLinks() {
     };
 
     const initial = fragmentId(location.hash);
-    if (restored !== undefined) void document.fonts.ready.then(() => {
-      // A link, history step or hash change made before fonts load wins over the restore.
-      if (disposed || !restoring) return;
-      restoring = false;
-      window.scrollTo({ top: restored, behavior: "instant" });
-      document.dispatchEvent(new CustomEvent(SECTION_NAVIGATION_EVENT, { detail: "" }));
-      rememberPosition();
-    });
+    // A restoring load holds its position while late layout lands (the diagram sizing itself, the
+    // waitlist form resizing), until it settles or the reader moves; a link, history step or hash
+    // change made meanwhile wins over the restore.
+    let stopRestore = () => {};
+    let releaseRestore = () => {};
+    if (restored !== undefined) {
+      let layout: ResizeObserver | undefined;
+      let timer: number | undefined;
+      const inputs = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+      stopRestore = () => {
+        layout?.disconnect();
+        window.clearTimeout(timer);
+        inputs.forEach((type) => window.removeEventListener(type, releaseRestore));
+      };
+      releaseRestore = () => {
+        stopRestore();
+        if (!restoring) return;
+        restoring = false;
+        rememberPosition();
+      };
+      // Input wins even while fonts are pending, before the restore observer exists.
+      inputs.forEach((type) => window.addEventListener(type, releaseRestore, { passive: true }));
+      void document.fonts.ready.then(() => {
+        if (disposed || !restoring) return;
+        const hold = () => {
+          if (!restoring) return;
+          window.scrollTo({ top: scrollTopFor(restored), behavior: "instant" });
+          document.dispatchEvent(new CustomEvent(SECTION_NAVIGATION_EVENT, { detail: "" }));
+        };
+        layout = new ResizeObserver(hold);
+        timer = window.setTimeout(releaseRestore, RESTORE_SETTLE_MS);
+        hold();
+        layout.observe(document.body);
+      });
+    }
     else if (initial) void document.fonts.ready.then(() => {
       if (!disposed && fragmentId(location.hash) === initial) scrollToSection(initial, "instant");
     });
     const onPopState = () => {
-      restoring = false;
+      releaseRestore();
       rememberPosition();
       traversedUrl = location.href;
       const restoredEntry: unknown = history.state?.[positionKey];
       entry = typeof restoredEntry === "string" ? restoredEntry : crypto.randomUUID();
-      const top = positions.get(entry);
-      if (top !== undefined) {
-        window.scrollTo({ top, behavior: "instant" });
+      const position = positions.get(entry);
+      if (position !== undefined) {
+        window.scrollTo({ top: scrollTopFor(position), behavior: "instant" });
         document.dispatchEvent(new CustomEvent(SECTION_NAVIGATION_EVENT, { detail: "" }));
       } else {
         markEntry();
@@ -289,7 +318,7 @@ export function useCenteredSectionLinks() {
       rememberPosition();
     };
     const onHashChange = () => {
-      restoring = false;
+      releaseRestore();
       const traversed = traversedUrl === location.href;
       traversedUrl = null;
       if (!traversed) {
@@ -308,6 +337,7 @@ export function useCenteredSectionLinks() {
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       disposed = true;
+      stopRestore();
       persist();
       window.removeEventListener("pagehide", persist);
       document.removeEventListener("visibilitychange", onVisibilityChange);
@@ -329,6 +359,8 @@ export function useSectionReveal() {
   useEffect(() => {
     if (!("IntersectionObserver" in window) || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const drawings = [...document.querySelectorAll<HTMLElement>("main > .section .section-drawing")];
+    let disposed = false;
+    let frame = 0;
     const observer = new IntersectionObserver(entries => {
       for (const entry of entries) {
         if (!entry.isIntersecting) continue;
@@ -336,14 +368,23 @@ export function useSectionReveal() {
         observer.unobserve(entry.target);
       }
     }, { rootMargin: "0px 0px -12% 0px" });
-    for (const drawing of drawings) {
-      // Already visible at load (a fragment or reload mid-page): show without motion.
-      const box = drawing.getBoundingClientRect();
-      if (box.top < innerHeight && box.bottom > 0) continue;
-      drawing.dataset.reveal = "pending";
-      observer.observe(drawing);
-    }
+    const arm = () => {
+      for (const drawing of drawings) {
+        // Already visible at load (a fragment or reload mid-page): show without motion.
+        const box = drawing.getBoundingClientRect();
+        if (box.top < innerHeight && box.bottom > 0) continue;
+        drawing.dataset.reveal = "pending";
+        observer.observe(drawing);
+      }
+    };
+    // Measure where the load lands: useSectionLinks jumps to a fragment or restores a reload's
+    // position once fonts are ready, so wait for that and one frame before deciding what is visible.
+    void document.fonts.ready.then(() => {
+      if (!disposed) frame = requestAnimationFrame(arm);
+    });
     return () => {
+      disposed = true;
+      cancelAnimationFrame(frame);
       observer.disconnect();
       drawings.forEach(drawing => delete drawing.dataset.reveal);
     };

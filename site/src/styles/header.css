@@ -29,9 +29,12 @@
   color: var(--muted);
   font-size: 15px;
   font-weight: 500;
-  transition: color 160ms ease;
+  transition: color var(--motion-fast) var(--ease-out);
 }
-.nav-links a:hover, .nav-links a[aria-current] { color: var(--ink); }
+.nav-links a[aria-current] { color: var(--ink); }
+@media (hover: hover) and (pointer: fine) {
+  .nav-links a:hover { color: var(--ink); }
+}
 .nav-links a span {
   position: relative;
   display: inline-flex;
@@ -48,9 +51,14 @@
   transform-origin: left center;
   visibility: hidden;
   pointer-events: none;
-  transition: transform 260ms cubic-bezier(.25, 1, .5, 1);
+  transition: transform var(--motion-move) var(--ease-out);
 }
-.nav-links a:focus-visible { outline-offset: 2px; }
+/* Inset: the links span the full header height, so an outside ring would lose its top edge at the viewport. */
+.nav-links a:focus-visible { outline-offset: -4px; }
+/* Forced colours drop backgrounds; the underline keeps the system text colour. */
+@media (forced-colors: active) {
+  .nav-indicator { forced-color-adjust: none; background: CanvasText; }
+}
 .site-header .button { gap: 12px; }
 .site-header .button svg { width: 16px; height: 16px; }
 @media (max-width: 1100px) {
@@ -59,9 +67,10 @@
 @media (max-width: 850px) {
   :root { --header-height: 128px; }
   .nav-bar { flex-wrap: wrap; gap: 12px; padding-block: 16px 0; }
-  .nav-links { order: 3; width: 100%; justify-content: space-between; gap: 8px; }
-  .nav-links a { flex: 1; padding-inline: 0; font-size: 14px; }
-  .site-header .button { padding-inline: 14px; font-size: 12px; }
+  /* The links share the row by their own widths; under enlarged text spacing they wrap instead of overflowing. */
+  .nav-links { order: 3; flex-wrap: wrap; width: 100%; justify-content: space-between; gap: 0 4px; }
+  .nav-links a { flex: 1 1 auto; padding-inline: 0; font-size: var(--text-sm); }
+  .site-header .button { padding-inline: 14px; font-size: var(--text-xs); }
 }
 /* Six sections and the call to action only fit narrow phones once Home (the logo) leaves the menu. */
 @media (max-width: 380px) {

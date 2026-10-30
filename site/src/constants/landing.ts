@@ -2,12 +2,13 @@
 
 export const REPO_URL = "https://github.com/erphq/floodwall";
 
-export const WAITLIST_FORM_URL = "https://tally.so/r/6DJeoP";
+export const TALLY_ORIGIN = "https://tally.so";
+export const WAITLIST_FORM_URL = `${TALLY_ORIGIN}/r/6DJeoP`;
 export const WAITLIST_EMBED_URL =
-  "https://tally.so/embed/6DJeoP?alignLeft=1&hideTitle=1&transparentBackground=1&dynamicHeight=1";
+  `${TALLY_ORIGIN}/embed/6DJeoP?alignLeft=1&hideTitle=1&transparentBackground=1&dynamicHeight=1`;
 
-export const HERO_VIDEO_URL = "/hero-sf.mp4";
-export const FOOTER_PRINT_URL = "/footer-water.webp";
+/** Encoded widths of public/footer-water*.webp; the largest is footer-water.webp itself. */
+export const FOOTER_PRINT_WIDTHS = [720, 1082, 1600, 2164] as const;
 
 export type Link = { label: string; href: string };
 

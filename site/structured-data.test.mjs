@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { packageField, readCrateFacts } from "./crate-stats.mjs";
-import { SHARE_IMAGE, SITE_URL, headTags, inlineJson, structuredData } from "./structured-data.mjs";
+import { PAGE_DESCRIPTION, PAGE_TITLE, SHARE_IMAGE, SITE_URL, headTags, inlineJson, structuredData } from "./structured-data.mjs";
 
 const crate = readCrateFacts(path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."));
 const graph = structuredData(crate)["@graph"];
@@ -48,4 +49,14 @@ test("the share image is absolute and 1200x630 in every tag that names it", () =
   assert.equal(content("og:image:width"), "1200");
   assert.equal(content("og:image:height"), "630");
   assert.equal(content("twitter:card"), "summary_large_image");
+});
+
+test("the description fits a search snippet without being cut", () => {
+  assert.ok(PAGE_DESCRIPTION.length >= 120 && PAGE_DESCRIPTION.length <= 160, `${PAGE_DESCRIPTION.length} characters`);
+});
+
+test("the web manifest describes the page as the meta description does", () => {
+  const manifest = JSON.parse(readFileSync(new URL("./public/site.webmanifest", import.meta.url), "utf8"));
+  assert.equal(manifest.description, PAGE_DESCRIPTION);
+  assert.ok(PAGE_TITLE.startsWith(`${manifest.name} |`));
 });

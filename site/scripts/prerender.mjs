@@ -12,5 +12,6 @@ const { render } = await import(pathToFileURL(server).href);
 const html = fs.readFileSync(page, "utf8");
 const empty = '<div id="root"></div>';
 if (html.split(empty).length !== 2) throw new Error(`${page} must contain exactly one empty ${empty}`);
-fs.writeFileSync(page, html.replace(empty, `<div id="root">${render()}</div>`));
+// A replacer function, so `$&`-style patterns in the rendered page are written literally.
+fs.writeFileSync(page, html.replace(empty, () => `<div id="root">${render()}</div>`));
 fs.rmSync(path.join(site, ".ssr"), { recursive: true, force: true });

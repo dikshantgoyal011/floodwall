@@ -11,11 +11,17 @@
 
   function apply() {
     theme = preference ?? (media.matches ? "dark" : "light");
+    // Swap every colour in one frame: live transitions would smear the change across the page.
+    const still = document.createElement("style");
+    still.textContent = "*, *::before, *::after { transition: none !important; }";
+    document.head.append(still);
     root.dataset.theme = theme;
     root.style.colorScheme = theme;
     // CSS is authoritative once loaded; the fallback also colors the initial tab.
     const canvas = getComputedStyle(root).getPropertyValue("--canvas").trim();
     if (meta) meta.content = canvas || (theme === "dark" ? "#111111" : "#f2f2f2");
+    // The computed-style read above has applied the new colours; transitions return next frame.
+    requestAnimationFrame(() => still.remove());
     window.dispatchEvent(new Event("floodwall:theme-change"));
   }
 

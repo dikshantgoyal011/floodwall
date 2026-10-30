@@ -9,7 +9,7 @@ export function SiteHeader() {
   const active = useActiveSection(NAV_SECTION_IDS);
   const linksRef = useRef<HTMLDivElement>(null);
   const indicatorRef = useRef<HTMLSpanElement>(null);
-  const indicatorPosition = useRef<{ x: number; width: number } | null>(null);
+  const indicatorPosition = useRef<{ x: number; y: number; width: number } | null>(null);
   const positionIndicator = useCallback((animate: boolean) => {
     const links = linksRef.current;
     const indicator = indicatorRef.current;
@@ -17,11 +17,14 @@ export function SiteHeader() {
     if (!links || !indicator || !label) return;
     const bar = links.getBoundingClientRect();
     const text = label.getBoundingClientRect();
-    const next = { x: text.left - bar.left, width: text.width };
+    // y lifts the line to its label's row when the links wrap; it is 0 on a single row.
+    const row = label.closest("a")!.getBoundingClientRect();
+    const next = { x: text.left - bar.left, y: row.bottom - bar.bottom, width: text.width };
     const previous = indicatorPosition.current;
-    if (previous && Math.abs(previous.x - next.x) < .1 && Math.abs(previous.width - next.width) < .1) return;
+    if (previous && Math.abs(previous.x - next.x) < .1 && Math.abs(previous.y - next.y) < .1
+      && Math.abs(previous.width - next.width) < .1) return;
     if (!previous || !animate) indicator.style.transition = "none";
-    indicator.style.transform = `translateX(${next.x}px) scaleX(${next.width})`;
+    indicator.style.transform = `translate(${next.x}px, ${next.y}px) scaleX(${next.width})`;
     indicator.style.visibility = "visible";
     if (!previous || !animate) {
       // Commit initial/font/viewport alignment without a sweep from the old layout.
@@ -32,6 +35,19 @@ export function SiteHeader() {
   }, []);
 
   useLayoutEffect(() => positionIndicator(true), [active, positionIndicator]);
+  // Publish the header's real height for scroll offsets and the slide height; it grows when the links wrap.
+  const headerRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const root = document.documentElement;
+    const observer = new ResizeObserver(() => root.style.setProperty("--header-offset", `${header.offsetHeight}px`));
+    observer.observe(header);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--header-offset");
+    };
+  }, []);
   useLayoutEffect(() => {
     const links = linksRef.current;
     if (!links) return;
@@ -42,7 +58,7 @@ export function SiteHeader() {
   }, [positionIndicator]);
 
   return (
-    <header className="site-header">
+    <header className="site-header" ref={headerRef}>
       <nav className="nav-bar page-width" aria-label="Primary">
         <a className="logo" href="#home" aria-label="Floodwall home">
           <BrandMark />

@@ -46,7 +46,9 @@
   font-size: var(--text-sm);
   font-weight: 600;
 }
-.hero-link:hover { text-decoration: underline; }
+@media (hover: hover) and (pointer: fine) {
+  .hero-link:hover { text-decoration: underline; }
+}
 .hero-diagram {
   min-width: 0;
   width: 100%;
@@ -111,7 +113,7 @@
 .diagram-title-block > div { min-width: 0; padding: 12px; background: var(--paper); }
 .diagram-hold-block { grid-column: 1 / -1; }
 .diagram-title-block dt { color: var(--muted); font: 500 var(--label-size)/1.4 var(--mono); text-transform: uppercase; letter-spacing: var(--label-tracking); overflow-wrap: anywhere; }
-.diagram-title-block dd { margin: 6px 0 0; color: var(--ink); font-size: 18px; font-weight: 550; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.diagram-title-block dd { margin: 6px 0 0; color: var(--ink); font-size: var(--text-lg); font-weight: 550; line-height: 1.2; font-variant-numeric: tabular-nums; }
 /* Until CountUp takes over the prerendered figures, keep them hidden so they never flash before counting;
    if the script never runs, they appear after 2.5s. */
 :root[data-count-up="pending"] .count-up { animation: count-up-fallback 0s 2.5s both; }
@@ -120,14 +122,14 @@
 .diagram-title-block .diagram-stat,
 .diagram-hold-block dd > span:first-child { font-family: var(--mono); font-weight: 500; letter-spacing: -.02em; font-variant-numeric: tabular-nums slashed-zero; }
 .diagram-hold-block dd { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.diagram-title-block .diagram-hold-instruction { color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.5; }
+.diagram-title-block .diagram-hold-instruction { color: var(--muted); font-size: var(--label-size); font-weight: 400; line-height: 1.5; }
 @media (max-width: 1000px) {
   .hero-content { grid-template-columns: .85fr 1.15fr; gap: 24px; }
   .hero-actions { gap: 12px; }
 }
 @media (max-width: 760px) {
   .hero-content { grid-template-columns: 1fr; gap: 0; }
-  .hero-diagram { order: -1; max-width: none; justify-self: stretch; }
+  .hero-diagram { max-width: none; justify-self: stretch; }
   .hero-intro { padding-block: 32px 0; }
   .hero-content h1 { max-width: 540px; font-size: clamp(34px, 5.6vw, 44px); }
   .hero-lead { max-width: 58ch; }
@@ -136,24 +138,17 @@
   .diagram-title-block > div { padding: 10px 8px; }
   .diagram-title-block { grid-template-columns: minmax(min-content, .9fr) minmax(min-content, 1.2fr) minmax(min-content, .9fr); }
   .diagram-title-block dt { font-size: 10px; letter-spacing: .06em; }
-  .diagram-caption { font-size: 11px; }
+  .diagram-caption { font-size: var(--label-size); }
 }
 
-.diagram-scene { position: relative; }
-.diagram-labels { position: absolute; inset: 0; pointer-events: none; }
-.diagram-labels > span {
-  position: absolute;
-  transform: translate(-50%, -50%);
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.25;
-  text-align: center;
-  white-space: pre;
-  text-transform: uppercase;
-  width: max-content;
+.diagram-scene { position: relative; container-type: inline-size; }
+/* Reserve the portrait frame before the illustration mounts, at the width where it turns portrait
+   (NARROW_FIGURE in IsometricDiagram.tsx). */
+@container (width < 580px) {
+  .isometric-stage[data-hairline="processing-line"] { aspect-ratio: 300 / 305; }
 }
-.diagram-breadcrumb { position: relative; min-width: 0; padding: 8px; isolation: isolate; }
+/* 4px plus each label's 8px puts the stage text on the title block's and legend's 12px edge. */
+.diagram-breadcrumb { position: relative; min-width: 0; padding: 8px 4px; isolation: isolate; }
 .diagram-stage-highlight {
   position: absolute;
   top: 0;
@@ -164,7 +159,11 @@
   background: var(--canvas);
   visibility: hidden;
   pointer-events: none;
-  transition: transform 260ms cubic-bezier(.25, 1, .5, 1);
+  transition: transform var(--motion-move) var(--ease-out);
+}
+/* Forced colours drop backgrounds, so the current stage's box is outlined instead. */
+@media (forced-colors: active) {
+  .diagram-stage-highlight { outline: 1px solid CanvasText; outline-offset: -1px; }
 }
 .diagram-stages {
   position: relative;
@@ -199,8 +198,7 @@ button.diagram-stage-label:focus-visible { outline-offset: 2px; }
   color: var(--bridge);
   font-weight: 650;
 }
-.diagram-note { margin: 0; padding: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; line-height: var(--leading-body); }
-@media (max-width: 500px) { .diagram-labels > span { font-size: 9px; } }
+.diagram-note { margin: 0; padding: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: var(--text-xs); line-height: var(--leading-body); }
 
 .isometric-stage .platform-side { fill: var(--platform-side); stroke: none; }
 .isometric-stage .platform-top { fill: var(--platform-top); stroke: var(--platform-edge); stroke-width: 1.2; }
@@ -214,14 +212,12 @@ button.diagram-stage-label:focus-visible { outline-offset: 2px; }
 .isometric-stage .production-box .lo,
 .isometric-stage .recorded-intent .lo { stroke: var(--production-detail); stroke-width: .55; }
 .isometric-stage .production-check { stroke: var(--production-mark); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.isometric-stage .production-record { stroke: var(--production-mark); stroke-width: 1.05; stroke-linecap: round; stroke-linejoin: round; }
 .isometric-stage[data-hairline="processing-line"] .production-box .sil,
 .isometric-stage[data-hairline="processing-line"] .recorded-intent .sil { stroke-width: 1.25; }
 /* Dry ground: a low pad whose edge reads clearly against the deck. */
 .isometric-stage .production-destination .sil { fill: var(--paper); stroke: var(--drawing-edge); stroke-width: 1.4; }
 .isometric-stage .production-destination .lo { stroke: var(--drawing-mid); stroke-width: .7; }
 .isometric-stage[data-hairline="processing-line"] .production-check { stroke-width: 1.9; }
-.isometric-stage[data-hairline="processing-line"] .production-record { stroke-width: .85; }
 .isometric-stage .guide-rail { stroke: var(--guide-rail); stroke-width: .65; stroke-linecap: round; stroke-linejoin: round; }
 .isometric-stage .held-intent .sil,
 .isometric-stage .deferred-intent .sil { fill: var(--hold-fill); stroke: var(--hold-edge); stroke-width: 1.5; }
@@ -229,7 +225,7 @@ button.diagram-stage-label:focus-visible { outline-offset: 2px; }
 .isometric-stage .deferred-intent .lo { stroke: var(--hold-detail); stroke-width: .55; }
 .isometric-stage[data-hairline="processing-line"] .held-intent .sil,
 .isometric-stage[data-hairline="processing-line"] .deferred-intent .sil { stroke-width: 1.2; }
-.isometric-stage [data-flow-route] .sil { transition: fill 260ms ease-out, stroke 260ms ease-out; }
+.isometric-stage [data-flow-route] .sil { transition: fill var(--motion-move) var(--ease-out), stroke var(--motion-move) var(--ease-out); }
 @media (prefers-reduced-motion: reduce) {
   .isometric-stage [data-flow-route] .sil { transition: none; }
 }
@@ -273,12 +269,12 @@ button.diagram-stage-label:focus-visible { outline-offset: 2px; }
   font-family: var(--mono);
   font-weight: 500;
   letter-spacing: .08em;
-  transition: fill 260ms ease-out;
+  transition: fill var(--motion-move) var(--ease-out);
 }
 .isometric-stage .callout .callout-index,
 .isometric-stage .callout .callout-sub { fill: var(--zone-secondary); }
-.isometric-stage .callout-leader { stroke: var(--drawing-lo); stroke-width: .75; transition: stroke 260ms ease-out; }
-.isometric-stage .callout-dot { fill: var(--paper); stroke: var(--drawing-edge); stroke-width: 1; transition: fill 260ms ease-out, stroke 260ms ease-out; }
+.isometric-stage .callout-leader { stroke: var(--drawing-lo); stroke-width: .75; transition: stroke var(--motion-move) var(--ease-out); }
+.isometric-stage .callout-dot { fill: var(--paper); stroke: var(--drawing-edge); stroke-width: 1; transition: fill var(--motion-move) var(--ease-out), stroke var(--motion-move) var(--ease-out); }
 /* The current stage takes the footer bridge's vermilion: its callout, its station and its breadcrumb. */
 .isometric-stage .callout.is-active text,
 .isometric-stage .callout.is-active .callout-index { fill: var(--bridge); }
@@ -296,8 +292,6 @@ button.diagram-stage-label:focus-visible { outline-offset: 2px; }
 
 @media (max-width: 600px) {
   .hero { --hero-inset: 16px; }
-  /* Reserve the portrait frame before the illustration mounts. */
-  .isometric-stage[data-hairline="processing-line"] { aspect-ratio: 300 / 305; }
   .hero-diagram .diagram-scene { width: 100%; margin-inline: 0; }
 }
 
@@ -305,8 +299,6 @@ button.diagram-stage-label:focus-visible { outline-offset: 2px; }
 .isometric-stage .is-recording .sil,
 .isometric-stage .ledger-recording .sil { stroke: var(--ink); stroke-width: 1.6; }
 .isometric-stage .ledger-chain-link { stroke-width: 1.35; }
-.isometric-stage .ledger-chain-link.is-appending { stroke: var(--ink); stroke-width: 2; }
-.isometric-stage .ledger-write-link { stroke: var(--ink); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 
 @media (min-width: 761px) {
   .hero-content {

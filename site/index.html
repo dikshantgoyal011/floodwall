@@ -14,11 +14,19 @@
     <link rel="icon" href="/favicon/floodwall-search-icon-96.png" type="image/png" sizes="96x96" />
     <link rel="icon" href="/favicon/floodwall-search-icon-192.png" type="image/png" sizes="192x192" />
     <link rel="icon" href="/favicon/floodwall-search-icon-256.png" type="image/png" sizes="256x256" />
+    <link rel="icon" href="/favicon/floodwall-browser-light-16.png" type="image/png" sizes="16x16" media="(prefers-color-scheme: light)" />
+    <link rel="icon" href="/favicon/floodwall-browser-dark-16.png" type="image/png" sizes="16x16" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="/favicon/floodwall-browser-light-32.png" type="image/png" sizes="32x32" media="(prefers-color-scheme: light)" />
+    <link rel="icon" href="/favicon/floodwall-browser-dark-32.png" type="image/png" sizes="32x32" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="/favicon/floodwall-browser-light-48.png" type="image/png" sizes="48x48" media="(prefers-color-scheme: light)" />
+    <link rel="icon" href="/favicon/floodwall-browser-dark-48.png" type="image/png" sizes="48x48" media="(prefers-color-scheme: dark)" />
     <link rel="icon" href="/favicon/floodwall-browser-light-64.png" type="image/png" sizes="64x64" media="(prefers-color-scheme: light)" />
     <link rel="icon" href="/favicon/floodwall-browser-dark-64.png" type="image/png" sizes="64x64" media="(prefers-color-scheme: dark)" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any" />
     <link rel="icon" href="/favicon/floodwall-browser-light.svg" type="image/svg+xml" sizes="any" media="(prefers-color-scheme: light)" />
     <link rel="icon" href="/favicon/floodwall-browser-dark.svg" type="image/svg+xml" sizes="any" media="(prefers-color-scheme: dark)" />
+    <link rel="apple-touch-icon" href="/favicon/floodwall-apple-touch-icon-152.png" sizes="152x152" />
+    <link rel="apple-touch-icon" href="/favicon/floodwall-apple-touch-icon-167.png" sizes="167x167" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />
     <link rel="mask-icon" href="/favicon/floodwall-mask-icon.svg" color="#171717" />
     <link rel="manifest" href="/site.webmanifest" />
@@ -29,12 +37,12 @@
     <noscript>
       <p class="noscript-note page-width">
         The diagram and the waitlist form need JavaScript. To join the early-access waitlist, use the
-        <a href="https://tally.so/r/6DJeoP">Floodwall early access form on Tally</a>.
+        <a href="%WAITLIST_FORM_URL%">Floodwall early access form on Tally</a>.
       </p>
     </noscript>
     <div id="root"></div>
-    <script src="/hairline/kernel.js"></script>
-    <script src="/hairline/registry.js"></script>
+    <script src="/hairline/kernel.js?v=%HAIRLINE_VERSION%"></script>
+    <script src="/hairline/registry.js?v=%HAIRLINE_VERSION%"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

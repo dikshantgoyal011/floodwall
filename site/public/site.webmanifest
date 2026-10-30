@@ -1,7 +1,7 @@
 {
   "name": "Floodwall",
   "short_name": "Floodwall",
-  "description": "A Rust control plane for high-volume, agent-driven DevOps: admission control, policy gates, and a tamper-evident decision ledger.",
+  "description": "A Rust control plane for high-volume, agent-driven DevOps: admission control, policy gates that admit, defer or reject each intent, and a tamper-evident ledger.",
   "start_url": "/",
   "scope": "/",
   "display": "browser",

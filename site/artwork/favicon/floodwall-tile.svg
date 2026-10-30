@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <style>.m{stroke:#ffffff}.f{stroke:#ec7a68}</style>
+  <style>.m,.f{stroke:#ffffff}</style>
   <rect width="64" height="64" fill="#171717"/>
   <g transform="translate(32 32) scale(.72) translate(-32 -32)" fill="none" stroke-width="5" stroke-linecap="round"><rect class="m" x="7" y="7" width="50" height="50" rx="13"/><path class="m" d="M32 11v42M14 32h17M33 32h17"/><path class="f" d="M19 48c6-12 6-20 0-32M45 16c-6 12-6 20 0 32"/></g>
 </svg>

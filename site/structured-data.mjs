@@ -6,7 +6,7 @@ export const SITE_URL = "https://floodwall.ai/";
 export const SITE_NAME = "Floodwall";
 export const PAGE_TITLE = "Floodwall | Policy Gates for Agent-Driven DevOps";
 export const PAGE_DESCRIPTION =
-  "A Rust control plane for high-volume, agent-driven DevOps: admission control, policy gates, and a tamper-evident decision ledger.";
+  "A Rust control plane for high-volume, agent-driven DevOps: admission control, policy gates that admit, defer or reject each intent, and a tamper-evident ledger.";
 export const SHARE_IMAGE = {
   url: `${SITE_URL}og/floodwall.png`,
   width: 1200,
@@ -31,6 +31,8 @@ export function structuredData(crate) {
         "@id": `${ERP_AI}#organization`,
         name: "ERP•AI",
         url: ERP_AI,
+        // ERP•AI's own stable 512px search icon (its JSON-LD logo URL is release-hashed).
+        logo: { "@type": "ImageObject", url: `${ERP_AI}assets/images/erp-ai-search-icon-512.png`, width: 512, height: 512 },
         sameAs: ["https://github.com/erphq"],
       },
       {
@@ -92,6 +94,7 @@ export function inlineJson(value) {
  * The head tags for link previews and search: description, canonical, Open Graph,
  * Twitter card and the JSON-LD graph, as Vite `HtmlTagDescriptor`s.
  * @param {ReturnType<typeof import("./crate-stats.mjs").readCrateFacts>} crate
+ * @returns {import("vite").HtmlTagDescriptor[]}
  */
 export function headTags(crate) {
   const meta = (attrs) => ({ tag: "meta", attrs, injectTo: "head" });

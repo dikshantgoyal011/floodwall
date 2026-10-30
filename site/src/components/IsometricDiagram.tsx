@@ -1,21 +1,23 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { PauseIcon, PlayIcon } from "@hugeicons/core-free-icons";
 import { Icon } from "./Icon";
 import { StageBreadcrumb } from "./StageBreadcrumb";
 import { CountUp } from "./CountUp";
-import { useMediaQuery } from "../hooks";
 
 export type FigureName = "processing-line" | "control-stack";
+
+/** Below this stage width (px) the processing line draws its portrait layout; hero.css mirrors it. */
+const NARROW_FIGURE = 580;
 type Tour = { stop(): void };
 type HoldState = { count: number; available: number; busy: boolean; paused: boolean; completed: number; point: [number, number]; frame: { x: number; y: number; width: number; height: number } };
-type FigureHandle = { release?(): void; set(value: number): void; destroy(): void; play?(): void; setPaused?(paused: boolean): void; pin?(stage: string | null): void };
+type HoldSnapshot = { held: number; completed: number };
+type FigureHandle = { snapshot?(): HoldSnapshot; release?(): void; set(value: number): void; destroy(): void; play?(): void; setPaused?(paused: boolean): void; pin?(stage: string | null): void };
 type Figure = {
   name: FigureName;
   means: string;
   range: [number, number, number];
   tour: ([number, number] | null)[];
-  labels?: { text: string; x: number; y: number }[];
-  mount(context: { stage: HTMLElement; svg: SVGSVGElement; onStageChange?(stage: string): void; onHoldChange?(state: HoldState): void }, value: number): FigureHandle;
+  mount(context: { stage: HTMLElement; svg: SVGSVGElement; narrow?: boolean; resume?: HoldSnapshot; onStageChange?(stage: string): void; onHoldChange?(state: HoldState): void }, value: number): FigureHandle;
 };
 
 declare global {
@@ -36,8 +38,19 @@ const STAGES = {
 };
 
 export function IsometricDiagram({ variant, stats }: { variant: FigureName; stats: readonly { value: string | number; label: string }[] }) {
-  const mobileLayout = useMediaQuery("(max-width: 600px)");
   const stageRef = useRef<HTMLDivElement>(null);
+  // The figure's layout follows its own rendered width (see processing-line.js); the prerendered
+  // HTML and the hydrating render assume the wide layout, then this measures before first paint.
+  const [narrow, setNarrow] = useState(false);
+  useLayoutEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const measure = () => setNarrow(stage.getBoundingClientRect().width < NARROW_FIGURE);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, []);
   const playRef = useRef<() => void>(() => {});
   const releaseRef = useRef<() => void>(() => {});
   const [hold, setHold] = useState<HoldState | null>(null);
@@ -47,36 +60,42 @@ export function IsometricDiagram({ variant, stats }: { variant: FigureName; stat
   const [paused, setPaused] = useState(false);
   const continuous = variant === "processing-line";
   const [ready, setReady] = useState(false);
-  const [labels, setLabels] = useState<NonNullable<Figure["labels"]>>([]);
   const [failed, setFailed] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(false);
   const [activeStage, setActiveStage] = useState("");
   const [pinned, setPinned] = useState<string | null>(null);
   const pinRef = useRef<(stage: string | null) => void>(() => {});
+  const pinnedRef = useRef<string | null>(null);
+  // Crossing NARROW_FIGURE rebuilds the figure for the other layout; this carries its hold queue,
+  // pinned stage and announcements over, so a resize or rotation loses nothing.
+  const carriedRef = useRef<{ variant: FigureName; hold?: HoldSnapshot } | null>(null);
   const stages = STAGES[variant];
   const playbackLabel = reducedMotion ? "Animation disabled for reduced motion"
     : continuous ? paused ? "Resume diagram animation" : "Pause diagram animation" : "Play diagram animation";
   const playbackTooltip = reducedMotion ? "Animation disabled for reduced motion"
-    : continuous ? paused ? "Play" : "Pause" : "Play";
+    : continuous ? paused ? "Resume" : "Pause" : "Play";
 
   useEffect(() => {
     let disposed = false;
     let cleanup = () => {};
+    const carried = carriedRef.current?.variant === variant ? carriedRef.current : null;
+    carriedRef.current = { variant };
     setReady(false);
     setFailed(false);
-    setActiveStage("");
-    setPinned(null);
-    setHold(null);
-    setLabels([]);
-    setReleaseAnnouncement("");
+    if (!carried) {
+      setActiveStage("");
+      setPinned(null);
+      pinnedRef.current = null;
+      setHold(null);
+      setReleaseAnnouncement("");
+    }
 
     async function mount() {
-      await import(/* @vite-ignore */ `/hairline/${variant}.js`);
+      await import(/* @vite-ignore */ `/hairline/${variant}.js?v=${__HAIRLINE_VERSION__}`);
       if (disposed || !stageRef.current) return;
       const figure = window.floodwallFigures[variant];
       if (!figure) throw new Error("Figure did not register");
       const stops = figure.tour;
-      setLabels(figure.labels ?? []);
       const stage = stageRef.current;
       const { HL } = window;
       HL.inject(document);
@@ -87,8 +106,9 @@ export function IsometricDiagram({ variant, stats }: { variant: FigureName; stat
       let observer: IntersectionObserver | undefined;
       let visible = false;
       let started = false;
-      let completed = 0;
+      let completed = carried?.hold?.completed ?? 0;
       cleanup = () => {
+        carriedRef.current = { variant, hold: handle?.snapshot?.() };
         observer?.disconnect();
         media.removeEventListener("change", syncMotion);
         tour?.stop();
@@ -112,7 +132,7 @@ export function IsometricDiagram({ variant, stats }: { variant: FigureName; stat
       syncMotion();
       media.addEventListener("change", syncMotion);
       svg = HL.mk("svg", { viewBox: "0 0 400 320", "aria-hidden": "true" }, stage);
-      handle = figure.mount({ stage, svg,
+      handle = figure.mount({ stage, svg, narrow, resume: carried?.hold,
         onStageChange: stage => { if (!disposed) setActiveStage(stage); },
         onHoldChange: state => {
           if (disposed) return;
@@ -123,6 +143,7 @@ export function IsometricDiagram({ variant, stats }: { variant: FigureName; stat
       handle.setPaused?.(media.matches || pausedRef.current);
       releaseRef.current = () => handle?.release?.();
       pinRef.current = stage => handle?.pin?.(stage);
+      if (pinnedRef.current) handle.pin?.(pinnedRef.current);
       pauseRef.current = (paused) => handle?.setPaused?.(media.matches || paused);
       function play() {
         tour?.stop();
@@ -145,10 +166,10 @@ export function IsometricDiagram({ variant, stats }: { variant: FigureName; stat
     }
     mount().catch(() => {
       cleanup();
-      if (!disposed) { setHold(null); setLabels([]); setFailed(true); }
+      if (!disposed) { setHold(null); setFailed(true); }
     });
     return () => { disposed = true; cleanup(); };
-  }, [variant, mobileLayout]);
+  }, [variant, narrow]);
 
   return (
     <figure className="hero-diagram">
@@ -162,9 +183,6 @@ export function IsometricDiagram({ variant, stats }: { variant: FigureName; stat
           ? "A flood of intents passes through admission and the scheduler to the policy gate. The gate sends deferred intents to hold, where they wait until a person presses release and then pass the gate. Admitted intents continue through the ledger to dry ground: production. Checked, recorded changes accumulate there as green boxes."
           : "Exploded isometric control plane. Admission, policy, and ledger layers separate to reveal how they fit together."}
       />
-      <div className="diagram-labels" aria-hidden="true">
-        {labels.map(label => <span key={label.text} style={{left: `${label.x / 4}%`, top: `${label.y / 3.2}%`}}>{label.text}</span>)}
-      </div>
       {continuous && hold && <button type="button" className="hold-release-control"
         style={{ left: `${(hold.point[0] - hold.frame.x) / hold.frame.width * 100}%`, top: `${(hold.point[1] - hold.frame.y) / hold.frame.height * 100}%` }}
         // Busy, paused and empty are passing states: aria-disabled keeps focus on the button through them.
@@ -179,22 +197,25 @@ export function IsometricDiagram({ variant, stats }: { variant: FigureName; stat
       </div>
       <figcaption className="diagram-drawing-block">
       {failed && <p className="diagram-error" role="alert">The diagram could not load. Reload the page to try again.</p>}
-      <dl className="diagram-title-block" data-has-hold={continuous} aria-label="Current crate and queue state">
-        {continuous && <div className="diagram-hold-block">
-          <dt>On hold</dt>
-          <dd>
-            <span>{hold?.count ?? 0}</span>
-            <span className="diagram-hold-instruction">{hold?.busy ? "Recording and delivering" : hold && hold.completed > 0 ? `${hold.completed} released to production` : hold?.count === 0 ? "Incoming intents continue" : hold?.paused ? "Resume to release held intents" : `Release ${hold?.available ?? 2} held intents`}</span>
-          </dd>
-        </div>}
-        {stats.map(({ value, label }) => <div key={label}><dt>{label}</dt><dd className="diagram-stat"><CountUp value={value} /></dd></div>)}
-      </dl>
+      <div role="group" aria-label="Current crate and queue state">
+        <dl className="diagram-title-block" data-has-hold={continuous}>
+          {continuous && <div className="diagram-hold-block">
+            <dt>On hold</dt>
+            <dd>
+              <span>{hold?.count ?? 0}</span>
+              <span className="diagram-hold-instruction">{hold?.busy ? "Recording and delivering" : hold && hold.completed > 0 ? `${hold.completed} released to production` : hold?.count === 0 ? "Incoming intents continue" : !hold ? "Deferred intents wait here" : hold.paused ? "Resume to release held intents" : `Release ${hold.available} held intents`}</span>
+            </dd>
+          </div>}
+          {stats.map(({ value, label }) => <div key={label}><dt>{label}</dt><dd className="diagram-stat"><CountUp value={value} /></dd></div>)}
+        </dl>
+      </div>
       <p className="sr-only" role="status">{releaseAnnouncement}</p>
       <div className="diagram-caption">
         <StageBreadcrumb stages={stages} activeStage={pinned ?? activeStage} paused={paused || reducedMotion}
           pinned={pinned ?? undefined} onSelect={continuous && ready && !failed ? stage => {
             const next = pinned === stage ? null : stage;
             setPinned(next);
+            pinnedRef.current = next;
             pinRef.current(next);
           } : undefined} />
           <button type="button" className="diagram-motion-control" disabled={!ready || failed || reducedMotion} onClick={() => {

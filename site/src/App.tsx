@@ -1,4 +1,4 @@
-import { useCenteredSectionLinks, useSectionReveal } from "./hooks";
+import { useSectionLinks, useSectionReveal } from "./hooks";
 import { GateSection } from "./sections/GateSection";
 import { Hero } from "./sections/Hero";
 import { LedgerSection } from "./sections/LedgerSection";
@@ -9,7 +9,7 @@ import { SiteHeader } from "./sections/SiteHeader";
 import { WaitlistSection } from "./sections/WaitlistSection";
 
 export default function App() {
-  useCenteredSectionLinks();
+  useSectionLinks();
   useSectionReveal();
 
   return (

@@ -3,7 +3,7 @@
 - Source: user-provided SVG attachment containing a 1672 × 941 PNG illustration of the Golden Gate Bridge and San Francisco waterfront.
 - Method: built-in image generation, style-transfer edit; two passes. The attached composition was preserved and reformatted as a panoramic print.
 - Master: `footer-sf-intaglio-master.png` (2164 × 727, transparent).
-- Shipping asset: `../public/footer-sf-intaglio.webp` (2164 × 727, transparent, WebP quality 0.9; approximately 610 KiB).
+- Former shipping asset: `../public/footer-sf-intaglio.webp` (2164 × 727, transparent, WebP quality 0.9; approximately 610 KiB). The current footer no longer references it, so it was removed from `public/`; this master remains the source.
 - Palette: white paper, charcoal/gray architecture and water, vermilion bridge. The bridge accent is explicitly user requested and is separate from the interface's verdict colors.
 - Layout: full-width footer background behind the foreground drawing grid, bottom-aligned above the credits at its natural aspect ratio. No image cropping or distortion. Decorative image with empty alt text, reserved dimensions and lazy loading. Small white link-label backings preserve text contrast where the skyline passes behind navigation.
 - Created: 2026-10-29.

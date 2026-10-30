@@ -7,7 +7,13 @@ cd "$(dirname "$0")/.."
 base=${1:?usage: generate-og-image.sh <dev-server-url>}
 base=${base%/}
 still=artwork/og/.diagram.png
-trap 'rm -f "$still"' EXIT
+# Always hand the shared agent-browser session back with normal motion and the default viewport.
+cleanup() {
+  rm -f "$still"
+  agent-browser set media light >/dev/null 2>&1 || true
+  agent-browser set viewport 1280 720 1 >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
 mkdir -p public/og
 
 # The card states the crate's own facts; reading them fails the run if Cargo.toml can't be parsed.
@@ -30,5 +36,4 @@ agent-browser set viewport 1200 630 1 >/dev/null
 agent-browser open "$base/artwork/og/card.html?$query&diagram=/$still" >/dev/null
 agent-browser wait 'body[data-ready="true"]' >/dev/null
 agent-browser screenshot public/og/floodwall.png >/dev/null
-agent-browser set media light >/dev/null
 sips -g pixelWidth -g pixelHeight public/og/floodwall.png | tail -2

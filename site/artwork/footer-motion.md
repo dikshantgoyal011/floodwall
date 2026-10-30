@@ -4,11 +4,11 @@ Created with the built-in image-generation tool on 2026-10-29, using the approve
 
 | Asset | Purpose | Dimensions | Shipping size |
 | --- | --- | --- | --- |
-| `../public/footer-water.webp` | Bridge, skyline and engraved water with stationary boats removed | 2164 × 727 | 522 KB |
+| `../public/footer-water.webp` | Bridge, skyline and engraved water with stationary boats removed; `footer-water-{720,1082,1600}.webp` are its `srcset` widths | 2164 × 727 | 371 KB (60, 125, 239 KB) |
 | `../public/footer-fog.webp` | One transparent fuzzy fog bank, reused for three drifting layers | 1400 × 295 | 123 KB |
-| `../public/footer-boat.webp` | One transparent engraved sailboat, reused at three depth scales | 340 × 458 | 56 KB |
+| `../public/footer-boat.webp` | One transparent engraved sailboat, reused at three depth scales | 170 × 229 | 13 KB |
 
-The full-resolution generated masters are `footer-water-master.png`, `footer-fog-master.png` and `footer-boat-master.png` beside this document. Shipping assets preserve alpha; transparent margins were trimmed from the sprite assets and they were encoded as WebP at quality 0.9. The earlier still print and its master remain available.
+The full-resolution generated masters are `footer-water-master.png`, `footer-fog-master.png` and `footer-boat-master.png` beside this document. Shipping assets preserve alpha; transparent margins were trimmed from the sprite assets and they were encoded as WebP at quality 0.9. The water print and its widths were re-encoded from the master with `cwebp -q 80 -alpha_q 85 -m 6`, and the boat at 170px (about 2.5× its largest drawn size) with `-q 85 -alpha_q 90`. The earlier still print and its master remain available.
 
 ## Motion contract
 

@@ -1,8 +1,10 @@
 import { useEffect } from "react";
 import { SectionHeading } from "../components/SectionHeading";
-import { WAITLIST_EMBED_URL, WAITLIST_FORM_URL } from "../content";
+import { TALLY_ORIGIN, WAITLIST_EMBED_URL, WAITLIST_FORM_URL } from "../content";
 
-const TALLY_SCRIPT_URL = "https://tally.so/widgets/embed.js";
+// Tally's embed sizes the form with iframe-resizer and strips any `sandbox` it finds, so the
+// page's CSP (vite.config.ts) is what limits it: scripts and frames from Tally only.
+const TALLY_SCRIPT_URL = `${TALLY_ORIGIN}/widgets/embed.js`;
 
 declare global {
   interface Window {
@@ -50,6 +52,7 @@ export function WaitlistSection() {
             <iframe
               data-tally-src={WAITLIST_EMBED_URL}
               loading="lazy"
+              referrerPolicy="strict-origin-when-cross-origin"
               width="100%"
               height="620"
               title="Floodwall early access"

@@ -17,18 +17,17 @@ for theme in light dark; do
   done
 done
 
-# Opaque tiles for search results and launchers.
-for size in 16 24 32 48 64 96 128 144 180 192 256 512; do
+# Opaque tiles: 96/192/256 are linked, 512 is the manifest icon, and 16-256 are the ICO's frames.
+for size in 16 24 32 48 64 96 128 192 256 512; do
   render "$tile" "$icons/floodwall-search-icon-$size.png" "$size"
 done
 
-# Home-screen icons; iOS applies its own corner mask, so the tile stays square.
-for size in 152 167 180 192 512; do
-  name=floodwall-apple-touch-icon-$size.png
-  [ "$size" = 180 ] && name=floodwall-apple-touch-icon.png
-  render "$tile" "$icons/$name" "$size"
+# Home-screen icons for iPad (152, 167) and iPhone (180, at the root path iOS also probes); iOS
+# applies its own corner mask, so the tile stays square.
+for size in 152 167; do
+  render "$tile" "$icons/floodwall-apple-touch-icon-$size.png" "$size"
 done
-cp "$icons/floodwall-apple-touch-icon.png" public/apple-touch-icon.png
+render "$tile" public/apple-touch-icon.png 180
 
 # Legacy /favicon.ico for crawlers and old browsers: the tile at seven frame sizes, each stored as
 # PNG (read by every current browser and OS) so the file stays small; a 256px bitmap frame alone is 256 KB.

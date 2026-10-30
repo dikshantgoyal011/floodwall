@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Served for unknown paths, so they answer 404 instead of the home page (a soft 404). -->
+    <meta name="robots" content="noindex" />
+    <title>Page not found | Floodwall</title>
+    <meta name="theme-color" content="#f2f2f2" />
+    <meta name="color-scheme" content="light dark" />
+    <!-- Applies the reader's saved light/dark choice, as on the home page. -->
+    <script src="/theme.js"></script>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any" />
+    <link rel="icon" href="/favicon/floodwall-search-icon-96.png" type="image/png" sizes="96x96" />
+    <style>
+      /* The site's own tokens and fonts, inlined: this page loads without the app bundle. */
+      @font-face { font-family: Geist; font-weight: 100 900; font-display: swap; src: url("/fonts/geist-variable.woff2") format("woff2"); }
+      @font-face { font-family: "Geist Mono"; font-weight: 100 900; font-display: swap; src: url("/fonts/geist-mono-variable.woff2") format("woff2"); }
+      :root { --canvas: #f2f2f2; --paper: #ffffff; --ink: #171717; --muted: #606060; --line: #e5e5e5; }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) { --canvas: #111111; --paper: #1b1b1b; --ink: #f2f2f2; --muted: #b2b2b2; --line: #393939; }
+      }
+      :root[data-theme="dark"] { --canvas: #111111; --paper: #1b1b1b; --ink: #f2f2f2; --muted: #b2b2b2; --line: #393939; }
+      * { box-sizing: border-box; }
+      body {
+        display: grid; place-items: center; min-height: 100svh; margin: 0; padding: 16px;
+        background: var(--canvas); color: var(--ink); font: 16px/1.55 Geist, system-ui, sans-serif;
+      }
+      main { width: min(560px, 100%); border: 1px solid var(--line); background: var(--paper); }
+      .kicker {
+        display: inline-flex; align-items: center; min-height: 28px; margin: 0; padding: 0 16px;
+        border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
+        color: var(--muted); font: 500 11px/1.5 "Geist Mono", ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase;
+      }
+      h1 { margin: 0; padding: 20px 24px 8px; font-size: 32px; font-weight: 350; line-height: 1.08; letter-spacing: -.03em; }
+      h1 strong { font-weight: 650; }
+      p { margin: 0; padding: 0 24px 24px; color: var(--muted); }
+      a { color: var(--ink); font-weight: 600; text-underline-offset: 3px; }
+      a:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="kicker">404</p>
+      <h1>This page is not here. <strong>The wall still is.</strong></h1>
+      <p>The address may be mistyped, or the page has moved. Go to the <a href="/">Floodwall home page</a>.</p>
+    </main>
+  </body>
+</html>

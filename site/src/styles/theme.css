@@ -19,13 +19,18 @@
 
 :root {
   color-scheme: light;
-  --paper: #ffffff;
+  /* Light primitives, also kept by surfaces that stay light in both themes (the waitlist cell). */
+  --light-paper: #ffffff;
+  --light-ink: #171717;
+  --light-muted: #606060;
+  --light-line: #e5e5e5;
+  --paper: var(--light-paper);
   --canvas: #f2f2f2;
   --surface: #f5f5f5;
-  --ink: #171717;
-  --muted: #606060;
-  --line: #e5e5e5;
-  --accent: #171717;
+  --ink: var(--light-ink);
+  --muted: var(--light-muted);
+  --line: var(--light-line);
+  --accent: var(--light-ink);
   --accent-text: #ffffff;
   --accent-hover: #353535;
   --accent-active: #000000;
@@ -84,8 +89,6 @@
   --text-lg: 18px;
   --text-xl: 24px;
   --display-md: clamp(32px, 3.3vw, 48px);
-  --display-lg: clamp(36px, 4.2vw, 60px);
-  --display-xl: clamp(52px, 6.5vw, 96px);
   --leading-body: 1.55;
   /* Small uppercase mono labels share one size and tracking, matching the diagram callouts. */
   --label-size: 11px;
@@ -93,11 +96,18 @@
   --content-width: 1280px;
   --gutter: clamp(20px, 4vw, 64px);
   --header-height: 80px;
+  /* Motion: one curve for everything that moves or recolours; three durations by distance. */
+  --ease-out: cubic-bezier(.25, 1, .5, 1);
+  --motion-fast: 160ms;
+  --motion-move: 260ms;
+  --motion-reveal: 560ms;
   --section-space: clamp(32px, 4vw, 64px);
   --deck-gutter: clamp(12px, 2.2vw, 32px);
   --slide-gap: 24px;
   --slide-radius: 0px;
-  --slide-height: min(780px, calc(100svh - var(--header-height) - 48px));
+  /* The header's laid-out height: --header-height until SiteHeader measures it (taller when the links wrap). */
+  --header-offset: var(--header-height);
+  --slide-height: min(780px, calc(100svh - var(--header-offset) - 48px));
   --radius: 0px;
   font-family: var(--body);
   background: var(--canvas);
@@ -169,7 +179,7 @@ html, body { overscroll-behavior: auto; }
 
 html {
   scroll-behavior: smooth;
-  scroll-padding-top: var(--header-height);
+  scroll-padding-top: var(--header-offset);
   /* Native sizing keeps macOS overlay and Windows/Linux classic scrollbars; only the colours are ours.
      color-scheme (set per theme above and by theme.js) picks the native dark scrollbar chrome. */
   scrollbar-width: thin;
@@ -266,17 +276,10 @@ h1, h2 {
 
 p { text-wrap: pretty; }
 
-.kicker {
-  color: var(--muted);
-  font-size: var(--text-sm);
-  font-weight: 500;
-}
-
 .display-heading {
-  font-size: var(--display-lg);
-  font-weight: 550;
+  font-size: var(--display-md);
   letter-spacing: -.04em;
-  line-height: 1.05;
+  line-height: 1.08;
 }
 
 .staccato-heading { font-weight: 350; }
@@ -322,11 +325,12 @@ p { text-wrap: pretty; }
   color: var(--accent-text);
   font-weight: 500;
   white-space: nowrap;
-  transition: background 160ms ease;
+  transition: background var(--motion-fast) var(--ease-out);
 }
 
-.button:hover {
-  background: var(--accent-hover);
+/* Hover styling belongs to hovering pointers; on touch a tap would leave it stuck on. */
+@media (hover: hover) and (pointer: fine) {
+  .button:hover { background: var(--accent-hover); }
 }
 
 /* The GitHub mark leads the label it names; the trailing arrow keeps the button's wider gap. */
@@ -363,9 +367,6 @@ p { text-wrap: pretty; }
 .ui-icon { flex: none; vertical-align: middle; }
 
 @media (max-width: 700px) {
-  :root {
-    --header-height: 128px;
-  }
   .logo {
     font-size: 23px;
   }

@@ -7,8 +7,11 @@
 const { Cam, facing, fit, proj, rrect, prism, fillet, poly, open, seg, solid, put, mk,
   pointer, register, disposer, reducedMotion, bezier, tween, tset, tval } = HL;
 
-function mount({stage,svg,onStageChange=()=>{},onHoldChange=()=>{}}) {
-  const mobile=matchMedia("(max-width: 600px)").matches;
+// Below this rendered width the main line's header-row callouts cannot reach label size without
+// colliding, so the drawing turns portrait with a label column (IsometricDiagram passes `narrow`).
+// `resume` carries the hold queue across a rebuild for the other layout; snapshot() supplies it.
+function mount({stage,svg,narrow=stage.getBoundingClientRect().width<580,resume,onStageChange=()=>{},onHoldChange=()=>{}}) {
+  const mobile=narrow;
   const bag=disposer(), C=mobile?Cam(90,.62,1):Cam(45,.5,1);
   fit(C,[[0,0,0]],200,160);
   const P=proj(C), front=facing(C), origin=P(0,0,0), Z=8;
@@ -233,9 +236,13 @@ function mount({stage,svg,onStageChange=()=>{},onHoldChange=()=>{}}) {
 
   // Callouts attach at the midpoint of a station's edge, never a corner. A leader is a polyline
   // from that point; the label sits as a flag above its end, beside it, or below it.
+  // Labels are sized in screen pixels, not drawing units: the shared 11px label (10px in the portrait
+  // column), capped where the wide header row would start to collide.
+  const LABEL_PX=mobile?10:11, LABEL_MAX=mobile?Infinity:6.6;
+  let labelSize=mobile?6.4:5.6;
   const callouts=new Map();
   function callout(name,index,label,anchor,path,align,sub) {
-    const a=P(...anchor),b=path.at(-1),g=mk("g",{class:"callout"},notes),size=mobile?6.4:5.6;
+    const a=P(...anchor),b=path.at(-1),g=mk("g",{class:"callout"},notes),size=labelSize;
     mk("path",{d:open([a,...path]),class:"nf callout-leader"},g);
     mk("ellipse",{cx:a[0].toFixed(2),cy:a[1].toFixed(2),rx:"1.3",ry:"1.3",class:"callout-dot"},g);
     const place={flag:[b[0],b[1]-3,"start","auto"],right:[b[0]+3,b[1],"start","central"],
@@ -251,11 +258,13 @@ function mount({stage,svg,onStageChange=()=>{},onHoldChange=()=>{}}) {
     }
     callouts.set(name,g);
   }
+  function drawCallouts() {
+  notes.replaceChildren();callouts.clear();
   if(mobile) {
     // One aligned column to the right of the portrait drawing.
     const column=Math.max(...bank.map(q=>P(...q,Z+18)[0]))+8;
     const aside=(name,index,label,q,sub)=>callout(name,index,label,q,[[column,P(...q)[1]]],"right",sub);
-    aside("intents","01","Flood of intents",[-138,-B,Z]);
+    aside("intents","01","Intents",[-138,-B,Z],"Flood");
     aside("admission","02","Admission",[-45,-16,Z+3]);
     aside("scheduler","03","Scheduler",[2,-21,Z+2.5]);
     aside("gate","04","Gate",[104,-26,Z+21]);
@@ -266,7 +275,7 @@ function mount({stage,svg,onStageChange=()=>{},onHoldChange=()=>{}}) {
     // The main line's labels share one header row; the leaders rise to it as flags.
     const row=Math.min(P(-172,0,Z)[1],P(104,-28,Z+48)[1])-18;
     const flag=(name,index,label,q,sub)=>callout(name,index,label,q,[[P(...q)[0],row]],"flag",sub);
-    flag("intents","01","Flood of intents",[-172,0,Z]);
+    flag("intents","01","Intents",[-172,0,Z],"Flood");
     flag("admission","02","Admission",[-45,-16,Z+3]);
     flag("gate","04","Gate",[104,-28,Z+48]);
     flag("ledger","05","Ledger",[157,-26,Z+33]);
@@ -276,6 +285,8 @@ function mount({stage,svg,onStageChange=()=>{},onHoldChange=()=>{}}) {
     callout("scheduler","03","Scheduler",[2,W-3,Z+2.5],[[sched[0],sched[1]+18],[sched[0]-22,sched[1]+18]],"left");
     const hold=P(73,132,Z);callout("hold","","Hold",[73,132,Z],[[hold[0],hold[1]+16]],"below");
   }
+  }
+  drawCallouts();
 
   // The cycle: three intents leave the flood and queue at the gate. Two are admitted; the near
   // lane's intent is deferred to the hold bay on one cycle and rejected on the next.
@@ -285,7 +296,7 @@ function mount({stage,svg,onStageChange=()=>{},onHoldChange=()=>{}}) {
     const b=checked(block(intent.w,intent.h,intent.d,{r:1.2,b:.5,cls:"cycle-intent"}));
     b.s.sil.classList.add("hi");return {lane,block:b,cycle:-1};
   });
-  let held=4, completed=0, records=0, lastAppend=-Infinity, pullAt=-Infinity, jobs=[];
+  let held=resume?.held??4, completed=resume?.completed??0, records=0, lastAppend=-Infinity, pullAt=-Infinity, jobs=[];
   const rows=yard.rows.map(()=>[]), shipped=[];let turn=0;
   function carton$(row,pos) {
     const b=checked(block(intent.w,intent.h,intent.d,{r:1.2,crease:false,cls:"production-box"}));
@@ -524,15 +535,36 @@ function mount({stage,svg,onStageChange=()=>{},onHoldChange=()=>{}}) {
   if(!mobile)bag.add(pointer(stage,{move:p=>choose(hit([frame.x+p[0]*frame.width/400,frame.y+p[1]*frame.height/320])),leave:()=>choose(null)}));
   bag.add(()=>{svg.replaceChildren();stage.style.removeProperty("aspect-ratio");});
   render();
-  {
+  function fitFrame() {
     const bounds=root.getBBox(),padding=mobile?10:12;
     frame={x:bounds.x-padding,y:bounds.y-padding,width:bounds.width+padding*2,height:bounds.height+padding*2};
     svg.setAttribute("viewBox",`${frame.x} ${frame.y} ${frame.width} ${frame.height}`);
     stage.style.aspectRatio=`${frame.width} / ${frame.height}`;
     stage.dataset.frame=`${frame.width.toFixed(1)}x${frame.height.toFixed(1)}`;
-    holdStatus="";render();
   }
-  return {release,set:()=>{},play:()=>{elapsed=0;render();loop.wake();},setPaused:v=>{paused=v;render();loop.wake();},pin:name=>{pinned=name;choose(name);},destroy:bag.dispose};
+  // Each pass resizes the labels for the current scale; refitting moves the scale a little, so a
+  // couple of passes settle it.
+  let fittedWidth=0;
+  function settleLabels() {
+    const width=svg.getBoundingClientRect().width;
+    if(!width||Math.abs(width-fittedWidth)<.5)return;
+    fittedWidth=width;
+    for(let pass=0;pass<3;pass++) {
+      const next=Math.min(LABEL_MAX,LABEL_PX*frame.width/width);
+      if(Math.abs(next-labelSize)<.02)break;
+      labelSize=next;drawCallouts();render();fitFrame();
+    }
+  }
+  fitFrame();
+  settleLabels();
+  holdStatus="";render();
+  let resizeFrame=0;
+  const resizes=new ResizeObserver(()=>{cancelAnimationFrame(resizeFrame);resizeFrame=requestAnimationFrame(settleLabels);});
+  resizes.observe(stage);
+  bag.add(()=>{resizes.disconnect();cancelAnimationFrame(resizeFrame);});
+  return {release,set:()=>{},play:()=>{elapsed=0;render();loop.wake();},setPaused:v=>{paused=v;render();loop.wake();},pin:name=>{pinned=name;choose(name);},
+    // A release in flight counts as delivered: it would finish before a rebuilt figure could show it.
+    snapshot:()=>({held,completed:completed+jobs.filter(job=>!job.done).length}),destroy:bag.dispose};
 }
 
 hairline({name:"processing-line",means:"Intents pass admission, scheduling, and a policy gate; deferred work waits on hold, while the ledger precedes production.",
