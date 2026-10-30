@@ -290,7 +290,8 @@ function mount({stage,svg,narrow=stage.getBoundingClientRect().width<580,resume,
 
   // The cycle: three intents leave the flood and queue at the gate. Two are admitted; the near
   // lane's intent is deferred to the hold bay on one cycle and rejected on the next.
-  const D=12000, lanes=[-13.5,0,13.5], trayY=[-10,0,10];
+  // INTENTS opens the cycle's closing window, where the flood is the lit stage.
+  const D=12000, INTENTS=9500, lanes=[-13.5,0,13.5], trayY=[-10,0,10];
   const STAMP=[5900,7100], HOP=[7300,8500], ARRIVE=5600, ARCH=157, FRONT=LANE.into;
   const movers=lanes.map((_,lane)=>{
     const b=checked(block(intent.w,intent.h,intent.d,{r:1.2,b:.5,cls:"cycle-intent"}));
@@ -373,10 +374,13 @@ function mount({stage,svg,narrow=stage.getBoundingClientRect().width<580,resume,
   // A release reserves its pass through the gate and its stamp outside the automatic batch,
   // and leaves the arm clear while overflow is arriving. Leaving the bay to the stamp takes 2.7s.
   const LEAD=2700, GATE=1400;
-  function free(s,taken) {
+  function free(s,taken,at=cycleAt) {
     const start=s-LEAD,g=s-GATE;
-    for(let cycle=Math.floor(s/D)-1;cycle<=Math.floor(s/D)+1;cycle++) {
-      const a=cycle*D;
+    const now=Math.floor((s-at)/D);
+    for(let cycle=now-1;cycle<=now+1;cycle++) {
+      // The lead-in before the first cycle sends no intents through the gate.
+      if(cycle<0)continue;
+      const a=at+cycle*D;
       if(s+1400>a+5200&&s-500<a+9400)return false;
       if(g+1600>a+3600&&g<a+5600)return false;
       if(cycle%2===0&&g>a+4200&&start<a+ARRIVE+100)return false;
@@ -401,15 +405,28 @@ function mount({stage,svg,narrow=stage.getBoundingClientRect().width<580,resume,
 
   const stations={admission:[admission],scheduler:[scheduler,...fins],gate:[shutter,crown,...posts],
     hold:[bay],ledger:[beam,head,...arch],production:[pad]};
-  let elapsed=0, paused=false, selected=null, pinned=null, breadcrumb="", holdStatus="";
+  // The cycle keeps its own start on the shared clock, so a replay restarts it at the flood
+  // while releases, the yard and the flood carry on uninterrupted.
+  let elapsed=0, cycleAt=D-INTENTS, paused=false, selected=null, pinned=null, breadcrumb="", holdStatus="";
+  function replay() {
+    // An admitted intent already on its way to production still lands there.
+    movers.forEach(m=>{if(m.claim&&!m.landed){m.landed=true;land(m.claim);}m.cycle=-1;});
+    // A release in flight keeps its reserved pass: the lead-in holds on the flood until the new
+    // cycle clears it.
+    let at=elapsed+D-INTENTS;
+    while(!jobs.every(job=>job.done||free(job.s,[],at)))at+=100;
+    cycleAt=at;
+  }
   function render() {
-    const reduced=reducedMotion(), cycle=Math.floor(elapsed/D), t=reduced?6100:elapsed-cycle*D;
+    const reduced=reducedMotion(), cycle=Math.floor((elapsed-cycleAt)/D), t=reduced?6100:elapsed-cycleAt-cycle*D;
     flood.forEach(f=>{
       const u=reduced?f.phase:((f.phase+elapsed*f.speed/82)%1+1)%1, x=-166+82*(.75*u+.25*(1-(1-u)**2));
       f.block.centre(x,f.l*(width(x)-8)+(reduced?0:.6*Math.sin(elapsed*.0016+f.wave)),Z,reduced?1:Math.min(1,u/.08,(1-u)/.08));
     });
 
     movers.forEach(m=>{
+      // The lead-in before the first cycle shows the flood alone; no intent has left it yet.
+      if(cycle<0){m.block.centre(...plan(m.lane,0).keys[0][1],0);return;}
       if(m.cycle!==cycle){m.cycle=cycle;m.claim=null;m.landed=m.stamped=m.arrived=false;}
       const p=plan(m.lane,cycle),b=m.block;
       let q=track(p.keys,t),opacity=unit((t-p.keys[0][0])/250);
@@ -420,7 +437,7 @@ function mount({stage,svg,narrow=stage.getBoundingClientRect().width<580,resume,
       if(p.outcome==="hold"&&t>=ARRIVE){opacity=0;if(!m.arrived&&!reduced){m.arrived=true;held++;}}
       // Defer/reject decisions append receipts at the gate; admits append at the recording head.
       const receiptAt=p.outcome==="admit"?p.stamp+300:p.outcome==="hold"?4400:4500;
-      if(t>=receiptAt&&!m.stamped&&!reduced){m.stamped=true;appended(cycle*D+receiptAt);}
+      if(t>=receiptAt&&!m.stamped&&!reduced){m.stamped=true;appended(cycleAt+cycle*D+receiptAt);}
       if(p.outcome==="admit") {
         record(b,t-p.stamp-800);
         if(t>=p.stamp+800&&!reduced)m.claim??=claim();
@@ -471,7 +488,7 @@ function mount({stage,svg,narrow=stage.getBoundingClientRect().width<580,resume,
       ...jobs.map(job=>lift(elapsed-job.gate)));
     shutter.at(101.5,-20,Z+lifted*27);
     // The stamp presses while a change sits under it; a new receipt slides onto the chain.
-    const stamps=STAMP.map(s=>cycle*D+s).concat(jobs.map(job=>job.s));
+    const stamps=STAMP.map(s=>cycleAt+cycle*D+s).concat(jobs.map(job=>job.s));
     const live=stamps.find(s=>elapsed>=s&&elapsed<s+800),age=live===undefined?-1:elapsed-live;
     const press=reduced?1:age<0?0:age<180?ease(age/180):age<500?1:1-ease(unit((age-500)/300));
     const headZ=Z+20-press*15.5;
@@ -503,7 +520,7 @@ function mount({stage,svg,narrow=stage.getBoundingClientRect().width<580,resume,
     stage.dataset.heldCount=String(held);
     stage.dataset.ledgerRecords=String(records);
 
-    const phase=reduced?"intents":t<1900?"admission":t<3300?"scheduler":t<5200?"gate":t<7900?"ledger":t<9500?"production":"intents";
+    const phase=reduced?"intents":t<1900?"admission":t<3300?"scheduler":t<5200?"gate":t<7900?"ledger":t<INTENTS?"production":"intents";
     if(stage.dataset.flowPhase!==phase)stage.dataset.flowPhase=phase;
     const current=selected??phase;
     // The current stage, whether the cycle reached it or the reader chose it, carries the bridge red.
@@ -569,7 +586,7 @@ function mount({stage,svg,narrow=stage.getBoundingClientRect().width<580,resume,
   const resizes=new ResizeObserver(()=>{cancelAnimationFrame(resizeFrame);resizeFrame=requestAnimationFrame(settleLabels);});
   resizes.observe(stage);
   bag.add(()=>{resizes.disconnect();cancelAnimationFrame(resizeFrame);});
-  return {release,set:()=>{},play:()=>{elapsed=0;render();loop.wake();},setPaused:v=>{paused=v;render();loop.wake();},pin:name=>{pinned=name;choose(name);},
+  return {release,set:()=>{},play:()=>{replay();render();loop.wake();},setPaused:v=>{paused=v;render();loop.wake();},pin:name=>{pinned=name;choose(name);},
     // A release in flight counts as delivered: it would finish before a rebuilt figure could show it.
     snapshot:()=>({held,completed:completed+jobs.filter(job=>!job.done).length}),destroy:bag.dispose};
 }

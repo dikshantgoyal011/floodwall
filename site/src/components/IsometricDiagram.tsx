@@ -157,9 +157,11 @@ export function IsometricDiagram({ variant, stats }: { variant: FigureName; stat
       playRef.current = play;
       // The kernel pauses its shared frame loop offscreen and settles reduced motion.
       observer = new IntersectionObserver(([entry]) => {
+        const entering = entry.isIntersecting && !visible;
         visible = entry.isIntersecting;
-        // The finite stack tour has no pause handle, so it starts only on request.
-        if (continuous && visible && !started) play();
+        // The finite stack tour has no pause handle, so it starts only on request. The continuous
+        // line restarts at its first stage on every entry, unless the reader paused it.
+        if (continuous && entering && !pausedRef.current) play();
       }, { threshold: 0.5 });
       observer.observe(stage);
       setReady(true);
