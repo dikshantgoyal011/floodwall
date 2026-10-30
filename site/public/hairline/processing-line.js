@@ -522,10 +522,17 @@ function mount({stage,svg,narrow=stage.getBoundingClientRect().width<580,resume,
   const centres={intents:[-125,0,Z],admission:[-45,0,Z+3],scheduler:[2,0,Z+4],gate:[104,0,Z+26],
     hold:[73,96,Z+4],ledger:[ARCH,0,Z+22],production:[234,0,top+6]};
   // A breadcrumb pin holds a station lit; hover previews another and leaving returns to the pin.
+  // A preview also lapses once the pointer has rested for HOVER_REST, so a cursor parked on the
+  // drawing never stalls the cycle.
+  const HOVER_REST=2000;
+  let rest=0;
   function choose(name) {
+    clearTimeout(rest);
+    if(name)rest=setTimeout(()=>choose(null),HOVER_REST);
     selected=name??pinned;
     render();
   }
+  bag.add(()=>clearTimeout(rest));
   function hit([x,y]) {
     let best=null,distance=Infinity;
     for(const [name,q] of Object.entries(centres)){const p=P(...q),d=Math.hypot(x-p[0],y-p[1]);if(d<distance){distance=d;best=name;}}
