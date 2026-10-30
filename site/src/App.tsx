@@ -2,6 +2,7 @@ import { useSectionLinks, useSectionReveal } from "./hooks";
 import { GateSection } from "./sections/GateSection";
 import { Hero } from "./sections/Hero";
 import { LedgerSection } from "./sections/LedgerSection";
+import { LineSection } from "./sections/LineSection";
 import { ModelSection } from "./sections/ModelSection";
 import { RoadmapSection } from "./sections/RoadmapSection";
 import { SiteFooter } from "./sections/SiteFooter";
@@ -18,6 +19,7 @@ export default function App() {
       <SiteHeader />
       <main id="main-content" tabIndex={-1}>
         <Hero />
+        <LineSection />
         <ModelSection />
         <GateSection />
         <LedgerSection />

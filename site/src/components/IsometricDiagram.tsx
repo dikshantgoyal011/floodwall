@@ -172,7 +172,7 @@ export function IsometricDiagram({ variant, stats }: { variant: FigureName; stat
   }, [variant, narrow]);
 
   return (
-    <figure className="hero-diagram">
+    <figure className="line-diagram">
       <div className="diagram-scene">
       <div
         ref={stageRef}

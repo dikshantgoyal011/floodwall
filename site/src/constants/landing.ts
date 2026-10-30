@@ -15,6 +15,7 @@ export type Link = { label: string; href: string };
 /** In-page sections the primary nav links to, in page order. */
 export const NAV_SECTIONS = [
   { id: "home", label: "Home" },
+  { id: "line", label: "Line" },
   { id: "model", label: "Model" },
   { id: "gate", label: "Gate" },
   { id: "ledger", label: "Ledger" },
@@ -109,6 +110,7 @@ export const FOOTER_GROUPS: { title: string; links: Link[] }[] = [
   {
     title: "Explore",
     links: [
+      { label: "Line", href: "#line" },
       { label: "Model", href: "#model" },
       { label: "Gate", href: "#gate" },
       { label: "Ledger", href: "#ledger" },
