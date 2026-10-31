@@ -3,7 +3,8 @@ import { SectionHeading } from "../components/SectionHeading";
 import { TALLY_ORIGIN, WAITLIST_EMBED_URL, WAITLIST_FORM_URL } from "../content";
 
 // Tally's embed sizes the form with iframe-resizer and strips any `sandbox` it finds, so the
-// page's CSP (vite.config.ts) is what limits it: scripts and frames from Tally only.
+// page's CSP (vite.config.ts) is what limits it: scripts and frames from Tally only. The page's
+// CSS cannot reach into the frame; the form's look lives in Tally's Custom CSS (site/tally/custom.css).
 const TALLY_SCRIPT_URL = `${TALLY_ORIGIN}/widgets/embed.js`;
 
 declare global {

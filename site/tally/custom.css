@@ -1,0 +1,101 @@
+/*
+ * Custom CSS for the Tally waitlist form (6DJeoP), embedded in WaitlistSection.
+ * The form renders in a cross-origin iframe, so the page's stylesheets cannot reach it: paste this
+ * file into Tally > form > Settings > Custom CSS (a Tally Pro feature) and republish the form.
+ *
+ * Values mirror site/src/styles/theme.css. The waitlist cell keeps the light tokens in both
+ * themes, so only the light values appear here. Tally's own class names are hashed; these
+ * selectors use only its stable `tally-*` hooks, prefixed with `.tally-app` to outrank them.
+ */
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@100..900&family=Geist+Mono:wght@100..900&display=swap");
+
+.tally-app {
+  --paper: #ffffff;
+  --ink: #171717;
+  --muted: #606060;
+  --line: #e5e5e5;
+  --field-hover: #a3a3a3;
+  --accent-hover: #353535;
+  --accent-active: #000000;
+  --reject: #8a2533;
+  --body: Geist, ui-sans-serif, sans-serif;
+  --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --ease-out: cubic-bezier(.25, 1, .5, 1);
+  --motion-fast: 160ms;
+  color: var(--ink);
+  font-family: var(--body);
+}
+
+.tally-app * { font-family: inherit; }
+
+/* Field labels read as the page's small uppercase mono labels (the section kickers). */
+.tally-app .tally-block-title h3 {
+  color: var(--muted);
+  font: 500 11px/1.5 var(--mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.tally-app .tally-required-indicator { background: transparent; color: var(--muted); }
+.tally-app .tally-required-indicator > span { color: var(--muted); }
+
+/* Fields: full width, square, ruled with the page's hairline, 16px text so iOS does not zoom on focus.
+   `.tally-block` lifts these past Tally's `:not([disabled]):hover/:focus` rules. */
+.tally-app :is(.tally-block-input-text, .tally-block-input-email) div { max-width: none; }
+
+.tally-app :is(.tally-block-input-text, .tally-block-input-email, .tally-block-textarea) :is(input, textarea) {
+  border: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--paper);
+  box-shadow: none;
+  color: var(--ink);
+  font: 400 16px/1.55 var(--body);
+  transition: border-color var(--motion-fast) var(--ease-out);
+}
+
+.tally-app :is(.tally-block-input-text, .tally-block-input-email) input { width: 100%; min-height: 48px; padding: 0 14px; }
+.tally-app .tally-block-textarea textarea { min-height: 120px; padding: 12px 14px; }
+
+.tally-app :is(input, textarea)::placeholder { color: var(--muted); opacity: 1; }
+
+@media (hover: hover) and (pointer: fine) {
+  .tally-app .tally-block :is(input, textarea):hover { border-color: var(--field-hover); }
+}
+
+.tally-app .tally-block :is(input, textarea):focus { border-color: var(--ink); box-shadow: none; outline: none; }
+/* The fields and button sit flush with the iframe edge, so focus rings draw inward rather than clip. */
+.tally-app .tally-block :is(input, textarea):focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+
+.tally-app .tally-block :is(input, textarea)[aria-invalid="true"] { border-color: var(--reject); }
+
+.tally-app .tally-validation-error {
+  color: var(--reject);
+  font: 500 11px/1.5 var(--mono);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.tally-app .tally-validation-error svg { display: none; }
+
+/* Submit matches .button.button-lg: square ink fill, 52px tall. */
+.tally-app .tally-submit-button button {
+  gap: 20px;
+  min-height: 52px;
+  padding: 0 24px;
+  border: 1px solid transparent;
+  border-radius: 0;
+  background: var(--ink);
+  box-shadow: none;
+  color: var(--paper);
+  font: 500 14px/1 var(--body);
+  transition: background var(--motion-fast) var(--ease-out);
+}
+
+.tally-app .tally-submit-button button svg { width: 20px; height: 20px; stroke-width: 1.5; }
+
+@media (hover: hover) and (pointer: fine) {
+  .tally-app .tally-submit-button button:hover { background: var(--accent-hover); }
+}
+
+.tally-app .tally-submit-button button:active { background: var(--accent-active); }
+.tally-app .tally-submit-button button:focus-visible { outline: 2px solid var(--paper); outline-offset: -5px; }
