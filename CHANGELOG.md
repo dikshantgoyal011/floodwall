@@ -8,6 +8,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Optional aging for low-priority work (FW-908).
+  `SchedulerConfig::with_aging(Some(Aging::new(every, up_to)))` walks a
+  waiting intent one priority higher for every `every` ticks it has waited
+  in the queue (0 is refused), up to `up_to`, so a steady stream of
+  higher-priority work can no longer keep `Bulk` work waiting forever.
+  Within a priority, intents are walked in the order they joined the
+  queue, so an aged intent goes ahead of newer ones, and once blocked
+  keeps what it waits for from them. Only the order of the pass changes:
+  the gate sees, and the ledger records, the priority the intent was
+  submitted with. An intent at or above `up_to` does not age, and one
+  released from hold ages from its release. `Aging::priority` gives the
+  priority an intent is walked at after waiting so long, and
+  `Floodwall::queued` lists the queue in the order a pass at the plane's
+  clock walks it. `Floodwall::resume` replays the same order, so a plane
+  resumes only with the same aging. No aging, the default, changes
+  nothing.
 - In-flight leases (FW-906). `SchedulerConfig::with_lease(Some(lease))`
   puts every intent in flight on a lease of so many ticks (`Lease::ticks`;
   0 is refused). An intent in flight that long is overdue, and every

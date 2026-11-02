@@ -174,12 +174,33 @@ pub enum Rejected {
 
 /// An intent's place in the queue. Keys sort in processing order: highest
 /// priority first (hence `Reverse`), then submission order within a
-/// priority (FIFO). The scheduler walks the queue in this order and can
+/// priority (FIFO). The scheduler walks the queue in this order, or in the
+/// order its aging gives (see [Aging](crate::scheduler#aging)), and can
 /// take an intent from anywhere in it, which a heap cannot do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct QueueKey {
     priority: Reverse<Priority>,
     seq: u64,
+    /// The tick the intent joined the queue. `seq` is unique, so this never
+    /// decides the order of two keys.
+    since: u64,
+}
+
+impl QueueKey {
+    /// The priority the intent was submitted with.
+    pub(crate) fn priority(&self) -> Priority {
+        self.priority.0
+    }
+
+    /// Where the intent joined the queue: later joins have higher numbers.
+    pub(crate) fn seq(&self) -> u64 {
+        self.seq
+    }
+
+    /// The tick the intent joined the queue.
+    pub(crate) fn since(&self) -> u64 {
+        self.since
+    }
 }
 
 /// The front door: per-agent rate limiting in front of a bounded priority queue.
@@ -285,28 +306,31 @@ impl Admission {
         if !bucket.try_take(limit, now) {
             return Err(Rejected::RateLimited);
         }
-        self.enqueue(intent);
+        self.enqueue(intent, now);
         Ok(())
     }
 
     /// Put an intent that already passed admission back in the queue, e.g.
-    /// one released from hold. It goes to the back of its priority class
-    /// and does not touch the agent's rate limit, but is still refused with
-    /// [`Rejected::Backpressure`] when the queue is full.
+    /// one released from hold. It goes to the back of its priority class,
+    /// joining the queue anew at `now`, and does not touch the agent's rate
+    /// limit, but is still refused with [`Rejected::Backpressure`] when the
+    /// queue is full.
     pub(crate) fn requeue(&mut self, intent: Intent, now: u64) -> Result<(), Rejected> {
-        self.advance(now);
+        let now = self.advance(now);
         if self.is_full() {
             return Err(Rejected::Backpressure);
         }
-        self.enqueue(intent);
+        self.enqueue(intent, now);
         Ok(())
     }
 
-    /// Put an intent at the back of its priority class.
-    fn enqueue(&mut self, intent: Intent) {
+    /// Put an intent at the back of its priority class, joining the queue
+    /// at `now`.
+    fn enqueue(&mut self, intent: Intent, now: u64) {
         let key = QueueKey {
             priority: Reverse(intent.priority),
             seq: self.seq,
+            since: now,
         };
         self.seq += 1;
         self.queue.insert(key, intent);
@@ -684,6 +708,30 @@ mod tests {
         a.dequeue();
         a.requeue(intent_for("x", 3, Priority::Normal), 9).unwrap();
         assert_eq!(a.clock(), 9);
+    }
+
+    #[test]
+    fn positions_remember_when_they_joined_the_queue() {
+        let mut a = Admission::new(10, RateLimit::new(100.0, 0.0));
+        a.submit(intent_for("x", 0, Priority::Bulk), 5).unwrap();
+        // Tick 3 is tick 5: the clock never goes back.
+        a.submit(intent_for("x", 1, Priority::Pager), 3).unwrap();
+        a.requeue(intent_for("x", 2, Priority::Normal), 9).unwrap();
+        a.requeue(intent_for("x", 3, Priority::Normal), 2).unwrap();
+        let joined: Vec<(Priority, u64, u64)> = a
+            .queued_keys()
+            .iter()
+            .map(|k| (k.priority(), k.seq(), k.since()))
+            .collect();
+        assert_eq!(
+            joined,
+            [
+                (Priority::Pager, 1, 5),
+                (Priority::Normal, 2, 9),
+                (Priority::Normal, 3, 9),
+                (Priority::Bulk, 0, 5),
+            ]
+        );
     }
 
     #[test]

@@ -79,6 +79,7 @@ pub mod sha256;
 pub mod sha512;
 pub mod stats;
 
+use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
@@ -95,9 +96,10 @@ pub use merkle::FrontierFull;
 pub use policy::{Policy, Verdict};
 pub use replay::ResumeError;
 pub use rules::BundleId;
-pub use scheduler::{InFlight, Lease, SchedulerConfig};
+pub use scheduler::{Aging, InFlight, Lease, SchedulerConfig};
 pub use stats::{Counts, Stats};
 
+use admission::QueueKey;
 use hold::Hold;
 use scheduler::{Readiness, Scheduler};
 use stats::{Counters, Event};
@@ -453,7 +455,9 @@ impl Floodwall {
     /// intents past their TTL or over the hold's capacity, and report or
     /// lapse intents in flight past their lease (see
     /// [Leases](scheduler#leases)), then walk the queue in priority order
-    /// and rule on every intent that may start now.
+    /// (raised by how long each intent has waited, under
+    /// [aging](scheduler#aging)) and rule on every intent that may start
+    /// now.
     /// Everything is recorded in the ledger. Admitted intents are
     /// dispatched: apply them, then call [`Floodwall::complete`]. Deferred
     /// intents are held: see [`Floodwall::release`].
@@ -478,7 +482,7 @@ impl Floodwall {
         self.trim_hold(&mut report);
         self.mind_leases(now, &mut report);
         let mut pass = self.scheduler.begin(now);
-        for position in self.admission.queued_keys() {
+        for position in self.pass_order(now) {
             if pass.is_closed() {
                 break;
             }
@@ -508,6 +512,24 @@ impl Floodwall {
         }
         self.persist();
         report
+    }
+
+    /// Every queue position, in the order a pass at tick `now` walks them:
+    /// highest priority first, and in the order they joined the queue
+    /// within a priority. Under aging, an intent's priority is the one it
+    /// has aged to by `now` (see [Aging](scheduler#aging)).
+    fn pass_order(&self, now: u64) -> Vec<QueueKey> {
+        let mut order = self.admission.queued_keys();
+        if let Some(aging) = self.scheduler.config().aging() {
+            order.sort_by_key(|position| {
+                let waited = now.saturating_sub(position.since());
+                (
+                    Reverse(aging.priority(position.priority(), waited)),
+                    position.seq(),
+                )
+            });
+        }
+        order
     }
 
     /// Deal with the intents in flight past their lease at tick `now`:
@@ -812,9 +834,14 @@ impl Floodwall {
         self.admission.len()
     }
 
-    /// The waiting intents, in the order a pass considers them.
+    /// The waiting intents, in the order a pass at the plane's
+    /// [`clock`](Floodwall::clock) considers them. Under
+    /// [aging](scheduler#aging), a later pass may consider them in another
+    /// order, as they age.
     pub fn queued(&self) -> impl Iterator<Item = &Intent> {
-        self.admission.waiting()
+        self.pass_order(self.clock)
+            .into_iter()
+            .map(move |position| self.admission.get(&position).expect("a queued position"))
     }
 
     /// The intents dispatched and not yet completed, ordered by key.
@@ -2228,5 +2255,202 @@ mod tests {
         let report = p.tick(u64::MAX);
         assert!(report.overdue.is_empty() && report.lapsed.is_empty());
         assert!(p.is_in_flight(&IntentKey::new("bot", 1)));
+    }
+
+    fn aging(plane: Floodwall, aging: Option<Aging>) -> Floodwall {
+        plane.with_scheduler(SchedulerConfig::default().with_aging(aging))
+    }
+
+    fn apply(id: u64, resource: &str, priority: Priority, blast: BlastRadius) -> Intent {
+        let action = Action::Apply {
+            resource: resource.into(),
+            manifest: format!("m{id}"),
+        };
+        intent(id, action, priority, blast)
+    }
+
+    #[test]
+    fn bulk_work_starves_under_strict_priority_and_runs_once_aged() {
+        // web runs one change at a time. A Normal change for it arrives
+        // every tick, and the one in flight completes every tick, so there
+        // is always newer Normal work ahead of the Bulk one.
+        let run = |config| {
+            let mut p = aging(plane(), config);
+            p.submit(apply(1, "web", Priority::Bulk, BlastRadius::Cell), 0)
+                .unwrap();
+            for t in 0..40 {
+                let flying: Vec<IntentKey> = p.in_flight().map(|f| f.intent.key()).collect();
+                for key in flying {
+                    p.complete(&key, Outcome::Succeeded, t).unwrap();
+                }
+                p.submit(
+                    apply(100 + t, "web", Priority::Normal, BlastRadius::Cell),
+                    t,
+                )
+                .unwrap();
+                let report = p.tick(t);
+                assert_eq!(report.decisions.len(), 1, "web is free every tick");
+                if report.decisions[0].intent.id == 1 {
+                    assert_eq!(report.decisions[0].verdict, Verdict::Admit);
+                    return Some(t);
+                }
+            }
+            None
+        };
+        assert_eq!(run(None), None, "strict priority: it never runs");
+        // Aged to Normal after 5 ticks, it is the oldest Normal there is.
+        assert_eq!(run(Some(Aging::new(5, Priority::Normal))), Some(5));
+        assert_eq!(run(Some(Aging::new(1, Priority::Pager))), Some(1));
+        // A ceiling at Bulk ages nothing.
+        assert_eq!(run(Some(Aging::new(1, Priority::Bulk))), None);
+    }
+
+    #[test]
+    fn an_aged_wide_change_holds_back_newer_work_until_the_floor_clears() {
+        // Narrow changes on web take 2 ticks and on api 3, and new ones
+        // keep arriving, so the floor is never clear: under strict
+        // priority a Bulk Global waits forever behind them. Aged to Normal
+        // at tick 4, it is walked first, and keeps everything behind it
+        // back until the work in flight is done.
+        let run = |config| {
+            let admission = Admission::new(1024, RateLimit::new(64.0, 4.0));
+            let mut p = aging(Floodwall::new(admission, Gate::new()), config);
+            p.submit(apply(1, "web", Priority::Bulk, BlastRadius::Global), 0)
+                .unwrap();
+            let mut decided = Vec::new();
+            for t in 0..40 {
+                let done: Vec<IntentKey> = p
+                    .in_flight()
+                    .filter(|f| {
+                        let takes = if f.intent.action.resource() == "web" {
+                            2
+                        } else {
+                            3
+                        };
+                        t >= f.since + takes
+                    })
+                    .map(|f| f.intent.key())
+                    .collect();
+                for key in done {
+                    p.complete(&key, Outcome::Succeeded, t).unwrap();
+                }
+                p.submit(
+                    apply(100 + t, "web", Priority::Normal, BlastRadius::Cell),
+                    t,
+                )
+                .unwrap();
+                p.submit(
+                    apply(200 + t, "api", Priority::Normal, BlastRadius::Cell),
+                    t,
+                )
+                .unwrap();
+                let ids: Vec<u64> = p.tick(t).decisions.iter().map(|d| d.intent.id).collect();
+                decided.push(ids);
+            }
+            decided
+        };
+        let strict = run(None);
+        assert!(strict.iter().flatten().all(|&id| id != 1), "never ruled on");
+        let aged = run(Some(Aging::new(4, Priority::Normal)));
+        assert_eq!(aged[2], [101], "web is free, api is not");
+        assert_eq!(aged[3], [201]);
+        // Tick 4: web is free again, but the aged Global is ahead of the
+        // next web change and keeps it back, as it does at tick 5. At tick
+        // 6 the last change in flight is done, and the Global starts alone.
+        assert!(aged[4].is_empty() && aged[5].is_empty(), "{aged:?}");
+        assert_eq!(aged[6], [1]);
+        assert_eq!(strict[4], [102], "without aging, web's next change starts");
+    }
+
+    #[test]
+    fn aging_changes_when_a_change_is_ruled_on_not_the_ruling() {
+        // An aged Bulk change is walked as Pager, but the gate sees the
+        // priority the agent asked for, and the ledger records it.
+        let mut p = aging(plane(), Some(Aging::new(1, Priority::Pager)));
+        p.submit(scale(1, "web"), 0).unwrap();
+        p.tick(0); // web is taken
+        p.submit(apply(2, "web", Priority::Bulk, BlastRadius::Region), 0)
+            .unwrap();
+        assert!(p.tick(3).decisions.is_empty());
+        p.complete(&IntentKey::new("bot", 1), Outcome::Succeeded, 4)
+            .unwrap();
+        let report = p.tick(4);
+        assert_eq!(report.decisions[0].intent.priority, Priority::Bulk);
+        assert_eq!(
+            report.decisions[0].verdict,
+            Verdict::Reject("Region blast radius needs priority >= Urgent, got Bulk".into())
+        );
+        let record = p.ledger().records().last().unwrap();
+        assert_eq!(record.intent.as_ref().unwrap().priority, Priority::Bulk);
+        assert!(p.ledger().verify());
+    }
+
+    #[test]
+    fn aging_stops_at_its_ceiling() {
+        // A Bulk change has waited 100 ticks when an Urgent and a Pager one
+        // arrive. How far it has risen decides where it is walked.
+        let order = |config| {
+            let mut p = aging(plane(), config);
+            p.submit(apply(1, "web", Priority::Bulk, BlastRadius::Cell), 0)
+                .unwrap();
+            p.submit(apply(2, "web", Priority::Urgent, BlastRadius::Cell), 100)
+                .unwrap();
+            p.submit(apply(3, "web", Priority::Pager, BlastRadius::Cell), 100)
+                .unwrap();
+            let queued: Vec<u64> = p.queued().map(|i| i.id).collect();
+            let walked: Vec<u64> = p.tick(100).decisions.iter().map(|d| d.intent.id).collect();
+            assert_eq!(
+                walked[..1],
+                queued[..1],
+                "the pass starts where queued() does"
+            );
+            queued
+        };
+        assert_eq!(order(None), [3, 2, 1]);
+        assert_eq!(order(Some(Aging::new(10, Priority::Normal))), [3, 2, 1]);
+        // At Urgent it is the oldest Urgent change, but not ahead of Pager.
+        assert_eq!(order(Some(Aging::new(10, Priority::Urgent))), [3, 1, 2]);
+        assert_eq!(order(Some(Aging::new(10, Priority::Pager))), [1, 3, 2]);
+        // Not yet: 100 ticks is two steps of 50, to Urgent.
+        assert_eq!(order(Some(Aging::new(50, Priority::Pager))), [3, 1, 2]);
+    }
+
+    #[test]
+    fn a_released_change_ages_from_its_release() {
+        // Bulk changes are held for a human. Released at tick 10, this one
+        // joins the back of the queue, behind web's change in flight, and
+        // waits from there: 5 ticks to rise to Normal.
+        let gate = Gate::new()
+            .with_rules(
+                r#"format 1
+                policy "bulk-waits" { defer "bulk waits for a human" when priority == bulk }"#,
+            )
+            .unwrap();
+        let admission = Admission::new(1024, RateLimit::new(64.0, 4.0));
+        let mut p = aging(
+            Floodwall::new(admission, gate),
+            Some(Aging::new(5, Priority::Normal)),
+        );
+        p.submit(apply(2, "web", Priority::Bulk, BlastRadius::Cell), 0)
+            .unwrap();
+        p.tick(0);
+        assert!(p.is_held(&IntentKey::new("bot", 2)));
+        p.submit(apply(1, "web", Priority::Normal, BlastRadius::Cell), 0)
+            .unwrap();
+        p.tick(0); // bot#1 takes web
+        p.release(&IntentKey::new("bot", 2), "ops", 10).unwrap();
+        p.submit(apply(3, "web", Priority::Normal, BlastRadius::Cell), 11)
+            .unwrap();
+        let queued = |p: &Floodwall| p.queued().map(|i| i.id).collect::<Vec<_>>();
+        assert!(p.tick(14).decisions.is_empty());
+        assert_eq!(queued(&p), [3, 2], "waited 4 ticks since its release");
+        assert!(p.tick(15).decisions.is_empty());
+        assert_eq!(queued(&p), [2, 3], "waited 5: Normal, and older than bot#3");
+        p.complete(&IntentKey::new("bot", 1), Outcome::Succeeded, 16)
+            .unwrap();
+        let report = p.tick(16);
+        assert_eq!(report.decisions[0].intent.id, 2);
+        assert_eq!(report.decisions[0].verdict, Verdict::Admit);
+        assert_eq!(report.decisions[0].released_by.as_deref(), Some("ops"));
     }
 }

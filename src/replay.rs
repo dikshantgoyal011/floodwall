@@ -52,8 +52,8 @@
 //! The replayed plane must be built exactly as the one that wrote the
 //! ledger: the same admission capacity and rate limit, the same gate (the
 //! same policies, in the same order, deciding the same way), the same
-//! scheduler settings (its lease, if any, included) and hold settings, and
-//! a keyring if it had one. Of the
+//! scheduler settings (its lease and its aging, if any, included) and hold
+//! settings, and a keyring if it had one. Of the
 //! configuration, only the gate's policy bundles are in the ledger (see
 //! [Policy bundles](#policy-bundles)). A difference that changes any
 //! decision is caught, as [`ResumeError::Diverged`] at the first record
@@ -544,7 +544,7 @@ mod tests {
     use crate::intent::{Action, AgentId, BlastRadius, Priority};
     use crate::policy::{NoGlobalDestroy, ResourceAllowlist};
     use crate::{
-        Admission, Gate, HoldConfig, Keyring, Lease, RateLimit, Rejected, SchedulerConfig,
+        Admission, Aging, Gate, HoldConfig, Keyring, Lease, RateLimit, Rejected, SchedulerConfig,
         SigningKey, Verdict,
     };
 
@@ -1424,6 +1424,69 @@ mod tests {
                 r => panic!("{other:?}: {:?}", r.map(|p| state(&p))),
             }
         }
+    }
+
+    #[test]
+    fn aging_is_replayed_and_needs_the_same_aging() {
+        let aged = |aging| {
+            plane().with_scheduler(
+                SchedulerConfig::default()
+                    .with_conflict_window(0)
+                    .with_aging(aging),
+            )
+        };
+        let bulk = Intent::new(
+            1,
+            AgentId::new("b"),
+            Action::Scale {
+                resource: "web".into(),
+                replicas: 3,
+            },
+            Priority::Bulk,
+            BlastRadius::Service,
+        )
+        .signed(&key("b"));
+        // b#1 waits for web behind a#1, and a#2 arrives behind it. When web
+        // frees up at tick 3, b#1 has aged to Normal and goes first.
+        let mut before = aged(Some(Aging::new(2, Priority::Normal)));
+        before.submit(scale("a", 1, "web", 2), 0).unwrap();
+        before.tick(0);
+        before.submit(bulk, 0).unwrap();
+        before.submit(scale("a", 2, "web", 4), 2).unwrap();
+        assert!(before.tick(2).decisions.is_empty());
+        before
+            .complete(&IntentKey::new("a", 1), Outcome::Succeeded, 3)
+            .unwrap();
+        let report = before.tick(3);
+        assert_eq!(report.decisions[0].intent.key(), IntentKey::new("b", 1));
+        let after = aged(Some(Aging::new(2, Priority::Normal)))
+            .resume(reread(before.ledger()), 3)
+            .unwrap();
+        assert_eq!(state(&after), state(&before));
+        // Without aging, or aging too slow or capped at Bulk, a#2 goes first.
+        let first = before
+            .ledger()
+            .records()
+            .iter()
+            .find(|r| r.agent == "b" && r.verdict == "admit")
+            .unwrap()
+            .seq;
+        for other in [
+            None,
+            Some(Aging::new(4, Priority::Normal)),
+            Some(Aging::new(1, Priority::Bulk)),
+        ] {
+            match aged(other).resume(reread(before.ledger()), 3) {
+                Err(ResumeError::Diverged { seq, .. }) => assert_eq!(seq, first, "{other:?}"),
+                r => panic!("{other:?}: {:?}", r.map(|p| state(&p))),
+            }
+        }
+        // Aging that orders the same history the same way is not caught,
+        // as no other setting is (see "What must match").
+        let faster = aged(Some(Aging::new(1, Priority::Pager)))
+            .resume(reread(before.ledger()), 3)
+            .unwrap();
+        assert_eq!(faster.ledger().head(), before.ledger().head());
     }
 
     #[test]

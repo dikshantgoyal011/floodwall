@@ -6,7 +6,7 @@
 //! random intents from several agents, ticks it, completes in-flight work
 //! at random (and, under a lease, sees what it was slow to complete
 //! reported or lapsed), and has a human release or expire held intents at
-//! random.
+//! random. Some planes age what waits, so the order of the queue moves.
 //! After every step it checks the invariants the scheduler and hold queue
 //! document, against an independent model kept by this test.
 
@@ -20,7 +20,7 @@ use floodwall::policy::{BlastNeedsPriority, NoGlobalDestroy, Policy, ResourceAll
 use floodwall::sha256::sha256;
 use floodwall::{audit_suffix, Keyring, Ledger, SigningKey};
 use floodwall::{
-    Admission, Floodwall, Gate, HoldConfig, HoldError, Lease, Outcome, RateLimit, Rejected,
+    Admission, Aging, Floodwall, Gate, HoldConfig, HoldError, Lease, Outcome, RateLimit, Rejected,
     SchedulerConfig, Verdict, CONFLICT_CHECK,
 };
 
@@ -114,13 +114,40 @@ fn random_config(rng: &mut Rng) -> SchedulerConfig {
             config = config.with_limit(resource, 1 + rng.below(4) as usize);
         }
     }
-    config.with_lease(*rng.pick(&[
-        None,
-        None,
-        Some(Lease::Report(3)),
-        Some(Lease::Fail(2)),
-        Some(Lease::Fail(6)),
-    ]))
+    config
+        .with_lease(*rng.pick(&[
+            None,
+            None,
+            Some(Lease::Report(3)),
+            Some(Lease::Fail(2)),
+            Some(Lease::Fail(6)),
+        ]))
+        .with_aging(*rng.pick(&[
+            None,
+            None,
+            Some(Aging::new(1, Priority::Pager)),
+            Some(Aging::new(3, Priority::Urgent)),
+            Some(Aging::new(8, Priority::Normal)),
+        ]))
+}
+
+/// The priority the test expects a pass to walk an intent at, worked out
+/// from `aging`'s settings alone.
+fn walked_at(aging: Option<Aging>, priority: Priority, waited: u64) -> Priority {
+    let Some(aging) = aging else {
+        return priority;
+    };
+    if priority >= aging.up_to() {
+        return priority;
+    }
+    let ranks = [
+        Priority::Bulk,
+        Priority::Normal,
+        Priority::Urgent,
+        Priority::Pager,
+    ];
+    let rank = (priority as u64 + waited / aging.every()).min(aging.up_to() as u64);
+    ranks[rank as usize]
 }
 
 fn is_wide(i: &Intent) -> bool {
@@ -132,6 +159,9 @@ fn is_wide(i: &Intent) -> bool {
 #[derive(Default)]
 struct Model {
     claims: Vec<(IntentKey, Action, Option<u64>)>,
+    /// Queued intents in the order they joined the queue, with the tick
+    /// each joined it.
+    queue: Vec<(Intent, u64)>,
     /// Intents that are queued, in flight, or held.
     live: HashSet<IntentKey>,
     /// Intents that are held.
@@ -154,6 +184,25 @@ impl Model {
                 && done.is_none_or(|d| now < d.saturating_add(window))
                 && action.contradicts(&intent.action)
         })
+    }
+
+    /// The queue in the order a pass at tick `now` walks it: highest
+    /// priority first (as aged by `now`), then in the order intents joined.
+    fn walk(&self, aging: Option<Aging>, now: u64) -> Vec<Intent> {
+        let mut order: Vec<(Priority, usize, &Intent)> = self
+            .queue
+            .iter()
+            .enumerate()
+            .map(|(joined, (intent, since))| {
+                (
+                    walked_at(aging, intent.priority, now - since),
+                    joined,
+                    intent,
+                )
+            })
+            .collect();
+        order.sort_by(|x, y| y.0.cmp(&x.0).then(x.1.cmp(&y.1)));
+        order.into_iter().map(|(_, _, i)| i.clone()).collect()
     }
 }
 
@@ -213,6 +262,11 @@ struct Coverage {
     overtaking_checks: usize,
     /// More than one narrow intent in flight on one resource at once.
     shared_resource_moments: usize,
+    /// Passes that ruled on something while aging had put the queue in
+    /// another order than strict priority would.
+    aged_passes: usize,
+    /// Intents ruled on ahead of one of higher priority, by aging.
+    aged_ahead: usize,
     failures_reported: usize,
     deferred_and_held: usize,
     released: usize,
@@ -343,9 +397,10 @@ fn run_with(seed: u64, cov: &mut Coverage, signed: bool) {
             *id += 1;
             let intent = sign(random_intent(&mut rng, agent, *id));
             let key = intent.key();
-            if admission.submit(intent, start).is_ok() {
+            if admission.submit(intent.clone(), start).is_ok() {
                 cov.adopted += 1;
                 model.live.insert(key.clone());
+                model.queue.push((intent, start));
                 adopted.insert(key);
             }
         }
@@ -370,6 +425,7 @@ fn run_with(seed: u64, cov: &mut Coverage, signed: bool) {
     }
     let window = plane.scheduler_config().conflict_window();
     let lease = plane.scheduler_config().lease();
+    let aging = plane.scheduler_config().aging();
     assert_eq!(
         plane.clock(),
         start,
@@ -404,7 +460,7 @@ fn run_with(seed: u64, cov: &mut Coverage, signed: bool) {
                     intent = intent.signed(&keys[other]);
                 }
                 let key = intent.key();
-                let result = plane.submit(intent, now);
+                let result = plane.submit(intent.clone(), now);
                 if forged {
                     assert_eq!(
                         result,
@@ -417,6 +473,7 @@ fn run_with(seed: u64, cov: &mut Coverage, signed: bool) {
                 match result {
                     Ok(()) => {
                         assert!(model.live.insert(key), "seed {seed}: accepted a live key");
+                        model.queue.push((intent, now));
                         model.arrivals += 1;
                     }
                     Err(Rejected::Duplicate) => {
@@ -436,7 +493,16 @@ fn run_with(seed: u64, cov: &mut Coverage, signed: bool) {
             }
         }
 
-        let before: Vec<Intent> = plane.queued().cloned().collect();
+        // The queue is in the order the model expects: as a pass at the
+        // plane's clock would walk it, and, at this tick, as this one does.
+        let keys = |intents: &[Intent]| intents.iter().map(Intent::key).collect::<Vec<_>>();
+        let queued: Vec<IntentKey> = plane.queued().map(Intent::key).collect();
+        assert_eq!(
+            queued,
+            keys(&model.walk(aging, plane.clock())),
+            "seed {seed}: queued() is not in the order of a pass"
+        );
+        let before = model.walk(aging, now);
         let overdue_before: Vec<IntentKey> = plane
             .in_flight()
             .filter(|f| lease.is_some_and(|l| now >= f.since.saturating_add(l.ticks())))
@@ -445,6 +511,29 @@ fn run_with(seed: u64, cov: &mut Coverage, signed: bool) {
         let report = plane.tick(now);
         let ruled: HashSet<IntentKey> = report.decisions.iter().map(|d| d.intent.key()).collect();
         check_no_overtaking(&before, &ruled, seed, cov);
+        // The pass ruled on what it could start in the order it walked.
+        let in_order: Vec<IntentKey> = keys(&before)
+            .into_iter()
+            .filter(|k| ruled.contains(k))
+            .collect();
+        let decided: Vec<IntentKey> = report.decisions.iter().map(|d| d.intent.key()).collect();
+        assert_eq!(decided, in_order, "seed {seed}: ruled on out of order");
+        if !decided.is_empty() && keys(&before) != keys(&model.walk(None, now)) {
+            cov.aged_passes += 1;
+        }
+        for d in &report.decisions {
+            let at = before
+                .iter()
+                .position(|x| x.key() == d.intent.key())
+                .unwrap();
+            if before[at + 1..]
+                .iter()
+                .any(|x| x.priority > d.intent.priority)
+            {
+                cov.aged_ahead += 1;
+            }
+        }
+        model.queue.retain(|(i, _)| !ruled.contains(&i.key()));
 
         // Leases are dealt with before the pass: exactly what was in flight
         // past its lease is reported, or lapsed, and a lapse closes its
@@ -585,12 +674,18 @@ fn run_with(seed: u64, cov: &mut Coverage, signed: bool) {
         for key in held {
             let roll = rng.below(100);
             if roll < 15 || (!flooding && roll < 60) {
+                let intent = plane
+                    .held()
+                    .find(|h| h.intent.key() == key)
+                    .map(|h| h.intent.clone())
+                    .expect("held");
                 match plane.release(&key, "ops", now) {
                     Ok(()) => {
                         cov.released += 1;
                         model.releases += 1;
                         model.held.remove(&key);
                         model.released.insert(key);
+                        model.queue.push((intent, now));
                     }
                     Err(HoldError::Backpressure(k)) => {
                         assert_eq!(k, key);
@@ -720,6 +815,8 @@ fn scheduler_invariants_hold_across_random_floods() {
     assert!(cov.globals_dispatched > 10, "{cov:?}");
     assert!(cov.overtaking_checks > 1_000, "{cov:?}");
     assert!(cov.shared_resource_moments > 100, "{cov:?}");
+    assert!(cov.aged_passes > 100, "{cov:?}");
+    assert!(cov.aged_ahead > 100, "{cov:?}");
     assert!(cov.failures_reported > 100, "{cov:?}");
     assert!(cov.deferred_and_held > 1_000, "{cov:?}");
     assert!(cov.released > 500, "{cov:?}");

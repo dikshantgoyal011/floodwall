@@ -26,7 +26,9 @@
 //! bundle, so their decisions record it, and every property holds with the
 //! bundles in the ledger too. Some put what is in flight on a lease, which
 //! reports or lapses what the flood is slow to complete, and every property
-//! holds with lapses in the ledger, and overdue intents in the reports.
+//! holds with lapses in the ledger, and overdue intents in the reports. Some
+//! age what waits in the queue, so their passes rule in an order strict
+//! priority would not, and every property holds with that too.
 //!
 //! The gate's policies are deterministic, as replay requires: a policy that
 //! decides differently for the same intent, like the invariant test's
@@ -40,8 +42,8 @@ use floodwall::intent::{Action, AgentId, BlastRadius, Intent, IntentKey, Priorit
 use floodwall::policy::{BlastNeedsPriority, NoGlobalDestroy, ResourceAllowlist};
 use floodwall::sha256::sha256;
 use floodwall::{
-    Admission, Floodwall, Gate, Held, HoldConfig, Keyring, Lease, Ledger, Outcome, RateLimit,
-    Record, ResumeError, SchedulerConfig, SigningKey, LAPSED, QUEUED,
+    Admission, Aging, Floodwall, Gate, Held, HoldConfig, Keyring, Lease, Ledger, Outcome,
+    RateLimit, Record, ResumeError, SchedulerConfig, SigningKey, LAPSED, QUEUED,
 };
 
 /// A tiny xorshift PRNG, so every seed is reproducible.
@@ -101,6 +103,7 @@ struct Config {
     /// The revision of the policy bundle the gate loads, if it loads one.
     bundle: Option<&'static str>,
     lease: Option<Lease>,
+    aging: Option<Aging>,
 }
 
 impl Config {
@@ -136,6 +139,13 @@ impl Config {
                 Some(Lease::Fail(1)),
                 Some(Lease::Fail(4)),
             ]),
+            aging: *rng.pick(&[
+                None,
+                None,
+                Some(Aging::new(1, Priority::Pager)),
+                Some(Aging::new(2, Priority::Urgent)),
+                Some(Aging::new(5, Priority::Normal)),
+            ]),
         }
     }
 
@@ -165,7 +175,8 @@ impl Config {
         let mut scheduler = SchedulerConfig::default()
             .with_default_limit(self.default_limit)
             .with_conflict_window(self.window)
-            .with_lease(self.lease);
+            .with_lease(self.lease)
+            .with_aging(self.aging);
         if let Some(limit) = self.db_limit {
             scheduler = scheduler.with_limit("db", limit);
         }
@@ -504,6 +515,9 @@ struct Coverage {
     overdue: usize,
     /// Decisions that record a policy bundle.
     bundled: usize,
+    /// Floods whose ledger aging changed: run without it, they write
+    /// another one.
+    aged: usize,
 }
 
 /// Every property, for one seed.
@@ -608,6 +622,15 @@ fn check(seed: u64, signed: bool, cov: &mut Coverage) {
         cov.tampered += 1;
     }
 
+    if config.aging.is_some() {
+        let strict = Config {
+            aging: None,
+            ..config.clone()
+        };
+        if flood(seed, &strict, &[], None).export != straight.export {
+            cov.aged += 1;
+        }
+    }
     cov.floods += 1;
     cov.records += records.len();
     cov.restarts += restarted.restarts;
@@ -642,6 +665,7 @@ fn replay_reproduces_the_live_decisions() {
     assert!(cov.finished_ticks > 30, "{cov:?}");
     assert!(cov.on_files > 25, "{cov:?}");
     assert!(cov.tampered > 100, "{cov:?}");
+    assert!(cov.aged > 30, "{cov:?}");
     for count in [
         cov.queued,
         cov.admitted,
