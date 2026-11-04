@@ -5,7 +5,8 @@
 //! backpressured ones, and in signed floods unsigned, forged and unknown
 //! ones), ticks, releases, expiries by hand and by TTL or eviction,
 //! outcomes of both kinds, and, under a lease, what it is slow to complete
-//! reported or lapsed, with restarts from the ledger at random points.
+//! reported or lapsed, with restarts from the ledger at random points. Some
+//! planes age what waits, so their passes rule in another order.
 //!
 //! Alongside, it keeps its own tally from nothing but what each public call
 //! returned: a submission's `Result`, a tick's decisions and expiries, a
@@ -21,8 +22,8 @@ use std::collections::BTreeMap;
 use floodwall::intent::{Action, AgentId, BlastRadius, Intent, IntentKey, Priority};
 use floodwall::policy::{NoGlobalDestroy, ResourceAllowlist};
 use floodwall::{
-    Admission, Counts, Floodwall, Gate, HoldConfig, Keyring, Lease, Ledger, Outcome, RateLimit,
-    Rejected, SchedulerConfig, SigningKey, Verdict,
+    Admission, Aging, Counts, Floodwall, Gate, HoldConfig, Keyring, Lease, Ledger, Outcome,
+    RateLimit, Rejected, SchedulerConfig, SigningKey, Verdict,
 };
 
 const AGENTS: [&str; 4] = ["a", "b", "c", "d"];
@@ -62,6 +63,7 @@ struct Config {
     ttl: Option<u64>,
     signed: bool,
     lease: Option<Lease>,
+    aging: Option<Aging>,
 }
 
 impl Config {
@@ -86,6 +88,11 @@ impl Config {
                 Some(Lease::Fail(2)),
                 Some(Lease::Fail(5)),
             ]),
+            aging: *rng.pick(&[
+                None,
+                Some(Aging::new(1, Priority::Pager)),
+                Some(Aging::new(4, Priority::Normal)),
+            ]),
         }
     }
 
@@ -101,7 +108,8 @@ impl Config {
         .with_scheduler(
             SchedulerConfig::default()
                 .with_conflict_window(self.window)
-                .with_lease(self.lease),
+                .with_lease(self.lease)
+                .with_aging(self.aging),
         )
         .with_hold(
             HoldConfig::default()

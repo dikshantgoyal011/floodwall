@@ -18,7 +18,10 @@ records (FW-503). An `Intent` flows through `Admission`
 the scheduler, which starts only what may run now: a `Global` change
 alone, `Region` changes one at a time with their resource to themselves,
 and narrow changes in parallel across resources up to a per-resource
-in-flight limit. Each intent that can start is ruled on by the
+in-flight limit. It walks the queue highest priority first; a plane that
+ages what waits (FW-908) walks a waiting intent one priority higher for
+every so many ticks it has waited, up to a ceiling, so lower-priority
+work is not starved. Each intent that can start is ruled on by the
 deny-overrides policy `Gate` plus a conflict check against other agents'
 recent changes to the same resource. Admitted intents are in flight until
 the caller reports back, or, on a lease, until the plane reports them
@@ -56,12 +59,14 @@ counts start when the plane is built or resumed, and are kept per agent
 for the first 1024 agents (with a keyring, only for the agents in it).
 
 Still zero dependencies (SHA-256, SHA-512, Ed25519 and the JSON reader are
-from scratch) and pinned to Rust 1.95. 250 unit tests, 17 doctests
+from scratch) and pinned to Rust 1.95. 259 unit tests, 19 doctests
 (including the README examples), a randomized invariant test (300 seeded
-floods plus 6 signed ones, most of them on a lease, each ending in
-checkpoint audits), a replay property test (150 random floods plus 6
-signed ones, with 300-odd restarts, half of them with a policy bundle and
-most on a lease), a stats property test (150
+floods plus 6 signed ones, most of them on a lease and some aging what
+waits, the order of every pass checked against the test's own model,
+each ending in checkpoint audits), a replay property test (150 random
+floods plus 6 signed ones, with 300-odd restarts, half of them with a
+policy bundle, most on a lease, and some aging what waits), a stats
+property test (150
 random floods, 30 of them signed, with about 700 restarts, the stats
 checked against what every call returned), the worked example's
 guardrails checked against their Rego on 24,576 intents, an edge-case
@@ -73,6 +78,13 @@ GitHub Pages) describes the scheduler and hold queue.
 
 ## Recently shipped
 
+- **FW-908** - optional aging for low-priority work:
+  `SchedulerConfig::with_aging` walks a waiting intent one priority
+  higher for every `every` ticks it has waited, up to a ceiling
+  (`Aging::new(every, up_to)`), ahead of newer work at that priority, so
+  a steady stream of higher-priority work no longer starves `Bulk` work.
+  Only the order changes: the gate and the ledger still see the priority
+  the intent was submitted with. Resuming replays the same order.
 - **FW-906** - in-flight leases: `SchedulerConfig::with_lease` puts what
   is in flight on a lease of so many ticks. Past it, `Lease::Report`
   lists the intent in every tick's report until the caller completes it,
@@ -130,9 +142,9 @@ GitHub Pages) describes the scheduler and hold queue.
 ## Next up
 
 - **Later** - no milestone is planned past v0.5. Of what GOALS.md lists
-  could come next (FW-901 to FW-908), FW-904 and FW-906 are done; the rest
-  run from backpressure signalling and authenticated release to a TLA+
-  model of the protocol.
+  could come next (FW-901 to FW-908), FW-904, FW-906 and FW-908 are done;
+  the rest run from backpressure signalling and authenticated release to
+  a TLA+ model of the protocol.
 
 ## Known gaps
 
@@ -176,8 +188,13 @@ GitHub Pages) describes the scheduler and hold queue.
   timeout is shorter than the lease.
 - The `by` in a release or expiry is free text, not a verified identity
   (FW-907).
-- Priority is strict, so `Bulk` work can starve under a constant stream of
-  higher-priority intents (FW-908).
+- Without aging, priority is strict, so `Bulk` work can starve under a
+  constant stream of higher-priority intents. Aging (FW-908) bounds how
+  long a waiting intent stays behind newer work, not how long it waits
+  for work in flight to finish: behind an intent that is never completed
+  it waits until a lease frees the way. And an intent never ages past
+  its ceiling: with a ceiling below `Pager`, a constant stream of `Pager`
+  work still keeps everything else waiting, as intended.
 - The plane's verdicts are protected once a checkpoint covering them is
   signed (`Ledger::with_signer`). Records after the latest signed
   checkpoint can still be rewritten by whoever holds the ledger until the

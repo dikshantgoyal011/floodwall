@@ -34,7 +34,7 @@ You cannot review your way out of that. You have to **govern throughput**: admit
 |-------|--------------|--------------|
 | **Identity** | [`keyring`](src/keyring.rs) / [`ed25519`](src/ed25519.rs) | Optional: with a keyring of agents' public keys, every intent must carry its agent's Ed25519 signature. Unsigned, unknown and forged intents are refused before they reach the queue or spend an agent's rate limit. |
 | **Admission** | [`admission`](src/admission.rs) | A per-agent token bucket caps how fast any one agent can push, so a single runaway loop cannot starve the fleet. A bounded priority queue orders what is waiting (highest priority first, FIFO within a priority) and applies backpressure once it is full. |
-| **Scheduler** | [`scheduler`](src/scheduler.rs) | Decides when each waiting intent may start. A `Global` change runs alone; `Region` changes run one at a time with their resource to themselves; narrow changes run in parallel across resources, up to a per-resource in-flight limit. A blocked intent keeps what it waits for from lower-priority work, so wide changes are never starved. Two agents' contradictory changes to one resource within a conflict window are deferred. |
+| **Scheduler** | [`scheduler`](src/scheduler.rs) | Decides when each waiting intent may start. A `Global` change runs alone; `Region` changes run one at a time with their resource to themselves; narrow changes run in parallel across resources, up to a per-resource in-flight limit. A blocked intent keeps what it waits for from lower-priority work, so a wide change is not starved by the smaller ones behind it; optional aging raises what has waited long, so low-priority work is not starved by higher-priority work either. Two agents' contradictory changes to one resource within a conflict window are deferred. |
 | **Gate** | [`gate`](src/gate.rs) / [`policy`](src/policy.rs) | A stack of policies, each a pure function from an intent to a verdict, composed with **deny-overrides**: the harshest verdict wins, so one `Reject` blocks a change no matter how many policies admit it. |
 | **Hold** | [`hold`](src/hold.rs) | A `Defer` is "not yet", not "no". Deferred intents wait here until a human releases them (their deferrals are then waived; rejections still apply) or expires them, or until a TTL runs out. |
 | **Ledger** | [`ledger`](src/ledger.rs) | Every decision, release, expiry and outcome is appended to a SHA-256 hash chain together with its evidence: the action, the reason, each policy's verdict, and, for a decision, the versioned policy bundles its rules came from. Each record folds in the previous digest, so any retroactive edit to history breaks the chain. Every so many records the ledger cuts a [checkpoint](src/checkpoint.rs) (chain head + Merkle root), optionally signed by the plane, so an auditor can check the rest of the ledger from a checkpoint without replaying it from genesis. |
@@ -143,6 +143,39 @@ assert_eq!(plane.complete(&key, Outcome::Succeeded, 31), Err(NotInFlight(key)));
 ```
 
 `Lease::Report(30)` instead lists it in every tick's `overdue` until you report back, and leaves it in flight. A lapse frees the resource whether or not the caller is still applying the change, so `Fail` suits callers whose own timeout is shorter than the lease.
+
+Priority is strict, so a steady stream of higher-priority work can keep a `Bulk` change waiting forever. Aging bounds the wait: a waiting change rises one priority for every so many ticks it has waited, up to a ceiling, and is ruled on sooner. Only the order changes: the gate still sees, and the ledger records, the priority the change was submitted with.
+
+```rust
+use floodwall::{Admission, Aging, Floodwall, Gate, Outcome, RateLimit, SchedulerConfig};
+use floodwall::intent::{Action, AgentId, BlastRadius, Intent, Priority};
+
+// One priority higher for every 20 ticks in the queue, up to Normal.
+let aging = Aging::new(20, Priority::Normal);
+let mut plane = Floodwall::new(Admission::new(64, RateLimit::new(8.0, 1.0)), Gate::new())
+    .with_scheduler(SchedulerConfig::default().with_aging(Some(aging)));
+let scale = |agent: &str, id, priority| Intent::new(
+    id,
+    AgentId::new(agent),
+    Action::Scale { resource: "web".into(), replicas: 3 },
+    priority,
+    BlastRadius::Service,
+);
+plane.submit(scale("deployer", 1, Priority::Normal), 0).unwrap();
+plane.tick(0); // web is busy
+plane.submit(scale("cleanup-bot", 1, Priority::Bulk), 0).unwrap();
+plane.submit(scale("deployer", 2, Priority::Normal), 20).unwrap();
+let done = scale("deployer", 1, Priority::Normal).key();
+plane.complete(&done, Outcome::Succeeded, 20).unwrap();
+
+// Waiting since tick 0, the Bulk change is walked as Normal, and it was
+// there before deployer#2.
+let report = plane.tick(20);
+assert_eq!(report.decisions[0].intent.key().to_string(), "cleanup-bot#1");
+assert_eq!(report.decisions[0].intent.priority, Priority::Bulk);
+```
+
+A change at or above the ceiling does not age, so a ceiling below `Pager` keeps incident work ahead of anything that has merely waited.
 
 With a keyring, every agent signs its intents, and the ledger proves who asked for what:
 

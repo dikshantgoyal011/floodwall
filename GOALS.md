@@ -158,6 +158,10 @@ independent model).
 - **FW-907** *(new)* Authenticated release and expiry. `by` is a free-text
   name recorded in the ledger; tie it to a verified operator identity
   (and sign it once records are signed, FW-302).
-- **FW-908** *(new)* Optional aging for low-priority work. Priority is
+- **FW-908** ✓ *(new)* Optional aging for low-priority work. Priority is
   strict, so a steady stream of higher-priority intents can starve
-  `Bulk` work indefinitely.
+  `Bulk` work indefinitely. `SchedulerConfig::with_aging`: a waiting
+  intent is walked one priority higher for every `every` ticks it has
+  waited, up to a ceiling (`Aging::new(every, up_to)`), ahead of newer
+  work at that priority; the gate and the ledger still see the priority
+  it was submitted with.

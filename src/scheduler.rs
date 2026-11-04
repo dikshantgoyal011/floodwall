@@ -30,7 +30,8 @@
 //!
 //! # No overtaking
 //!
-//! A pass walks the queue highest priority first. When an intent is
+//! A pass walks the queue highest priority first (with aging, by the
+//! priority each intent has aged to: see [Aging](#aging)). When an intent is
 //! blocked, it keeps what it is waiting for from anything behind it in the
 //! queue, so a wide change is not starved by a stream of smaller ones:
 //!
@@ -80,10 +81,36 @@
 //! change, so use `Fail` only where a caller that has not reported back
 //! by the end of the lease never will: one whose own timeout for applying
 //! a change is shorter than the lease, say.
+//!
+//! # Aging
+//!
+//! Priority is strict, so under a steady stream of higher-priority work,
+//! lower-priority work can wait forever: a `Bulk` change loses its
+//! resource to every newer `Normal` one queued for it, and a wide change
+//! behind a stream of narrow ones never finds the floor clear, since
+//! keeping work back only holds back what is *behind* it in the queue.
+//! *Aging* ([`SchedulerConfig::with_aging`]) bounds that. An intent that
+//! has waited in the queue for [`Aging::every`] ticks is walked one
+//! priority higher, and one higher again for every `every` ticks after
+//! that, up to [`Aging::up_to`]. Within a priority, intents are walked in
+//! the order they joined the queue, so one that has aged into a priority
+//! goes ahead of those submitted at it since; and once blocked, it keeps
+//! what it waits for from all of them (see [No overtaking](#no-overtaking)),
+//! until what holds it up completes and it starts.
+//!
+//! Aging only changes the order of the pass. The gate still sees the
+//! priority the agent asked for, and the ledger records that one, so a
+//! policy that asks for `Urgent` (such as
+//! [`BlastNeedsPriority`](crate::policy::BlastNeedsPriority)) does not let
+//! an aged `Bulk` change through: the change is only ruled on sooner. An
+//! intent at or above `up_to` does not age, so a ceiling below `Pager`
+//! keeps incident work ahead of anything that has merely waited. An intent
+//! released from hold joins the back of the queue, and ages from its
+//! release.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::intent::{Action, BlastRadius, Intent, IntentKey};
+use crate::intent::{Action, BlastRadius, Intent, IntentKey, Priority};
 
 /// The conflict window used by [`SchedulerConfig::default`], in ticks.
 pub const DEFAULT_CONFLICT_WINDOW: u64 = 10;
@@ -101,6 +128,7 @@ pub const DEFAULT_CONFLICT_WINDOW: u64 = 10;
 /// assert_eq!(config.limit_for("web"), 2);
 /// assert_eq!(config.limit_for("ledger-db"), 1);
 /// assert_eq!(config.lease(), None); // in flight until the caller reports back
+/// assert_eq!(config.aging(), None); // strict priority
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchedulerConfig {
@@ -108,6 +136,7 @@ pub struct SchedulerConfig {
     default_limit: usize,
     limits: BTreeMap<String, usize>,
     lease: Option<Lease>,
+    aging: Option<Aging>,
 }
 
 /// How long an intent may be in flight before the plane deals with it, and
@@ -140,15 +169,85 @@ impl Lease {
     }
 }
 
+/// How waiting intents rise in priority (see [Aging](self#aging)).
+///
+/// ```
+/// use floodwall::intent::Priority;
+/// use floodwall::{Aging, SchedulerConfig};
+///
+/// // One priority higher for every 50 ticks in the queue, up to Urgent.
+/// let aging = Aging::new(50, Priority::Urgent);
+/// assert_eq!(aging.priority(Priority::Bulk, 49), Priority::Bulk);
+/// assert_eq!(aging.priority(Priority::Bulk, 50), Priority::Normal);
+/// assert_eq!(aging.priority(Priority::Bulk, 500), Priority::Urgent);
+/// assert_eq!(aging.priority(Priority::Pager, 0), Priority::Pager);
+/// let config = SchedulerConfig::default().with_aging(Some(aging));
+/// assert_eq!(config.aging(), Some(aging));
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Aging {
+    every: u64,
+    up_to: Priority,
+}
+
+/// Every priority, by its rank: `PRIORITIES[p as usize] == p`.
+const PRIORITIES: [Priority; 4] = [
+    Priority::Bulk,
+    Priority::Normal,
+    Priority::Urgent,
+    Priority::Pager,
+];
+
+impl Aging {
+    /// Walk an intent one priority higher for every `every` ticks it has
+    /// waited in the queue, up to `up_to`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `every` is 0.
+    pub fn new(every: u64, up_to: Priority) -> Self {
+        assert!(
+            every >= 1,
+            "intents must wait at least 1 tick to age; 0 would put everything waiting at the ceiling at once"
+        );
+        Self { every, up_to }
+    }
+
+    /// How many ticks of waiting raise an intent one priority.
+    pub fn every(&self) -> u64 {
+        self.every
+    }
+
+    /// The highest priority an intent ages to.
+    pub fn up_to(&self) -> Priority {
+        self.up_to
+    }
+
+    /// The priority a pass walks an intent submitted at `priority` once it
+    /// has waited `waited` ticks in the queue: one higher for every
+    /// [`every`](Aging::every) ticks, but never above
+    /// [`up_to`](Aging::up_to), nor below `priority`.
+    pub fn priority(&self, priority: Priority, waited: u64) -> Priority {
+        if priority >= self.up_to {
+            return priority;
+        }
+        let rank = (priority as u64)
+            .saturating_add(waited / self.every)
+            .min(self.up_to as u64);
+        PRIORITIES[rank as usize]
+    }
+}
+
 impl Default for SchedulerConfig {
-    /// A 10-tick conflict window ([`DEFAULT_CONFLICT_WINDOW`]) and one
-    /// narrow intent in flight per resource.
+    /// A 10-tick conflict window ([`DEFAULT_CONFLICT_WINDOW`]), one narrow
+    /// intent in flight per resource, no lease and no aging.
     fn default() -> Self {
         Self {
             conflict_window: DEFAULT_CONFLICT_WINDOW,
             default_limit: 1,
             limits: BTreeMap::new(),
             lease: None,
+            aging: None,
         }
     }
 }
@@ -231,6 +330,19 @@ impl SchedulerConfig {
     /// The lease on intents in flight, if any.
     pub fn lease(&self) -> Option<Lease> {
         self.lease
+    }
+
+    /// Raise waiting intents in priority as they wait, so a pass walks
+    /// them sooner (see [Aging](self#aging)). `None`, the default, walks
+    /// the queue strictly by the priority each intent was submitted with.
+    pub fn with_aging(mut self, aging: Option<Aging>) -> Self {
+        self.aging = aging;
+        self
+    }
+
+    /// How waiting intents age, if they do.
+    pub fn aging(&self) -> Option<Aging> {
+        self.aging
     }
 }
 
@@ -736,6 +848,42 @@ mod tests {
         s.start(intent(1, "web", Cell), 7);
         assert!(overdue(&s, u64::MAX - 1).is_empty());
         assert_eq!(overdue(&s, u64::MAX), [1]);
+    }
+
+    #[test]
+    #[should_panic(expected = "intents must wait at least 1 tick to age")]
+    fn aging_every_zero_ticks_is_refused() {
+        let _ = Aging::new(0, Priority::Pager);
+    }
+
+    #[test]
+    fn an_intent_ages_one_priority_per_period_up_to_the_ceiling() {
+        use Priority::*;
+        let aged = |every, up_to, from, waited| Aging::new(every, up_to).priority(from, waited);
+        // One step per full period, none before.
+        let steps: Vec<Priority> = [0, 2, 3, 5, 6, 8, 9, 100]
+            .into_iter()
+            .map(|waited| aged(3, Pager, Bulk, waited))
+            .collect();
+        assert_eq!(
+            steps,
+            [Bulk, Bulk, Normal, Normal, Urgent, Urgent, Pager, Pager]
+        );
+        // Never above the ceiling, never below where it started.
+        assert_eq!(aged(1, Urgent, Bulk, 1_000), Urgent);
+        assert_eq!(aged(1, Normal, Urgent, 1_000), Urgent);
+        assert_eq!(aged(1, Normal, Normal, 1_000), Normal);
+        assert_eq!(aged(1, Bulk, Bulk, 1_000), Bulk);
+        assert_eq!(aged(5, Pager, Urgent, 4), Urgent);
+        assert_eq!(aged(5, Pager, Urgent, 5), Pager);
+        // Waits as long as a u64 does not overflow.
+        assert_eq!(aged(1, Pager, Bulk, u64::MAX), Pager);
+        assert_eq!(aged(u64::MAX, Pager, Bulk, u64::MAX - 1), Bulk);
+        assert_eq!(aged(u64::MAX, Pager, Bulk, u64::MAX), Normal);
+        // The table of priorities is in rank order.
+        for p in PRIORITIES {
+            assert_eq!(PRIORITIES[p as usize], p);
+        }
     }
 
     #[test]
