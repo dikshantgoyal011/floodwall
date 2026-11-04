@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router";
 import { AUTH_COPY, AUTH_PATHS } from "../../constants/auth";
 import { CONSOLE_NAV, CONSOLE_PATHS } from "../../constants/console";
@@ -27,6 +28,7 @@ function HoldCount() {
 export function ConsoleLayout() {
   const { session, signOut } = useSession();
   const location = useLocation();
+  const [signOutFailed, setSignOutFailed] = useState(false);
 
   if (session.status === "loading") return null;
   if (session.status === "signedOut") return <Navigate to={loginPath(location.pathname + location.search)} replace />;
@@ -76,10 +78,20 @@ export function ConsoleLayout() {
               <Link className="min-w-0 flex-1 truncate font-semibold console-narrow:hidden" to={AUTH_PATHS.account}>
                 {session.user.email}
               </Link>
-              <Button variant="outline" size="sm" onClick={() => void signOut()}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setSignOutFailed(false);
+                  signOut().catch(() => setSignOutFailed(true));
+                }}
+              >
                 {AUTH_COPY.signOut}
               </Button>
             </div>
+            <p role="status" aria-live="polite" className="px-2 text-xs leading-normal text-muted empty:hidden">
+              {signOutFailed ? AUTH_COPY.signOutFailed : ""}
+            </p>
           </div>
         </aside>
         <main

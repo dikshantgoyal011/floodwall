@@ -16,6 +16,7 @@ export function useSession() {
     };
   }, []);
 
+  // Throws if the session could not be ended; the page stays signed in.
   const signOut = useCallback(async () => {
     await authClient.signOut();
     setSession({ status: "signedOut" });

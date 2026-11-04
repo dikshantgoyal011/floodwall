@@ -21,8 +21,9 @@ import { SignupPage } from "./pages/SignupPage";
 // site's header and footer. The console under /app is a dummy-data preview.
 // /pricing and /app are reachable by URL only (nothing on the landing page
 // links to them) and kept out of search. /login, /signup and /account stand
-// alone, without the header or footer, and sign in with a one-time code, a
-// demo for now (helpers/auth.ts);
+// alone, without the header or footer, and sign in with a one-time code:
+// emailed by the sign-in service in api/, or shown on the page by the demo
+// when the build has no service (helpers/auth.ts);
 // /app sends anyone signed out to /login first.
 export const router = createBrowserRouter([
   {

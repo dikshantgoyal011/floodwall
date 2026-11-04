@@ -4,6 +4,14 @@
 
 import { CONSOLE_PATHS } from "./console";
 
+/**
+ * The sign-in service (api/ in this repository), which emails the codes and
+ * keeps the session in a cookie. A build without it runs the in-browser demo.
+ * site/.env.production sets it for the built site; set it in
+ * site/.env.development.local to use a local service.
+ */
+export const AUTH_API_URL = import.meta.env.VITE_AUTH_API_URL?.replace(/\/+$/, "") || null;
+
 export const AUTH_PATHS = {
   login: "/login",
   signup: "/signup",
@@ -65,5 +73,11 @@ export const AUTH_COPY = {
     signOut: "Sign out",
     signingOut: "Signing out…",
   },
+  /** When the sign-in service can't be asked, or gives no reason of its own. */
+  service: {
+    unreachable: "We could not reach the sign-in service. Check your connection and try again.",
+    failed: "Something went wrong. Please try again.",
+  },
   signOut: "Sign out",
+  signOutFailed: "Could not sign out. Check your connection and try again.",
 };
