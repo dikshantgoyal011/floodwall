@@ -1,5 +1,7 @@
 // Sign-in by emailed one-time code. There is no password: a code sent to an
 // address is the whole sign-in, and the first sign-in makes the account.
+// While SIGNUP_MODE is "waitlist", a new account is signed in but waiting:
+// the site shows it the waitlist until an admin approves it (admin.ts).
 //
 //   POST /auth/code     { email }        emails a code
 //   POST /auth/verify   { email, code }  checks it and starts a session
@@ -21,6 +23,27 @@ import {
   SESSION_TTL_MS,
 } from "./rules";
 import { codeHash, isToken, newCode, newToken, sameHash, tokenHash } from "./tokens";
+
+/** What the site is told about the signed-in account. */
+export type PublicUser = { email: string; waiting: boolean; admin: boolean };
+
+type UserRow = { id: string; email: string; status: string };
+
+/** Whether anyone who signs in may use the console; anything but "open" keeps the waitlist. */
+export function isOpen(env: Env) {
+  return env.SIGNUP_MODE === "open";
+}
+
+/** The admins' addresses, normalized like any other. */
+export function adminEmails(env: Env) {
+  return new Set((env.ADMIN_EMAILS ?? "").split(",").map(normalizeEmail).filter((e): e is string => !!e));
+}
+
+/** An account waits only while sign-up is on the waitlist, until approved; admins never wait. */
+function publicUser(row: UserRow, env: Env): PublicUser {
+  const admin = adminEmails(env).has(row.email);
+  return { email: row.email, waiting: !admin && !isOpen(env) && row.status !== "approved", admin };
+}
 
 /** An address in the form accounts are kept under, or null if it isn't one. */
 export function normalizeEmail(value: unknown) {
@@ -120,34 +143,43 @@ export async function verifyCode(request: Request, env: Env, now: number) {
     .first();
   if (!used) throw new HttpError(401, MESSAGES.wrongCode);
 
+  // A new account joins the waitlist unless sign-up is open or it is an
+  // admin's; an existing one keeps its status. Either way the address is
+  // proven, so the session starts: a waiting account sees the waitlist and
+  // nothing else.
   const user = await db
     .prepare(
-      `INSERT INTO users (id, email, created_at, last_sign_in_at) VALUES (?1, ?2, ?3, ?3)
+      `INSERT INTO users (id, email, created_at, last_sign_in_at, status) VALUES (?1, ?2, ?3, ?3, ?4)
        ON CONFLICT (email) DO UPDATE SET last_sign_in_at = excluded.last_sign_in_at
-       RETURNING id`,
+       RETURNING id, email, status`,
     )
-    .bind(crypto.randomUUID(), email, now)
-    .first<{ id: string }>();
+    .bind(crypto.randomUUID(), email, now, isOpen(env) || adminEmails(env).has(email) ? "approved" : "waiting")
+    .first<UserRow>();
   const token = newToken();
   await db
     .prepare("INSERT INTO sessions (id, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
     .bind(await tokenHash(token), user!.id, now, now + SESSION_TTL_MS)
     .run();
-  return json({ user: { email } }, 200, { "Set-Cookie": sessionCookie(request, token, SESSION_TTL_MS) });
+  return json({ user: publicUser(user!, env) }, 200, {
+    "Set-Cookie": sessionCookie(request, token, SESSION_TTL_MS),
+  });
+}
+
+/** The account the session cookie belongs to, or null. */
+export async function sessionUser(request: Request, env: Env, now: number) {
+  const token = readSessionCookie(request);
+  if (!token || !isToken(token)) return null;
+  const row = await env.DB.prepare(
+    `SELECT users.id, users.email, users.status FROM sessions JOIN users ON users.id = sessions.user_id
+     WHERE sessions.id = ? AND sessions.expires_at > ?`,
+  )
+    .bind(await tokenHash(token), now)
+    .first<UserRow>();
+  return row ? publicUser(row, env) : null;
 }
 
 export async function currentSession(request: Request, env: Env, now: number) {
-  const token = readSessionCookie(request);
-  const row =
-    token && isToken(token)
-      ? await env.DB.prepare(
-          `SELECT users.email FROM sessions JOIN users ON users.id = sessions.user_id
-           WHERE sessions.id = ? AND sessions.expires_at > ?`,
-        )
-          .bind(await tokenHash(token), now)
-          .first<{ email: string }>()
-      : null;
-  return json({ user: row ? { email: row.email } : null });
+  return json({ user: await sessionUser(request, env, now) });
 }
 
 export async function signOut(request: Request, env: Env) {

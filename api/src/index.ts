@@ -1,6 +1,7 @@
 // The Worker: routes each request, lets the allowed sites read the answer,
 // and sweeps expired rows on its daily schedule.
 
+import { approveUser, listUsers, removeUser } from "./admin";
 import { currentSession, sendCode, signOut, sweep, verifyCode } from "./auth";
 import type { Env } from "./env";
 import { allowedOrigin, HttpError, json, preflight, withCors } from "./http";
@@ -22,6 +23,12 @@ async function route(request: Request, env: Env, origin: string | null) {
       return currentSession(request, env, now);
     case "POST /auth/signout":
       return signOut(request, env);
+    case "GET /admin/users":
+      return listUsers(request, env, now);
+    case "POST /admin/approve":
+      return approveUser(request, env, now, origin!);
+    case "POST /admin/remove":
+      return removeUser(request, env, now);
   }
   throw new HttpError(404, MESSAGES.notFound);
 }

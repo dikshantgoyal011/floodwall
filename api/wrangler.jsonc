@@ -17,8 +17,11 @@
     }
   ],
   "vars": {
-    "MAIL_FROM": "Floodwall <login@floodwall.ai>",
-    "ALLOWED_ORIGINS": "https://floodwall.ai,https://preview.floodwall.ai"
+    "MAIL_FROM": "Floodwall <notifications@floodwall.ai>",
+    "ALLOWED_ORIGINS": "https://floodwall.ai,https://preview.floodwall.ai",
+    // "waitlist": new accounts wait for an admin to approve them at /app/admin.
+    // "open": anyone can sign up and use the console, the waitlist included.
+    "SIGNUP_MODE": "waitlist"
   },
   // Clears out expired codes, sessions and rate-limit counts once a day.
   "triggers": { "crons": ["17 3 * * *"] },

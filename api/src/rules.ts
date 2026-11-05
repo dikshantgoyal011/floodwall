@@ -41,6 +41,10 @@ export const MESSAGES = {
   notSent: "We could not send the email. Please try again in a moment.",
   unavailable: "Sign-in is not available right now. Please try again later.",
   foreignOrigin: "This site cannot use Floodwall sign-in.",
+  signedOut: "Sign in first.",
+  notAdmin: "Only an admin can do that.",
+  noSuchUser: "There is no account for that address.",
+  adminStays: "Admins can't be removed here. Take the address out of ADMIN_EMAILS first.",
   notFound: "Not found.",
   broken: "Something went wrong. Please try again.",
 };

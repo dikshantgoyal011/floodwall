@@ -4,6 +4,8 @@ import { API, KEY, SECRET, SITE, start } from "./harness.mjs";
 
 const WRONG = "That code is wrong or has expired. Check the newest code, or ask for a new one.";
 const MINUTE = 60_000;
+// A new account, as the service describes it while sign-up is on the waitlist.
+const ADA = { user: { email: "ada@example.com", waiting: true, admin: false } };
 
 let w;
 before(async () => {
@@ -24,7 +26,7 @@ describe("signing in", () => {
     assert.equal(w.outbox.length, 1);
     const [{ headers, body }] = w.outbox;
     assert.equal(headers.authorization, `Bearer ${KEY}`);
-    assert.equal(body.from, "Floodwall <login@floodwall.ai>");
+    assert.equal(body.from, "Floodwall <notifications@floodwall.ai>");
     assert.deepEqual(body.to, ["ada@example.com"]);
     const code = w.lastCode("ada@example.com");
     assert.match(code, /^\d{6}$/);
@@ -34,12 +36,12 @@ describe("signing in", () => {
 
     const verified = await w.call("/auth/verify", { body: { email: "ada@example.com", code } });
     assert.equal(verified.status, 200);
-    assert.deepEqual(verified.body, { user: { email: "ada@example.com" } });
+    assert.deepEqual(verified.body, ADA);
     const cookie = verified.headers.get("Set-Cookie");
     assert.match(cookie, /^__Host-floodwall_session=[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; SameSite=Strict; Max-Age=2592000; Secure$/);
 
     const session = await w.call("/auth/session", { method: "GET", cookie: cookie.split(";")[0] });
-    assert.deepEqual(session.body, { user: { email: "ada@example.com" } });
+    assert.deepEqual(session.body, ADA);
   });
 
   test("a first sign-in makes the account; later ones reuse it", async () => {
@@ -62,7 +64,7 @@ describe("signing in", () => {
     const code = await w.codeFor("  Ada@Example.COM ");
     assert.deepEqual(w.outbox[0].body.to, ["ada@example.com"]);
     const verified = await w.call("/auth/verify", { body: { email: "ADA@example.com", code } });
-    assert.deepEqual(verified.body, { user: { email: "ada@example.com" } });
+    assert.deepEqual(verified.body, ADA);
   });
 
   test("refuses what isn't an address, and sends nothing", async () => {
@@ -347,7 +349,7 @@ describe("sessions", () => {
     await w.age("ada@example.com", MINUTE);
     const two = await w.signIn("ada@example.com");
     await w.call("/auth/signout", { body: {}, cookie: one });
-    assert.deepEqual((await w.call("/auth/session", { method: "GET", cookie: two })).body, { user: { email: "ada@example.com" } });
+    assert.deepEqual((await w.call("/auth/session", { method: "GET", cookie: two })).body, ADA);
   });
 
   test("a session lasts 30 days", async () => {
@@ -365,7 +367,7 @@ describe("sessions", () => {
     const cookie = verified.headers.get("Set-Cookie");
     assert.match(cookie, /^floodwall_session=[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; SameSite=Strict; Max-Age=2592000$/);
     const session = await w.call("/auth/session", { method: "GET", cookie: cookie.split(";")[0], base });
-    assert.deepEqual(session.body, { user: { email: "ada@example.com" } });
+    assert.deepEqual(session.body, ADA);
   });
 });
 
@@ -415,7 +417,7 @@ describe("who may call", () => {
     }
     assert.equal(w.outbox.filter((e) => e.body.to[0] === "bob@example.com").length, 0);
     // The session survived the foreign sign-out.
-    assert.deepEqual((await w.call("/auth/session", { method: "GET", cookie })).body, { user: { email: "ada@example.com" } });
+    assert.deepEqual((await w.call("/auth/session", { method: "GET", cookie })).body, ADA);
   });
 
   test("another site's page can't read who is signed in", async () => {

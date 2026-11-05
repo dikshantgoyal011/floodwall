@@ -98,7 +98,8 @@ const demoClient: AuthClient = {
   },
   async getUser() {
     const stored = read<StoredSession>(local, SESSION_KEY);
-    return stored && stored.expiresAt > Date.now() ? { email: stored.email } : null;
+    // The demo has no waitlist and no admins.
+    return stored && stored.expiresAt > Date.now() ? { email: stored.email, waiting: false, admin: false } : null;
   },
   async signOut() {
     write(local, SESSION_KEY, null);
@@ -106,47 +107,50 @@ const demoClient: AuthClient = {
 };
 
 /**
- * The client for the sign-in service at `base`. The service answers in JSON;
- * a refusal carries a sentence for the reader in `error`, shown as it is.
+ * Calls the sign-in service: a GET, or a POST of `body` as JSON. The service
+ * answers in JSON; a refusal carries a sentence for the reader in `error`,
+ * which is thrown as it is.
  */
-function serviceClient(base: string): AuthClient {
-  async function call<T>(path: string, body?: object): Promise<T> {
-    let response: Response;
-    try {
-      response = await fetch(`${base}${path}`, {
-        method: body ? "POST" : "GET",
-        // The session cookie belongs to the service's host: send it along.
-        credentials: "include",
-        headers: body ? { "Content-Type": "application/json" } : undefined,
-        body: body ? JSON.stringify(body) : undefined,
-      });
-    } catch {
-      throw new Error(AUTH_COPY.service.unreachable);
-    }
-    const answer = (await response.json().catch(() => null)) as (T & { error?: string }) | null;
-    if (!response.ok || !answer) throw new Error(answer?.error ?? AUTH_COPY.service.failed);
-    return answer;
+export async function callService<T>(path: string, body?: object): Promise<T> {
+  if (!AUTH_API_URL) throw new Error(AUTH_COPY.service.failed);
+  let response: Response;
+  try {
+    response = await fetch(`${AUTH_API_URL}${path}`, {
+      method: body ? "POST" : "GET",
+      // The session cookie belongs to the service's host: send it along.
+      credentials: "include",
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new Error(AUTH_COPY.service.unreachable);
   }
+  const answer = (await response.json().catch(() => null)) as (T & { error?: string }) | null;
+  if (!response.ok || !answer) throw new Error(answer?.error ?? AUTH_COPY.service.failed);
+  return answer;
+}
 
+/** The client for the sign-in service (callService). */
+function serviceClient(): AuthClient {
   return {
     async sendCode(email) {
-      await call("/auth/code", { email });
+      await callService("/auth/code", { email });
       return {};
     },
     async verifyCode(email, code) {
-      await call("/auth/verify", { email, code });
+      await callService("/auth/verify", { email, code });
     },
     async getUser() {
       try {
-        return (await call<{ user: AuthUser | null }>("/auth/session")).user;
+        return (await callService<{ user: AuthUser | null }>("/auth/session")).user;
       } catch {
         return null;
       }
     },
     async signOut() {
-      await call("/auth/signout", {});
+      await callService("/auth/signout", {});
     },
   };
 }
 
-export const authClient = AUTH_API_URL ? serviceClient(AUTH_API_URL) : demoClient;
+export const authClient = AUTH_API_URL ? serviceClient() : demoClient;

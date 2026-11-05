@@ -20,6 +20,7 @@ export function AccountPage() {
 
   if (session.status === "loading") return null;
   if (session.status === "signedOut" && !leaving) return <Navigate to={loginPath(AUTH_PATHS.account)} replace />;
+  if (session.status === "signedIn" && session.user.waiting) return <Navigate to={AUTH_PATHS.waitlist} replace />;
 
   async function onSignOut() {
     setLeaving(true);

@@ -6,6 +6,7 @@ import { AUTH_PATHS } from "./constants/auth";
 import { CONSOLE_PATHS } from "./constants/console";
 import { PRICING_PATH } from "./constants/pricing";
 import { AccountPage } from "./pages/AccountPage";
+import { AdminPage } from "./pages/console/AdminPage";
 import { HoldPage } from "./pages/console/HoldPage";
 import { IntentDetailPage } from "./pages/console/IntentDetailPage";
 import { IntentsPage } from "./pages/console/IntentsPage";
@@ -16,15 +17,17 @@ import { PoliciesPage } from "./pages/console/PoliciesPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PricingPage } from "./pages/PricingPage";
 import { SignupPage } from "./pages/SignupPage";
+import { WaitlistPage } from "./pages/WaitlistPage";
 
 // "/" is the landing page and /pricing a draft of the plans, both inside the
 // site's header and footer. The console under /app is a dummy-data preview.
 // /pricing and /app are reachable by URL only (nothing on the landing page
-// links to them) and kept out of search. /login, /signup and /account stand
-// alone, without the header or footer, and sign in with a one-time code:
-// emailed by the sign-in service in api/, or shown on the page by the demo
-// when the build has no service (helpers/auth.ts);
-// /app sends anyone signed out to /login first.
+// links to them) and kept out of search. /login, /signup, /account and
+// /waitlist stand alone, without the header or footer, and sign in with a
+// one-time code: emailed by the sign-in service in api/, or shown on the page
+// by the demo when the build has no service (helpers/auth.ts);
+// /app sends anyone signed out to /login first, and an account still on the
+// waitlist to /waitlist. /app/admin is where admins approve the waitlist.
 export const router = createBrowserRouter([
   {
     element: <SiteLayout />,
@@ -36,6 +39,7 @@ export const router = createBrowserRouter([
   { path: AUTH_PATHS.login, element: <LoginPage /> },
   { path: AUTH_PATHS.signup, element: <SignupPage /> },
   { path: AUTH_PATHS.account, element: <AccountPage /> },
+  { path: AUTH_PATHS.waitlist, element: <WaitlistPage /> },
   {
     path: CONSOLE_PATHS.overview,
     element: <ConsoleLayout />,
@@ -47,6 +51,7 @@ export const router = createBrowserRouter([
       { path: CONSOLE_PATHS.hold, element: <HoldPage /> },
       { path: CONSOLE_PATHS.ledger, element: <LedgerPage /> },
       { path: CONSOLE_PATHS.policies, element: <PoliciesPage /> },
+      { path: CONSOLE_PATHS.admin, element: <AdminPage /> },
     ],
   },
   { path: "*", element: <Navigate to="/" replace /> },

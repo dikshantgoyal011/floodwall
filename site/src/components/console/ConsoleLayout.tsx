@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router";
 import { AUTH_COPY, AUTH_PATHS } from "../../constants/auth";
-import { CONSOLE_NAV, CONSOLE_PATHS } from "../../constants/console";
+import { ADMIN_NAV, CONSOLE_NAV, CONSOLE_PATHS } from "../../constants/console";
 import { loginPath } from "../../helpers/auth";
 import { cx } from "../../helpers/cx";
 import { usePlane } from "../../hooks/usePlane";
@@ -23,7 +23,8 @@ function HoldCount() {
 
 /**
  * The console shell under /app: a sidebar (a top bar on narrow screens) and
- * the page. Signed-out visitors go to sign in first and come back here.
+ * the page. Signed-out visitors go to sign in first and come back here; an
+ * account on the waitlist goes to /waitlist. Admins also see Admin.
  */
 export function ConsoleLayout() {
   const { session, signOut } = useSession();
@@ -32,6 +33,8 @@ export function ConsoleLayout() {
 
   if (session.status === "loading") return null;
   if (session.status === "signedOut") return <Navigate to={loginPath(location.pathname + location.search)} replace />;
+  if (session.user.waiting) return <Navigate to={AUTH_PATHS.waitlist} replace />;
+  const nav = session.user.admin ? [...CONSOLE_NAV, ADMIN_NAV] : CONSOLE_NAV;
 
   return (
     <PlaneProvider>
@@ -53,7 +56,7 @@ export function ConsoleLayout() {
             className="flex flex-col gap-0.5 console-narrow:flex-row console-narrow:overflow-x-auto"
             aria-label="Console"
           >
-            {CONSOLE_NAV.map(({ to, label, end }) => (
+            {nav.map(({ to, label, end }) => (
               <NavLink
                 key={to}
                 to={to}

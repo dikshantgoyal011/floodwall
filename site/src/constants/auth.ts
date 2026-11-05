@@ -16,6 +16,7 @@ export const AUTH_PATHS = {
   login: "/login",
   signup: "/signup",
   account: "/account",
+  waitlist: "/waitlist",
 } as const;
 
 /** The query parameter that names where to go after signing in. */
@@ -72,6 +73,16 @@ export const AUTH_COPY = {
     console: "Open the console",
     signOut: "Sign out",
     signingOut: "Signing out…",
+  },
+  waitlist: {
+    kicker: "Beta",
+    title: "You're on the waitlist.",
+    lead: "Floodwall is in beta, and we're letting people in a few at a time.",
+    /** Wrapped around the address, which is set in bold. */
+    willEmail: ["We'll email ", " as soon as your account is approved. You don't need to do anything else."],
+    check: "Check again",
+    checking: "Checking…",
+    stillWaiting: "Still waiting for approval. We'll email you when it's done.",
   },
   /** When the sign-in service can't be asked, or gives no reason of its own. */
   service: {

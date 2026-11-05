@@ -23,6 +23,9 @@ export async function start({ bindings = {}, resend } = {}) {
   const mf = new Miniflare(
     convertV4MiniflareOptions({
       modules: true,
+      // Module names are relative to this; the default, the working directory,
+      // breaks when the tests run from anywhere but api/.
+      modulesRoot: path.join(root, "dist"),
       scriptPath: path.join(root, "dist/index.js"),
       compatibilityDate: config.compatibility_date,
       d1Databases: { DB: "floodwall-auth-test" },
