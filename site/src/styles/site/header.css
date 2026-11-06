@@ -1,0 +1,81 @@
+:where(.fw-site) .site-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--canvas);
+}
+:where(.fw-site) .nav-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: var(--header-height);
+}
+:where(.fw-site) .nav-links {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  align-self: stretch;
+  gap: 28px;
+}
+:where(.fw-site) .nav-links a {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 4px;
+  color: var(--fw-muted);
+  font-size: 15px;
+  font-weight: 500;
+  transition: color var(--motion-fast) var(--ease-out);
+}
+:where(.fw-site) .nav-links a[aria-current] { color: var(--ink); }
+@media (hover: hover) and (pointer: fine) {
+  :where(.fw-site) .nav-links a:hover { color: var(--ink); }
+}
+:where(.fw-site) .nav-links a span {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  align-self: stretch;
+}
+:where(.fw-site) .nav-indicator {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 1px;
+  height: 2px;
+  background: var(--ink);
+  transform-origin: left center;
+  visibility: hidden;
+  pointer-events: none;
+  transition: transform var(--motion-move) var(--ease-out);
+}
+/* Inset: the links span the full header height, so an outside ring would lose its top edge at the viewport. */
+:where(.fw-site) .nav-links a:focus-visible { outline-offset: -4px; }
+/* Forced colours drop backgrounds; the underline keeps the system text colour. */
+@media (forced-colors: active) {
+  :where(.fw-site) .nav-indicator { forced-color-adjust: none; background: CanvasText; }
+}
+:where(.fw-site) .site-header .button { gap: 12px; }
+:where(.fw-site) .site-header .button svg { width: 16px; height: 16px; }
+@media (max-width: 1100px) {
+  :where(.fw-site) .nav-bar { gap: 16px; }
+}
+@media (max-width: 850px) {
+  :root:where(:has(.fw-site)) { --header-height: 128px; }
+  :where(.fw-site) .nav-bar { flex-wrap: wrap; gap: 12px; padding-block: 16px 0; }
+  /* The links share the row by their own widths; under enlarged text spacing they wrap instead of overflowing. */
+  :where(.fw-site) .nav-links { order: 3; flex-wrap: wrap; width: 100%; justify-content: space-between; gap: 0 4px; }
+  :where(.fw-site) .nav-links a { flex: 1 1 auto; padding-inline: 0; font-size: var(--fw-text-sm); }
+  :where(.fw-site) .site-header .button { padding-inline: 14px; font-size: var(--fw-text-xs); }
+}
+/* Six sections and the call to action only fit narrow phones once Home (the logo) leaves the menu. */
+@media (max-width: 380px) {
+  :where(.fw-site) .site-header .button .button-arrow { display: none; }
+  :where(.fw-site) .nav-links a[data-section="home"] { display: none; }
+  :where(.fw-site) .logo { font-size: 20px; }
+  :where(.fw-site) .site-header .button { padding-inline: 10px; }
+}

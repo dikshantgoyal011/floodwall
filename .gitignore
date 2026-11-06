@@ -6,3 +6,8 @@ Cargo.lock
 .DS_Store
 npm-debug.log*
 /preview-dist
+
+# Local Claude Code session config
+/.claude/
+/site/.ssr
+*.tsbuildinfo

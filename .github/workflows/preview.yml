@@ -43,10 +43,13 @@ jobs:
           d=preview-dist
           rm -f "$d/CNAME" "$d/sitemap.xml"
           printf 'User-agent: *\nAllow: /\n' > "$d/robots.txt"
-          sed -i 's#<head>#<head>\n    <meta name="robots" content="noindex, nofollow" />#' "$d/index.html"
-          grep -q 'name="robots" content="noindex, nofollow"' "$d/index.html"
-          # Client-side routes (the console) load from the SPA fallback.
-          cp "$d/index.html" "$d/404.html"
+          # index.html is the prerendered landing page; 404.html, the SPA
+          # fallback that client-side routes (the console) load from, is the
+          # same page left empty. The build writes both.
+          for page in index.html 404.html; do
+            sed -i 's#<head>#<head>\n    <meta name="robots" content="noindex, nofollow" />#' "$d/$page"
+            grep -q 'name="robots" content="noindex, nofollow"' "$d/$page"
+          done
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:

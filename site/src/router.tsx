@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate } from "react-router";
+import { Navigate, type RouteObject } from "react-router";
 import App from "./App";
 import { ConsoleLayout } from "./components/console/ConsoleLayout";
 import { SiteLayout } from "./components/shared/SiteLayout";
@@ -24,7 +24,10 @@ import { SignupPage } from "./pages/SignupPage";
 // alone, without the header or footer, and sign in with a one-time code, a
 // demo for now (helpers/auth.ts);
 // /app sends anyone signed out to /login first.
-export const router = createBrowserRouter([
+//
+// The build prerenders "/" into index.html (scripts/build.mjs, entry-server.tsx); main.tsx
+// hydrates it there and renders every other page from scratch.
+export const routes: RouteObject[] = [
   {
     element: <SiteLayout />,
     children: [
@@ -49,4 +52,4 @@ export const router = createBrowserRouter([
     ],
   },
   { path: "*", element: <Navigate to="/" replace /> },
-]);
+];

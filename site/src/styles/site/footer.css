@@ -1,0 +1,253 @@
+:where(.fw-site) .site-footer {
+  --footer-inset: 24px;
+  width: min(1440px, 100% - 2 * var(--deck-gutter));
+  margin: 0 auto var(--slide-gap);
+  padding: var(--footer-inset);
+  background: var(--paper);
+  border: 1px solid var(--line);
+}
+
+:where(.fw-site) .footer-content {
+  position: relative;
+  min-width: 0;
+  border: 1px solid var(--line);
+}
+
+:where(.fw-site) .footer-scene {
+  position: relative;
+  isolation: isolate;
+  padding-bottom: clamp(144px, 20vw, 280px);
+}
+
+:where(.fw-site) .footer-heading {
+  display: grid;
+  grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr);
+  border-bottom: 1px solid var(--line);
+}
+
+:where(.fw-site) .footer-brand {
+  display: flex;
+  grid-column: 1;
+  grid-row: 1;
+  align-items: center;
+  padding: 24px 24px 0;
+  border-right: 1px solid var(--line);
+}
+
+:where(.fw-site) .footer-heading h2 {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  padding: 24px;
+}
+
+:where(.fw-site) .footer-body {
+  display: grid;
+  grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr);
+}
+
+:where(.fw-site) .footer-lead {
+  grid-column: 1;
+  grid-row: 2;
+  padding: 16px 24px 24px;
+  border-right: 1px solid var(--line);
+  color: var(--fw-muted);
+  font-size: var(--fw-text-base);
+  line-height: var(--fw-leading-body);
+}
+
+:where(.fw-site) .footer-links {
+  display: grid;
+  grid-column: 2;
+  grid-template-columns: minmax(0, .8fr) minmax(0, .8fr) minmax(0, 1.4fr);
+}
+
+/* One feathered paper veil per list, rather than a patch for every label. */
+:where(.fw-site) .footer-links ul::before {
+  content: "";
+  position: absolute;
+  inset: -12px -20px;
+  z-index: -1;
+  background: color-mix(in srgb, var(--paper) 96%, transparent);
+  filter: blur(12px);
+  pointer-events: none;
+}
+
+:where(.fw-site) .footer-links > div {
+  min-width: 0;
+  padding: 24px;
+}
+
+:where(.fw-site) .footer-links > div + div { border-left: 1px solid var(--line); }
+
+:where(.fw-site) .footer-links h3 {
+  position: relative;
+  z-index: 1;
+  margin-bottom: 12px;
+  color: var(--fw-muted);
+  font: 500 var(--label-size)/1.5 var(--mono);
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+}
+
+:where(.fw-site) .footer-links ul {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  width: fit-content;
+  max-width: 100%;
+  gap: 4px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+:where(.fw-site) .footer-links a {
+  display: flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 32px;
+  margin-inline: -4px;
+  padding: 4px;
+  background: transparent;
+  color: var(--fw-muted);
+  font-size: var(--fw-text-sm);
+  line-height: 1.5;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  :where(.fw-site) .footer-links a:hover, :where(.fw-site) .footer-bottom a:hover {
+    color: var(--ink);
+    text-decoration: underline;
+  }
+  :where(.fw-site) .footer-control:hover { background: var(--canvas); }
+}
+
+:where(.fw-site) .footer-panorama {
+  position: absolute;
+  inset: 0 calc(-1 * (var(--footer-inset) + 1px));
+  z-index: -1;
+  display: flex;
+  align-items: end;
+  pointer-events: none;
+}
+
+:where(.fw-site) .footer-artwork {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 2164 / 727;
+  overflow: hidden;
+  mix-blend-mode: var(--footer-artwork-blend);
+  opacity: var(--footer-artwork-opacity);
+}
+
+:where(.fw-site) .footer-water {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+
+/* Only the engraved ink reverses in dark mode; the mist keeps its pale body. */
+:where(.fw-site) .footer-water, :where(.fw-site) .footer-boat image { filter: var(--footer-artwork-filter); }
+:where(.fw-site) .footer-fog image {
+  filter: var(--footer-fog-filter);
+  transform: scaleY(var(--footer-fog-height));
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+:where(.fw-site) .footer-atmosphere { position: absolute; inset: 0; width: 100%; height: 100%; }
+:where(.fw-site) .footer-animated { animation-play-state: paused !important; }
+:where(.fw-site) .footer-artwork[data-running="true"] .footer-animated { animation-play-state: running !important; }
+
+/* The long linear passes are atmospheric, with independent clocks and no visible resets. */
+:where(.fw-site) .footer-fog--high { opacity: var(--footer-fog-high-opacity); transform: translate(1040px, 80px); animation: footer-fog-high 82s linear -51s infinite; }
+:where(.fw-site) .footer-fog--bridge { opacity: var(--footer-fog-bridge-opacity); transform: translate(80px, 210px); animation: footer-fog-bridge 64s linear -26s infinite; }
+:where(.fw-site) .footer-fog--low { opacity: var(--footer-fog-low-opacity); transform: translate(760px, 360px); animation: footer-fog-low 73s linear -44s infinite; }
+:where(.fw-site) .footer-boat--far { animation: footer-boat-far 62s linear -14s infinite; }
+:where(.fw-site) .footer-boat--middle { animation: footer-boat-middle 52s linear -24s infinite; }
+:where(.fw-site) .footer-boat--near { animation: footer-boat-near 44s linear -30s infinite; }
+
+@keyframes footer-fog-high { from { transform: translate(-920px, 80px); } to { transform: translate(2184px, 88px); } }
+@keyframes footer-fog-bridge { from { transform: translate(-1120px, 210px); } to { transform: translate(2184px, 222px); } }
+@keyframes footer-fog-low { from { transform: translate(-1020px, 360px); } to { transform: translate(2184px, 352px); } }
+@keyframes footer-boat-far {
+  0% { transform: translate(-140px, 1px); opacity: 0; }
+  8%, 92% { opacity: 1; }
+  50% { transform: translate(280px, -1px); }
+  100% { transform: translate(700px, 1px); opacity: 0; }
+}
+@keyframes footer-boat-middle {
+  0% { transform: translate(-260px, 2px); opacity: 0; }
+  8%, 92% { opacity: 1; }
+  50% { transform: translate(110px, -2px); }
+  100% { transform: translate(480px, 2px); opacity: 0; }
+}
+@keyframes footer-boat-near {
+  0% { transform: translate(-440px, 2px); opacity: 0; }
+  8%, 92% { opacity: 1; }
+  50% { transform: translate(-130px, -2px); }
+  100% { transform: translate(180px, 2px); opacity: 0; }
+}
+
+:where(.fw-site) .footer-bottom {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) 48px 48px;
+  border-top: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--fw-muted);
+  font-size: var(--fw-text-xs);
+  line-height: 1.6;
+}
+
+:where(.fw-site) .footer-bottom > span { padding: 16px 24px; }
+:where(.fw-site) .footer-copyright { white-space: nowrap; }
+:where(.fw-site) .footer-bottom > span + span { border-left: 1px solid var(--line); }
+:where(.fw-site) .footer-bottom a { text-decoration: underline; }
+
+:where(.fw-site) .footer-control {
+  display: grid;
+  place-items: center;
+  min-height: 48px;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+:where(.fw-site) .footer-control:disabled { color: var(--fw-muted); cursor: default; }
+:where(.fw-site) .footer-control:focus-visible { outline-offset: -5px; }
+
+@media (prefers-reduced-motion: reduce) {
+  :where(.fw-site) .footer-animated { animation: none !important; }
+}
+
+@media (min-width: 1100px) {
+  :where(.fw-site) .site-footer { --footer-inset: 32px; }
+}
+
+@media (max-width: 900px) {
+  :where(.fw-site) .footer-body { grid-template-columns: 1fr; }
+  :where(.fw-site) .footer-links { grid-column: 1; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.4fr); }
+}
+
+@media (max-width: 600px) {
+  :where(.fw-site) .site-footer { --footer-inset: 16px; }
+  :where(.fw-site) .footer-heading { grid-template-columns: 1fr; }
+  :where(.fw-site) .footer-bottom { grid-template-columns: minmax(0, 1fr) 48px 48px; }
+  :where(.fw-site) .footer-copyright { grid-column: 1; grid-row: 1; }
+  :where(.fw-site) .footer-credit { grid-column: 1 / -1; grid-row: 2; }
+  :where(.fw-site) .footer-motion-control { grid-column: 2; grid-row: 1; }
+  :where(.fw-site) .footer-theme-control { grid-column: 3; grid-row: 1; }
+  :where(.fw-site) .footer-brand { padding: 16px; border-right: 0; border-bottom: 1px solid var(--line); }
+  :where(.fw-site) .footer-heading h2 { grid-column: 1; grid-row: 2; padding: 20px 16px; font-size: 32px; }
+  :where(.fw-site) .footer-lead { grid-row: 3; padding: 20px 16px; border-right: 0; border-top: 1px solid var(--line); }
+  :where(.fw-site) .footer-links { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  :where(.fw-site) .footer-links > div { padding: 16px; }
+  :where(.fw-site) .footer-links > :last-child { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); }
+  :where(.fw-site) .footer-bottom > span { padding: 12px 16px; }
+  :where(.fw-site) .footer-bottom > span + span { border-left: 0; border-top: 1px solid var(--line); }
+}

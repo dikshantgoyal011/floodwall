@@ -1,14 +1,31 @@
 /* The site's one stylesheet: Tailwind, the design tokens, and the few
  * global rules no single element owns. Everything else is utilities in the
- * markup. */
+ * markup, except the landing page, its header and its footer, which keep
+ * their own stylesheets in styles/site, scoped to .fw-site (SiteLayout). */
+
+/* Those stylesheets sit in the fw layer, above the base styles they
+ * override and below the utilities, so a utility always wins. */
+@layer theme, base, fw, components, utilities;
 
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "./styles/site/theme.css" layer(fw);
+@import "./styles/site/header.css" layer(fw);
+@import "./styles/site/hero.css" layer(fw);
+@import "./styles/site/sections.css" layer(fw);
+@import "./styles/site/footer.css" layer(fw);
 
 /* Build-time helpers, not markup: keep their words out of the class scan. */
 @source not "../crate-stats.mjs";
 @source not "../crate-stats.test.mjs";
+@source not "../structured-data.mjs";
+@source not "../structured-data.test.mjs";
+/* Design sources, the Tally form's own CSS and the landing page's diagram scripts: no utilities. */
+@source not "../artwork";
+@source not "../tally";
+@source not "../scripts";
+@source not "../public";
 /* Browser hooks and helpers, no markup: words like "resize" would emit stray utilities. */
 @source not "./hooks";
 @source not "./helpers";
@@ -100,121 +117,22 @@
   --radius-card: 24px;
   --radius-pill: 999px;
   --shadow-card: 0 24px 80px rgba(47, 110, 137, 0.12);
-
-  /* Layered backgrounds, used with bg-(image:--image-*) or [background:...]. */
-  --image-hero:
-    linear-gradient(180deg, rgba(247, 251, 255, 0.96), rgba(247, 251, 255, 0.62) 46%, var(--color-paper) 100%),
-    radial-gradient(ellipse at 24% 16%, rgba(184, 227, 244, 0.64), transparent 34%);
-  --image-hero-veil:
-    linear-gradient(
-      180deg,
-      var(--color-paper) 0%,
-      rgba(247, 251, 255, 0.98) 34%,
-      rgba(247, 251, 255, 0.72) 50%,
-      rgba(247, 251, 255, 0.16) 70%,
-      rgba(247, 251, 255, 0.32) 100%
-    ),
-    linear-gradient(90deg, rgba(247, 251, 255, 0.94), rgba(247, 251, 255, 0.62) 42%, rgba(247, 251, 255, 0.12));
-  --image-hero-fog:
-    radial-gradient(ellipse at 22% 50%, rgba(255, 255, 255, 0.86), transparent 42%),
-    radial-gradient(ellipse at 62% 54%, rgba(184, 227, 244, 0.42), transparent 46%),
-    radial-gradient(ellipse at 84% 44%, rgba(232, 109, 78, 0.14), transparent 34%);
-  --image-bay-lights:
-    radial-gradient(circle, rgba(224, 169, 59, 0.82) 0 1.4px, transparent 1.9px),
-    radial-gradient(circle, rgba(115, 169, 66, 0.5) 0 1px, transparent 1.6px),
-    radial-gradient(circle, rgba(47, 110, 137, 0.38) 0 1.2px, transparent 1.8px);
-  --image-panel:
-    linear-gradient(180deg, rgba(8, 11, 13, 0.9), rgba(18, 38, 48, 0.92));
-  --image-panel-grid:
-    linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
-  /* The footer's whole background, poster photo placed and sized within it. */
-  --background-footer:
-    radial-gradient(ellipse at 72% 72%, rgba(232, 109, 78, 0.2), transparent 34%),
-    linear-gradient(180deg, rgba(247, 251, 255, 0.94) 0%, rgba(215, 232, 241, 0.68) 30%, rgba(127, 185, 207, 0.34) 100%),
-    url("/footer-sf-poster.jpg") center 58% / cover no-repeat,
-    linear-gradient(180deg, var(--color-paper) 0%, #d7e8f1 30%, #7fb9cf 100%);
-  --image-footer-wash:
-    linear-gradient(0deg, rgba(247, 251, 255, 0.86) 0, rgba(247, 251, 255, 0.5) 64px, transparent 160px),
-    linear-gradient(
-      180deg,
-      rgba(247, 251, 255, 0.96) 0%,
-      rgba(247, 251, 255, 0.7) 30%,
-      rgba(247, 251, 255, 0.18) 58%,
-      rgba(31, 82, 96, 0.32) 100%
-    ),
-    linear-gradient(
-      90deg,
-      rgba(247, 251, 255, 0.94),
-      rgba(247, 251, 255, 0.52) 42%,
-      rgba(247, 251, 255, 0.08) 68%,
-      rgba(12, 52, 67, 0.28)
-    );
-  --image-footer-grid:
-    linear-gradient(rgba(8, 11, 13, 0.12) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(8, 11, 13, 0.1) 1px, transparent 1px);
-  --image-footer-fog:
-    radial-gradient(ellipse at 20% 48%, rgba(255, 255, 255, 0.8), transparent 44%),
-    radial-gradient(ellipse at 56% 58%, rgba(255, 255, 255, 0.54), transparent 48%),
-    radial-gradient(ellipse at 84% 46%, rgba(184, 227, 244, 0.5), transparent 38%);
-
-  /* Motion. Headline lines rise in turn; the bay scenes drift and glow. */
-  --animate-fade-rise: fade-rise 0.8s ease-out both;
-  --animate-fade-rise-2: fade-rise 0.8s 0.2s ease-out both;
-  --animate-fade-rise-3: fade-rise 0.8s 0.4s ease-out both;
-  --animate-fog-drift: fog-drift 34s ease-in-out infinite alternate;
-  --animate-fog-drift-slow: fog-drift 46s ease-in-out infinite alternate-reverse;
-  --animate-footer-fog: fog-drift 44s ease-in-out infinite alternate;
-  --animate-bridge-glow: bridge-glow 8s ease-in-out infinite;
-  --animate-bridge-glow-slow: bridge-glow 9s ease-in-out infinite;
-  --animate-twinkle: twinkle 5.5s steps(3, end) infinite;
-
-  @keyframes fade-rise {
-    from {
-      opacity: 0;
-      transform: translateY(20px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  @keyframes fog-drift {
-    from {
-      transform: translate3d(-5%, -3px, 0) scaleX(1.02);
-    }
-    to {
-      transform: translate3d(5%, 5px, 0) scaleX(1.08);
-    }
-  }
-
-  @keyframes twinkle {
-    0%,
-    100% {
-      opacity: 0.18;
-    }
-    50% {
-      opacity: 0.42;
-    }
-  }
-
-  @keyframes bridge-glow {
-    0%,
-    100% {
-      opacity: 0.18;
-      transform: translate3d(0, 0, 0);
-    }
-    50% {
-      opacity: 0.34;
-      transform: translate3d(8px, -3px, 0);
-    }
-  }
 }
 
 /* ---------------------------------------------------------------- Base */
 
 @layer base {
+  /* On html and body rather than in index.html, so the landing page's own
+   * html and body rules (styles/site/theme.css) can override them. */
+  html {
+    @apply scroll-smooth scroll-pt-header bg-paper font-body text-ink scheme-light motion-reduce:scroll-auto;
+  }
+
+  /* clip, not hidden: hidden would break the sticky header. */
+  body {
+    @apply min-w-[320px] overflow-x-clip bg-paper text-base leading-normal text-ink [-webkit-font-smoothing:antialiased];
+  }
+
   a {
     color: inherit;
     text-decoration: none;
