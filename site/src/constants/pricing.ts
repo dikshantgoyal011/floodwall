@@ -1,9 +1,9 @@
 // Plans, prices and copy for the /pricing page. The prices are the working
 // proposal for Floodwall Cloud; they live here so they change in one place.
 
-import { EARLY_ACCESS_URL, REPO_URL } from "./links";
+import { EARLY_ACCESS_URL, PRICING_PATH, REPO_URL } from "./links";
 
-export const PRICING_PATH = "/pricing";
+export { PRICING_PATH };
 
 export type PricingPlan = {
   name: string;

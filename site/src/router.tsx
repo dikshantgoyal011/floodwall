@@ -18,9 +18,9 @@ import { PricingPage } from "./pages/PricingPage";
 import { SignupPage } from "./pages/SignupPage";
 
 // "/" is the landing page, with its own header and footer; /pricing, a draft of
-// the plans, borrows them through SiteLayout. The console under /app is a dummy-data preview.
-// /pricing and /app are reachable by URL only (nothing on the landing page
-// links to them) and kept out of search. /login, /signup and /account stand
+// the plans, borrows them through SiteLayout and is linked from the header. The console under
+// /app is a dummy-data preview, reachable by URL only. Both are kept out of search. /login,
+// /signup and /account stand
 // alone, without the header or footer, and sign in with a one-time code, a
 // demo for now (helpers/auth.ts);
 // /app sends anyone signed out to /login first.

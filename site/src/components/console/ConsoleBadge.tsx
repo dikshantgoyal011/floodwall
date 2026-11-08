@@ -1,11 +1,22 @@
-import { Badge } from "../ui/badge";
 import { STATUS_TONE } from "../../constants/console";
 import { cx } from "../../helpers/cx";
 import { consoleTone } from "../../styles/classes";
 import type { Verdict } from "../../types";
 import type { IntentStatus } from "../../types/console";
 
-/** An intent status or gate verdict as shadcn's Badge, colored by tone; a size up from shadcn's 20px. */
+/**
+ * An intent status or gate verdict in the landing page's verdict type: Geist Mono, 11px, on its
+ * tone's tint, square. The word carries the meaning; the color repeats it.
+ */
 export function ConsoleBadge({ value }: { value: IntentStatus | Verdict }) {
-  return <Badge className={cx("h-6 px-2.5", consoleTone[STATUS_TONE[value]])}>{value}</Badge>;
+  return (
+    <span
+      className={cx(
+        "inline-flex h-6 shrink-0 items-center px-2 font-mono text-[11px] leading-none font-medium whitespace-nowrap",
+        consoleTone[STATUS_TONE[value]],
+      )}
+    >
+      {value}
+    </span>
+  );
 }

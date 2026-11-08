@@ -69,6 +69,7 @@
   --footer-artwork-filter: none;
   --footer-artwork-blend: normal;
   --footer-artwork-opacity: 1;
+  --footer-artwork-wash: none;
   --footer-fog-filter: none;
   --footer-fog-height: 1;
   --footer-fog-high-opacity: .4;
@@ -159,6 +160,15 @@
   --footer-artwork-filter: invert(1) hue-rotate(180deg);
   --footer-artwork-blend: screen;
   --footer-artwork-opacity: .82;
+  /* A dusk wash over the unchanged print, densest where the skyline meets the links and thinning
+     to the water, so the bright negative linework recedes while the bridge keeps its red. It fades
+     in from the art's top edge: over the empty sky it would otherwise cut the frame's side rules. */
+  --footer-artwork-wash: linear-gradient(180deg,
+    transparent,
+    color-mix(in srgb, var(--paper) 80%, transparent) 14%,
+    color-mix(in srgb, var(--paper) 58%, transparent) 40%,
+    color-mix(in srgb, var(--paper) 34%, transparent) 66%,
+    color-mix(in srgb, var(--paper) 20%, transparent));
   --footer-fog-filter: brightness(0) invert(.9) blur(8px);
   --footer-fog-height: .55;
   --footer-fog-high-opacity: .1;

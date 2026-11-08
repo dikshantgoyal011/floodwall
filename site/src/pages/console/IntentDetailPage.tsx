@@ -1,15 +1,16 @@
+import type { ReactNode } from "react";
 import { Link, useParams } from "react-router";
 import { ConsoleBackLink } from "../../components/console/ConsoleBackLink";
 import { ConsoleBadge } from "../../components/console/ConsoleBadge";
 import { ConsoleEmpty } from "../../components/console/ConsoleEmpty";
 import { ConsoleIntentSteps } from "../../components/console/ConsoleIntentSteps";
 import { ConsolePageHeader } from "../../components/console/ConsolePageHeader";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
+import { ConsolePanel } from "../../components/console/ConsolePanel";
 import { CONSOLE_PATHS } from "../../constants/console";
 import { describeAction } from "../../helpers/gate";
 import { usePlane } from "../../hooks/usePlane";
 import { cx } from "../../helpers/cx";
-import { consoleGrow, consoleLabel, consoleList, consoleMono, consoleRow } from "../../styles/classes";
+import { consoleGrow, consoleLink, consoleList, consoleMono, consoleRow, monoLabel } from "../../styles/classes";
 
 export function IntentDetailPage() {
   const { id } = useParams();
@@ -19,8 +20,13 @@ export function IntentDetailPage() {
   if (!intent) {
     return (
       <>
-        <ConsolePageHeader title="Intent not found" />
-        <Link to={CONSOLE_PATHS.intents}>Back to intents</Link>
+        <ConsoleBackLink to={CONSOLE_PATHS.intents}>Intents</ConsoleBackLink>
+        <ConsolePageHeader title="Intent not found" description={`No intent has the id ${id}. It may be from another plane.`} />
+        <ConsolePanel>
+          <Link className={consoleLink} to={CONSOLE_PATHS.intents}>
+            See all intents
+          </Link>
+        </ConsolePanel>
       </>
     );
   }
@@ -44,65 +50,63 @@ export function IntentDetailPage() {
         actions={<ConsoleIntentSteps intent={intent} />}
       />
 
-      <Card>
-        <CardContent>
-          <dl className="grid grid-cols-[repeat(auto-fit,minmax(140px,1fr))] gap-5">
-            {facts.map(({ label, value }) => (
-              <div key={label}>
-                <dt className={cx(consoleLabel, "mb-1.5")}>{label}</dt>
-                <dd className="font-semibold">{value}</dd>
-              </div>
+      <ConsoleFacts facts={facts} />
+
+      <ConsolePanel title="Gate verdicts" flush action="Harshest verdict wins">
+        {intent.verdicts ? (
+          <ul className={consoleList}>
+            {intent.verdicts.map((v) => (
+              <li key={v.policy} className={consoleRow}>
+                <span className={consoleGrow}>
+                  <code className="text-ink">{v.policy}</code>
+                  {v.reason && <span className="text-muted"> · {v.reason}</span>}
+                </span>
+                <ConsoleBadge value={v.verdict} />
+              </li>
             ))}
-          </dl>
-        </CardContent>
-      </Card>
+          </ul>
+        ) : (
+          <ConsoleEmpty title="Not gated yet">Run a tick to send it through the gate.</ConsoleEmpty>
+        )}
+      </ConsolePanel>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Gate verdicts</CardTitle>
-          <CardAction className="text-muted">Harshest verdict wins</CardAction>
-        </CardHeader>
-        <CardContent>
-          {intent.verdicts ? (
-            <ul className={consoleList}>
-              {intent.verdicts.map((v) => (
-                <li key={v.policy} className={consoleRow}>
-                  <span className={consoleGrow}>
-                    <code>{v.policy}</code>
-                    {v.reason && <span className="text-muted"> · {v.reason}</span>}
-                  </span>
-                  <ConsoleBadge value={v.verdict} />
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <ConsoleEmpty>Not gated yet. Run a tick to send it through the gate.</ConsoleEmpty>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Ledger history</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {history.length ? (
-            <ul className={consoleList}>
-              {history.map((r) => (
-                <li key={r.seq} className={consoleRow}>
-                  <span className={cx(consoleMono, "text-muted")}>#{r.seq}</span>
-                  <span className={consoleGrow}>
-                    {r.kind} · {r.summary}
-                  </span>
-                  <span className="text-muted">tick {r.tick}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <ConsoleEmpty>Nothing recorded yet.</ConsoleEmpty>
-          )}
-        </CardContent>
-      </Card>
+      <ConsolePanel title="Ledger history" flush>
+        {history.length ? (
+          <ul className={consoleList}>
+            {history.map((r) => (
+              <li key={r.seq} className={consoleRow}>
+                <span className={cx(consoleMono, "w-8 shrink-0 text-muted")}>#{r.seq}</span>
+                <span className={consoleGrow}>
+                  <span className="font-medium text-ink">{r.kind}</span>
+                  <span className="text-muted"> · {r.summary}</span>
+                </span>
+                <span className={cx(consoleMono, "text-muted")}>tick {r.tick}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <ConsoleEmpty title="Nothing recorded yet">The ledger records this intent once the gate rules on it.</ConsoleEmpty>
+        )}
+      </ConsolePanel>
     </>
+  );
+}
+
+/**
+ * The intent's facts in one ruled frame, the Overview figures' title-block cells. Each cell draws its
+ * own right and bottom rule and the frame clips the outermost, so a short last row leaves no gap.
+ */
+function ConsoleFacts({ facts }: { facts: { label: string; value: ReactNode }[] }) {
+  return (
+    <div className="overflow-hidden border border-line bg-surface">
+      <dl className="-me-px -mb-px grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))]">
+        {facts.map(({ label, value }) => (
+          <div key={label} className="flex min-w-0 flex-col gap-2 border-e border-b border-line px-5 py-4 console-narrow:px-4">
+            <dt className={monoLabel}>{label}</dt>
+            <dd className="text-[15px] font-medium text-ink">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
   );
 }

@@ -26,9 +26,9 @@ export function ButtonLink({ href, size, children }: ButtonLinkProps) {
       render={<a href={href} />}
       className={cx(
         BUTTON_RESET,
-        "rounded-none bg-ink font-medium text-white",
+        "rounded-none bg-action font-medium text-action-text",
         "transition-[background] duration-160 ease-[cubic-bezier(.25,1,.5,1)]",
-        "hover:bg-[#353535] active:bg-black",
+        "hover:bg-action-hover",
         SIZE[size],
       )}
     >

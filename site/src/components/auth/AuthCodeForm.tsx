@@ -12,7 +12,7 @@ const COPY = AUTH_COPY.form;
 const FIELD = "flex flex-col gap-2";
 const LABEL = "text-sm font-medium text-ink";
 const INPUT =
-  "h-11 rounded-none border-line bg-surface px-3.5 text-base text-ink md:text-base focus-visible:border-ink focus-visible:ring-0";
+  "h-11 rounded-none border-line-strong bg-surface px-3.5 text-base text-ink md:text-base focus-visible:border-ink focus-visible:ring-0";
 
 type Busy = "send" | "resend" | "verify" | null;
 

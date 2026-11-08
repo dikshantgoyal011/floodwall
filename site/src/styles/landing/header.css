@@ -17,29 +17,42 @@
   flex-wrap: wrap;
   align-items: stretch;
   align-self: stretch;
-  gap: 28px;
 }
-.nav-links a {
+/* Items sit above the hover highlight, which the strip paints first. */
+.nav-links > a,
+.nav-menu-button {
   position: relative;
   display: inline-flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: center;
   min-height: 44px;
-  padding: 0 4px;
+  padding: 0;
   color: var(--muted);
   font-size: 15px;
   font-weight: 500;
   transition: color var(--motion-fast) var(--ease-out);
 }
-.nav-links a[aria-current] { color: var(--ink); }
-@media (hover: hover) and (pointer: fine) {
-  .nav-links a:hover { color: var(--ink); }
-}
-.nav-links a span {
-  position: relative;
+.nav-links > a[data-current],
+.nav-menu-button[data-current],
+.nav-menu-button[aria-expanded="true"],
+.nav-links > a[data-fluid-hover-active],
+.nav-links > a:has([data-fluid-hover-active]),
+.nav-menu-button:has([data-fluid-hover-active]) { color: var(--ink); }
+/* Each item's box fills the header's height, the label centred on the logo's line, so the box
+   stands on the accent at the header's bottom edge. The boxes touch, so one highlight glides
+   from item to item. */
+.nav-item {
   display: inline-flex;
   align-items: center;
   align-self: stretch;
+  gap: 6px;
+  padding: 0 24px;
+}
+/* The rubber-band hover: a white sheet with the drawing rule, square like the sheets below. */
+.nav-hover {
+  z-index: 0;
+  border: 1px solid var(--line);
+  background: var(--paper);
 }
 .nav-indicator {
   position: absolute;
@@ -54,7 +67,82 @@
   transition: transform var(--motion-move) var(--ease-out);
 }
 /* Inset: the links span the full header height, so an outside ring would lose its top edge at the viewport. */
-.nav-links a:focus-visible { outline-offset: -4px; }
+.nav-links > a:focus-visible,
+.nav-menu-button:focus-visible { outline-offset: -4px; }
+
+/* "How it works": a disclosure over the sections that explain the wall. Its button reads as a
+   link; its panel is one ruled white sheet below the header, a 2x2 grid of section cells. */
+.nav-menu {
+  position: relative;
+  display: flex;
+  align-self: stretch;
+}
+.nav-menu-button {
+  border: 0;
+  background: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+.nav-menu-chevron { transition: transform var(--motion-fast) var(--ease-out); }
+.nav-menu-button[aria-expanded="true"] .nav-menu-chevron { transform: rotate(180deg); }
+.nav-menu-panel {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 10;
+  width: 720px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  transform-origin: top left;
+}
+.nav-menu-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  background: var(--line);
+  list-style: none;
+}
+.nav-menu-grid > li { background: var(--paper); }
+/* The cells' hover: the neutral fill of the diagram breadcrumb's current stage. */
+.nav-menu-hover { z-index: 0; background: var(--surface); }
+.nav-menu-grid a {
+  position: relative;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: start;
+  gap: 18px;
+  height: 100%;
+  padding: 24px;
+  color: var(--ink);
+}
+.nav-menu-grid a:focus-visible { outline-offset: -4px; }
+.nav-menu-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+/* The section in view: its tile takes the ink, the system's one emphasis. */
+.nav-menu-grid a[aria-current] .nav-menu-icon {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+.nav-menu-text { display: grid; gap: 6px; padding-top: 2px; }
+.nav-menu-label { font-size: var(--text-lg); font-weight: 550; letter-spacing: -.01em; line-height: 1.3; }
+.nav-menu-copy { color: var(--muted); font-size: 15px; line-height: 1.45; }
+@media (forced-colors: active) {
+  .nav-hover, .nav-menu-hover { forced-color-adjust: none; outline: 1px solid CanvasText; outline-offset: -1px; }
+  .nav-menu-grid a[aria-current] .nav-menu-icon { forced-color-adjust: none; background: CanvasText; color: Canvas; }
+}
 /* Forced colours drop backgrounds; the underline keeps the system text colour. */
 @media (forced-colors: active) {
   .nav-indicator { forced-color-adjust: none; background: CanvasText; }
@@ -68,14 +156,20 @@
   :root { --header-height: 128px; }
   .nav-bar { flex-wrap: wrap; gap: 12px; padding-block: 16px 0; }
   /* The links share the row by their own widths; under enlarged text spacing they wrap instead of overflowing. */
-  .nav-links { order: 3; flex-wrap: wrap; width: 100%; justify-content: space-between; gap: 0 4px; }
-  .nav-links a { flex: 1 1 auto; padding-inline: 0; font-size: var(--text-sm); }
+  .nav-links { order: 3; flex-wrap: wrap; width: 100%; justify-content: space-between; }
+  .nav-links > a, .nav-menu-button { font-size: var(--text-sm); }
+  .nav-item { padding: 0 12px; }
+  /* The panel spans the links row, under the whole header. */
+  .nav-menu { position: static; }
+  .nav-menu-panel { right: 0; left: 0; width: auto; transform-origin: top center; }
   .site-header .button { padding-inline: 14px; font-size: var(--text-xs); }
 }
-/* Six sections and the call to action only fit narrow phones once Home (the logo) leaves the menu. */
+@media (max-width: 600px) {
+  .nav-menu-grid { grid-template-columns: minmax(0, 1fr); }
+  .nav-menu-grid a { gap: 14px; padding: 18px 16px; }
+}
 @media (max-width: 380px) {
   .site-header .button .button-arrow { display: none; }
-  .nav-links a[data-section="home"] { display: none; }
   .logo { font-size: 20px; }
   .site-header .button { padding-inline: 10px; }
 }

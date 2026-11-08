@@ -48,6 +48,12 @@
   --color-muted: #606060;
   --color-quiet: #606060;
   --color-line: #e5e5e5;
+  /* The edge of a field or select: 3:1 against the sheet and the plane, which a rule need not reach. */
+  --color-line-strong: #8a8a8a;
+  /* The one filled action per view: near-black in light, pale in dark, as on the landing page. */
+  --color-action: #171717;
+  --color-action-text: #ffffff;
+  --color-action-hover: #353535;
   /* Near black: links, focus outlines and the active console page, as on the landing page. */
   --color-bay-deep: #171717;
   --color-bridge: #b8392e;
@@ -126,7 +132,7 @@
 
   ::selection {
     background: var(--color-ink);
-    color: #fff;
+    color: var(--color-surface);
   }
 
   /* Phones get a shorter header and tighter cards. */
@@ -166,9 +172,9 @@
  * semantic names below, each pointing at one of the site's tokens, so the
  * console's shadcn parts share the landing page's palette. */
 
-/* The site has no dark theme; this keeps shadcn's dark: styles off unless a
- * .dark ancestor asks for them, instead of following the OS setting. */
-@custom-variant dark (&:is(.dark *));
+/* dark: follows the theme theme.js sets on <html> (data-theme), the same switch
+ * the landing page reads, rather than the OS setting directly. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 :root {
   --background: var(--color-surface);
@@ -177,8 +183,8 @@
   --card-foreground: var(--color-ink);
   --popover: var(--color-surface);
   --popover-foreground: var(--color-ink);
-  --primary: var(--color-ink);
-  --primary-foreground: #fff;
+  --primary: var(--color-action);
+  --primary-foreground: var(--color-action-text);
   --secondary: var(--color-subtle);
   --secondary-foreground: var(--color-ink);
   --muted: var(--color-tint-hover);
@@ -187,9 +193,38 @@
   --accent-foreground: var(--color-ink);
   --destructive: var(--color-bad);
   --border: var(--color-line);
-  --input: var(--color-line);
-  --ring: var(--color-bay-deep);
+  --input: var(--color-line-strong);
+  --ring: var(--color-ink);
   --radius: 0px;
+}
+
+/* The dark theme for sign-in and the console: DESIGN.md's dark surfaces and the
+ * landing page's dark verdict colours. Every text pair measures at least 4.5:1
+ * and every control edge 3:1 against the surfaces it sits on. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-paper: #111111;
+  --color-surface: #1b1b1b;
+  --color-subtle: #242424;
+  --color-ink: #f2f2f2;
+  --color-ink-soft: #d4d4d4;
+  --color-muted: #b2b2b2;
+  --color-quiet: #b2b2b2;
+  --color-line: #393939;
+  --color-line-strong: #737373;
+  --color-action: #ededed;
+  --color-action-text: #171717;
+  --color-action-hover: #d2d2d2;
+  --color-bay-deep: #f2f2f2;
+  --color-bridge: #ec7a68;
+  --color-tint-hover: rgba(242, 242, 242, 0.06);
+  --color-tint-active: rgba(242, 242, 242, 0.1);
+  --color-good: #8cc69e;
+  --color-good-soft: #1e3125;
+  --color-warn: #d7ba79;
+  --color-warn-soft: #372d18;
+  --color-bad: #e8a0ab;
+  --color-bad-soft: #3c2127;
 }
 
 @theme inline {
@@ -221,4 +256,100 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* -------------------------------------------------------------- Console */
+
+/* Sideways scrollers fade only the edge that still has content behind it (shadcn's scroll-fade-x,
+ * driven by scroll position), at Craft's sizes: a 2.5rem fade, reached over the first and last 3rem
+ * of scroll. The fade is the cue, so the scrollbar hides. Where scroll-driven animation is missing,
+ * shadcn would fade both ends whether or not the row overflows; the edges stay hard instead. */
+.scroll-fade-x,
+.console-table > [data-slot="table-container"] {
+  --scroll-fade-size: 2.5rem;
+  --scroll-fade-reveal: 3rem;
+  scrollbar-width: none;
+
+  @supports not (animation-timeline: scroll()) {
+    --scroll-fade-s: 0px;
+    --scroll-fade-e: 0px;
+  }
+}
+
+/* The page's title bar publishes its height; anything scrolled into view, a focused control or a
+ * jump target, lands below it and below a pinned table header row (44px) rather than under them. */
+html:has(#console-main) {
+  scroll-padding-top: calc(var(--console-bar-h, 0px) + 3rem);
+}
+
+/* 1 once the table's header row is pinned, 0 before: the row's top rule and fade follow it. */
+@property --console-head-pinned {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+@keyframes console-head-pin {
+  from {
+    --console-head-pinned: 0;
+  }
+  to {
+    --console-head-pinned: 1;
+  }
+}
+
+/* Narrow: the table scrolls sideways inside its panel. */
+@media (max-width: 860px) {
+  .console-table > [data-slot="table-container"] {
+    @apply scroll-fade-x;
+  }
+}
+
+/* Wide: the table fits, so its container drops the overflow that would trap a sticky row, and the
+ * header row pins under the title bar. The row sits above the bar's fade (z-30 over z-20) and draws
+ * its own: the rows fade under the column labels, not the labels under the bar. A collapsed table
+ * leaves a pinned cell's border behind, so each cell draws its rules as inset shadows instead. */
+@media (min-width: 861px) {
+  .console-table > [data-slot="table-container"] {
+    overflow: visible;
+  }
+
+  .console-table table {
+    view-timeline: --console-table block;
+    view-timeline-inset: var(--console-bar-h, 0px) 0px;
+  }
+
+  .console-table thead tr {
+    border-bottom-width: 0;
+  }
+
+  .console-table th {
+    position: sticky;
+    top: var(--console-bar-h, 0px);
+    z-index: 30;
+    background: var(--color-surface);
+    box-shadow:
+      inset 0 -1px 0 var(--color-line),
+      0 -1px 0 color-mix(in oklab, var(--color-line) calc(var(--console-head-pinned) * 100%), transparent);
+
+    &::after {
+      content: "";
+      position: absolute;
+      inset-inline: 0;
+      top: 100%;
+      height: 2.5rem;
+      pointer-events: none;
+      background: linear-gradient(to bottom, var(--color-surface), transparent);
+      opacity: var(--console-head-pinned);
+    }
+  }
+
+  /* The table's top edge reaching the bar's lower edge is the moment the row pins. */
+  @supports (animation-timeline: view()) {
+    .console-table th {
+      animation: console-head-pin 1ms linear both;
+      animation-timeline: --console-table;
+      animation-range: exit-crossing 0px exit-crossing 1px;
+    }
+  }
 }

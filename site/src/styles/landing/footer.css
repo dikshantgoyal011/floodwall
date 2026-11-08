@@ -132,6 +132,17 @@
   pointer-events: none;
 }
 
+/* The wash lies over the artwork's box, outside its blend group, so it dims the print without
+   touching it; over the transparent sky it is paper on paper and draws no edge. */
+.footer-panorama::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  aspect-ratio: 2164 / 727;
+  background: var(--footer-artwork-wash);
+  pointer-events: none;
+}
+
 .footer-artwork {
   position: relative;
   width: 100%;

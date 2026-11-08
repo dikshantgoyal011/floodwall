@@ -1,5 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot, hydrateRoot } from "react-dom/client";
+import { MotionConfig } from "motion/react";
 import { RouterProvider } from "react-router";
 import { router } from "./router";
 import "./index.css";
@@ -13,7 +14,10 @@ import "./styles/landing/pricing.css";
 const root = document.getElementById("root")!;
 const app = (
   <StrictMode>
-    <RouterProvider router={router} />
+    {/* Motion components follow the OS reduced-motion setting: travel drops, fades stay. */}
+    <MotionConfig reducedMotion="user">
+      <RouterProvider router={router} />
+    </MotionConfig>
   </StrictMode>
 );
 
