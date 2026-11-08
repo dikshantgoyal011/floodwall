@@ -1,6 +1,6 @@
 import { useCallback, useLayoutEffect, useRef } from "react";
 import { ArrowRight01Icon } from "@hugeicons/core-free-icons";
-import { Icon } from "./Icon";
+import { Icon } from "../shared/Icon";
 
 type Props = { stages: readonly string[]; activeStage: string; paused: boolean; pinned?: string; onSelect?(stage: string): void };
 

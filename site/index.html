@@ -1,12 +1,11 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="scroll-smooth scroll-pt-header bg-paper font-body text-ink scheme-light motion-reduce:scroll-auto">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Floodwall | Policy Gates for Agent-Driven DevOps</title>
     <!-- Description, canonical, Open Graph, Twitter card and JSON-LD are injected by vite.config.ts from structured-data.mjs. -->
     <meta name="theme-color" content="#f2f2f2" />
-    <meta name="color-scheme" content="light dark" />
     <script src="/theme.js"></script>
     <!-- Hide the prerendered hero figures until CountUp swaps them for its count; hero.css reveals them anyway after 2.5s. -->
     <script>if (!matchMedia("(prefers-reduced-motion: reduce)").matches) document.documentElement.dataset.countUp = "pending";</script>
@@ -33,11 +32,12 @@
     <link rel="preload" href="/fonts/geist-variable.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/geist-mono-variable.woff2" as="font" type="font/woff2" crossorigin />
   </head>
-  <body>
+  <!-- clip, not hidden: hidden would break the sticky header. -->
+  <body class="min-w-[320px] overflow-x-clip bg-paper text-base leading-normal text-ink [-webkit-font-smoothing:antialiased]">
     <noscript>
       <p class="noscript-note page-width">
-        The diagram and the waitlist form need JavaScript. To join the early-access waitlist, use the
-        <a href="%WAITLIST_FORM_URL%">Floodwall early access form on Tally</a>.
+        The diagram and the console need JavaScript. To join the early-access waitlist, use the
+        <a href="%EARLY_ACCESS_URL%">Floodwall early access form on Tally</a>.
       </p>
     </noscript>
     <div id="root"></div>

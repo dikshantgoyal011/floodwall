@@ -1,141 +1,5 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-
-const SECTION_NAVIGATION_EVENT = "floodwall:section-navigation";
-
-/**
- * A media query's live result. The prerendered HTML and the hydrating render use `serverValue`;
- * React then re-renders with the browser's answer.
- */
-export function useMediaQuery(query: string, serverValue = false) {
-  const subscribe = useCallback(
-    (onChange: () => void) => {
-      const list = window.matchMedia(query);
-      list.addEventListener("change", onChange);
-      return () => list.removeEventListener("change", onChange);
-    },
-    [query],
-  );
-  return useSyncExternalStore(subscribe, () => window.matchMedia(query).matches, () => serverValue);
-}
-
-const staticSubscribe = () => () => {};
-
-/** A value only the browser knows and that never changes during the visit, such as the URL's query. */
-export function useClientValue<T>(read: () => T, serverValue: T) {
-  return useSyncExternalStore(staticSubscribe, read, () => serverValue);
-}
-
-function headerHeight() {
-  return document.querySelector<HTMLElement>(".site-header")?.offsetHeight ?? 0;
-}
-
-/** The element id a URL fragment names, or "" if it is empty or malformed (e.g. "#%"). */
-function fragmentId(fragment: string) {
-  try {
-    return decodeURIComponent(fragment.replace(/^#/, ""));
-  } catch {
-    return "";
-  }
-}
-
-/**
- * The id of the section crossing the bottom edge of the sticky site
- * header, where section links land their surface. If two
- * ever share it, the earlier one in `ids` wins. `ids` must be stable.
- */
-export function useActiveSection(ids: readonly string[]) {
-  const [active, setActive] = useState(ids[0]);
-
-  useEffect(() => {
-    const crossing = new Set<string>();
-    let observer: IntersectionObserver | undefined;
-    let frame = 0;
-    let destination: string | null = null;
-
-    const followSection = () => {
-      const first = ids.find((id) => crossing.has(id));
-      if (!first || (destination && first !== destination)) return;
-      destination = null;
-      setActive(first);
-    };
-
-    const onIntersect = (entries: IntersectionObserverEntry[]) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting) crossing.add(entry.target.id);
-        else crossing.delete(entry.target.id);
-      }
-      followSection();
-    };
-
-    const onNavigate = (event: Event) => {
-      if (!(event instanceof CustomEvent)) return;
-      if (!ids.includes(event.detail)) {
-        destination = null;
-        followSection();
-        return;
-      }
-      // Commit the clicked destination while intermediate sections pass the observer.
-      destination = crossing.has(event.detail) ? null : event.detail;
-      setActive(event.detail);
-    };
-    const resumeTracking = () => {
-      destination = null;
-      followSection();
-    };
-    const onPointerDown = (event: PointerEvent) => {
-      if (!(event.target instanceof Element) || !event.target.closest('a[href^="#"]')) resumeTracking();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
-      if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]')) return;
-      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) resumeTracking();
-    };
-
-    // Watch a 1px line immediately below the sticky header. The margins are pixels because
-    // the spec resolves rootMargin percentages against the root's width,
-    // even for top and bottom, so they depend on viewport and header size
-    // and are rebuilt whenever the window changes size.
-    const observe = () => {
-      observer?.disconnect();
-      crossing.clear();
-      const line = headerHeight();
-      const below = window.innerHeight - line - 1;
-      observer = new IntersectionObserver(onIntersect, {
-        rootMargin: `${-line}px 0px ${-below}px 0px`,
-      });
-      for (const id of ids) {
-        const element = document.getElementById(id);
-        if (element) observer.observe(element);
-      }
-    };
-
-    const onResize = () => {
-      destination = null;
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(observe);
-    };
-
-    observe();
-    document.addEventListener(SECTION_NAVIGATION_EVENT, onNavigate);
-    window.addEventListener("wheel", resumeTracking, { passive: true });
-    window.addEventListener("touchstart", resumeTracking, { passive: true });
-    window.addEventListener("pointerdown", onPointerDown, { passive: true });
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("resize", onResize);
-    return () => {
-      document.removeEventListener(SECTION_NAVIGATION_EVENT, onNavigate);
-      window.removeEventListener("wheel", resumeTracking);
-      window.removeEventListener("touchstart", resumeTracking);
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("resize", onResize);
-      cancelAnimationFrame(frame);
-      observer?.disconnect();
-    };
-  }, [ids]);
-
-  return active;
-}
+import { useEffect } from "react";
+import { fragmentId, headerHeight, SECTION_NAVIGATION_EVENT } from "../helpers/dom";
 
 const POSITIONS_KEY = "floodwall:scroll-positions";
 const POSITIONS_LIMIT = 50;
@@ -144,7 +8,7 @@ const RESTORE_SETTLE_MS = 2000;
 
 /**
  * A scroll position held against the section at the top of the view, so it survives content
- * above that section changing height (the hero diagram sizing itself, the waitlist form growing).
+ * above that section changing height (the hero diagram sizing itself).
  */
 type ScrollPosition = { section: string; offset: number };
 
@@ -263,8 +127,8 @@ export function useSectionLinks() {
     };
 
     const initial = fragmentId(location.hash);
-    // A restoring load holds its position while late layout lands (the diagram sizing itself, the
-    // waitlist form resizing), until it settles or the reader moves; a link, history step or hash
+    // A restoring load holds its position while late layout lands (the diagram sizing itself),
+    // until it settles or the reader moves; a link, history step or hash
     // change made meanwhile wins over the restore.
     let stopRestore = () => {};
     let releaseRestore = () => {};
@@ -346,47 +210,6 @@ export function useSectionLinks() {
       window.removeEventListener("scroll", rememberPosition);
       window.removeEventListener("popstate", onPopState);
       window.removeEventListener("hashchange", onHashChange);
-    };
-  }, []);
-}
-
-/**
- * Each section's drawing rises into place the first time it enters view.
- * Only the inner drawing moves, so section geometry stays stable for
- * navigation. Reduced motion, or no IntersectionObserver, leaves content as is.
- */
-export function useSectionReveal() {
-  useEffect(() => {
-    if (!("IntersectionObserver" in window) || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const drawings = [...document.querySelectorAll<HTMLElement>("main > .section .section-drawing")];
-    let disposed = false;
-    let frame = 0;
-    const observer = new IntersectionObserver(entries => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
-        (entry.target as HTMLElement).dataset.reveal = "done";
-        observer.unobserve(entry.target);
-      }
-    }, { rootMargin: "0px 0px -12% 0px" });
-    const arm = () => {
-      for (const drawing of drawings) {
-        // Already visible at load (a fragment or reload mid-page): show without motion.
-        const box = drawing.getBoundingClientRect();
-        if (box.top < innerHeight && box.bottom > 0) continue;
-        drawing.dataset.reveal = "pending";
-        observer.observe(drawing);
-      }
-    };
-    // Measure where the load lands: useSectionLinks jumps to a fragment or restores a reload's
-    // position once fonts are ready, so wait for that and one frame before deciding what is visible.
-    void document.fonts.ready.then(() => {
-      if (!disposed) frame = requestAnimationFrame(arm);
-    });
-    return () => {
-      disposed = true;
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-      drawings.forEach(drawing => delete drawing.dataset.reveal);
     };
   }, []);
 }

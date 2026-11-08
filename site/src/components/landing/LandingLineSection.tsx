@@ -1,6 +1,6 @@
-import { IsometricDiagram, type FigureName } from "../components/IsometricDiagram";
-import { SectionHeading } from "../components/SectionHeading";
-import { useClientValue } from "../hooks";
+import { IsometricDiagram, type FigureName } from "./IsometricDiagram";
+import { LandingSectionHeading } from "./LandingSectionHeading";
+import { useClientValue } from "../../hooks/useClientValue";
 
 const CRATE_STATS = [
   { value: __CRATE_STATS__.version, label: "shipped" },
@@ -8,7 +8,7 @@ const CRATE_STATS = [
   { value: __CRATE_STATS__.tests, label: "tests" },
 ];
 
-export function LineSection() {
+export function LandingLineSection() {
   const variant = useClientValue<FigureName>(
     () => new URLSearchParams(location.search).get("hero") === "stack" ? "control-stack" : "processing-line",
     "processing-line",
@@ -16,9 +16,9 @@ export function LineSection() {
   return (
     <section className="section" id="line" aria-labelledby="line-title">
       <div className="section-drawing">
-        <SectionHeading id="line-title" kicker="The processing line">
+        <LandingSectionHeading id="line-title" kicker="The processing line">
           Every intent gets a verdict. <strong>Production only sees the admitted ones.</strong>
-        </SectionHeading>
+        </LandingSectionHeading>
         <IsometricDiagram variant={variant} stats={CRATE_STATS} />
       </div>
     </section>

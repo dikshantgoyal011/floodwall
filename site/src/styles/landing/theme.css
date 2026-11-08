@@ -1,7 +1,3 @@
-@import "tailwindcss";
-@source not "../../crate-stats.mjs";
-@source not "../../crate-stats.test.mjs";
-@source not "../hooks.ts";
 @font-face {
   font-family: Geist;
   font-style: normal;
@@ -19,7 +15,7 @@
 
 :root {
   color-scheme: light;
-  /* Light primitives, also kept by surfaces that stay light in both themes (the waitlist cell). */
+  /* Light primitives, which the dark theme replaces. */
   --light-paper: #ffffff;
   --light-ink: #171717;
   --light-muted: #606060;

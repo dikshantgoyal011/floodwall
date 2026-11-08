@@ -7,7 +7,7 @@ export function ConsolePageHeader({ title, description, actions }: ConsolePageHe
   return (
     <header className="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <h1 className="text-2xl leading-[1.2] font-bold tracking-[-0.02em]">{title}</h1>
+        <h1 className="text-[30px] leading-[1.1] font-[550] tracking-[-0.035em] text-balance">{title}</h1>
         {description && <p className="mt-1.5 text-muted">{description}</p>}
       </div>
       {actions && <div className={consoleActions}>{actions}</div>}

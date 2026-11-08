@@ -10,8 +10,9 @@ import { Label } from "../ui/label";
 
 const COPY = AUTH_COPY.form;
 const FIELD = "flex flex-col gap-2";
-const LABEL = "text-sm font-semibold text-ink";
-const INPUT = "h-11 rounded-control bg-white px-3.5 text-base md:text-base";
+const LABEL = "text-sm font-medium text-ink";
+const INPUT =
+  "h-11 rounded-none border-line bg-surface px-3.5 text-base text-ink md:text-base focus-visible:border-ink focus-visible:ring-0";
 
 type Busy = "send" | "resend" | "verify" | null;
 
@@ -94,7 +95,7 @@ export function AuthCodeForm({ page }: { page: "login" | "signup" }) {
     <Card className={authCard}>
       {codeShown ? (
         <form className="flex flex-col gap-5" onSubmit={onVerify}>
-          <p className="text-base leading-body text-ink-soft">
+          <p className="text-base leading-body text-muted">
             {COPY.sentTo[0]}
             <strong className="text-ink">{sentTo}</strong>
             {COPY.sentTo[1]}

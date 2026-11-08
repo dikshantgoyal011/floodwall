@@ -5,18 +5,22 @@ import { loginPath } from "../../helpers/auth";
 import { cx } from "../../helpers/cx";
 import { usePlane } from "../../hooks/usePlane";
 import { useSession } from "../../hooks/useSession";
+import { monoLabel } from "../../styles/classes";
 import { BrandMark } from "../shared/BrandMark";
 import { Button } from "../ui/button";
 import { PlaneProvider } from "./PlaneProvider";
 
+// Pages are open text on the gray plane; the current one is a white ruled cell, the landing page's sheet.
 const NAV_LINK =
-  "flex items-center justify-between rounded-control px-3 py-2.25 font-semibold transition-[background] duration-150 ease-[ease] console-narrow:gap-1.5 console-narrow:whitespace-nowrap";
+  "flex min-h-10 items-center justify-between border px-3 font-medium transition-[color,background,border-color] duration-160 ease-[cubic-bezier(.25,1,.5,1)] console-narrow:gap-1.5 console-narrow:whitespace-nowrap";
 
 function HoldCount() {
   const { state } = usePlane();
   const held = state.intents.filter((i) => i.status === "held").length;
   return held > 0 ? (
-    <span className="min-w-5 rounded-pill bg-warn-soft px-1.75 py-px text-center text-xs text-warn">{held}</span>
+    <span className="min-w-5 bg-warn-soft px-1.5 text-center font-mono text-[11px] leading-5 font-medium text-warn tabular-nums">
+      {held}
+    </span>
   ) : null;
 }
 
@@ -35,7 +39,7 @@ export function ConsoleLayout() {
     <PlaneProvider>
       {/* React hoists this into <head>: the console is shared by URL, not meant for search. */}
       <meta name="robots" content="noindex, nofollow" />
-      <div className="grid min-h-screen grid-cols-[232px_minmax(0,1fr)] bg-subtle text-sm console-narrow:grid-cols-[1fr]">
+      <div className="grid min-h-screen grid-cols-[232px_minmax(0,1fr)] bg-paper text-sm text-ink console-narrow:grid-cols-[minmax(0,1fr)]">
         <aside
           className={cx(
             "sticky top-0 flex h-screen flex-col gap-8 border-r border-r-line bg-paper px-4 py-6",
@@ -43,7 +47,7 @@ export function ConsoleLayout() {
             "console-narrow:[border-right:0] console-narrow:border-b console-narrow:border-b-line console-narrow:px-4 console-narrow:py-3",
           )}
         >
-          <Link className="inline-flex items-center gap-2.5 px-2 font-display text-xl leading-none" to="/">
+          <Link className="inline-flex items-center gap-2.5 px-2 text-xl leading-none font-medium tracking-[-0.03em]" to="/">
             <BrandMark className="size-6.5" />
             <span>Floodwall</span>
           </Link>
@@ -59,7 +63,7 @@ export function ConsoleLayout() {
                 className={({ isActive }) =>
                   cx(
                     NAV_LINK,
-                    isActive ? "bg-tint-active text-ink" : "text-ink-soft hover:bg-tint-hover hover:text-ink",
+                    isActive ? "border-line bg-surface text-ink" : "border-transparent text-muted hover:text-ink",
                   )
                 }
               >
@@ -69,7 +73,7 @@ export function ConsoleLayout() {
             ))}
           </nav>
           <div className="mt-auto flex flex-col gap-4 console-narrow:contents">
-            <p className="rounded-control bg-subtle p-3 text-xs leading-normal text-muted console-narrow:hidden">
+            <p className={cx(monoLabel, "border border-line bg-surface p-3 leading-normal console-narrow:hidden")}>
               Dummy data. Nothing here touches a real plane.
             </p>
             <div className="flex items-center gap-2 px-2 console-narrow:ml-auto">

@@ -2,16 +2,21 @@ import type { Link } from "../types";
 
 export const REPO_URL = "https://github.com/erphq/floodwall";
 
+/** Hosted plans open by invitation: requests go to the team's waitlist form. */
+export const EARLY_ACCESS_URL = "https://tally.so/r/6DJeoP";
+
 // A subdomain: www.proto.erp.ai only redirects back here.
 export const PROTO_URL = "https://proto.erp.ai/";
 
 /** In-page sections the primary nav links to, in page order. */
 export const NAV_SECTIONS = [
   { id: "home", label: "Home" },
+  { id: "line", label: "Line" },
   { id: "model", label: "Model" },
   { id: "gate", label: "Gate" },
   { id: "ledger", label: "Ledger" },
   { id: "roadmap", label: "Roadmap" },
+  { id: "waitlist", label: "Waitlist" },
 ] as const;
 
 export const NAV_SECTION_IDS = NAV_SECTIONS.map((section) => section.id);
@@ -20,9 +25,11 @@ export const FOOTER_GROUPS: { title: string; links: Link[] }[] = [
   {
     title: "Explore",
     links: [
+      { label: "Line", href: "#line" },
       { label: "Model", href: "#model" },
       { label: "Gate", href: "#gate" },
       { label: "Ledger", href: "#ledger" },
+      { label: "Waitlist", href: "#waitlist" },
     ],
   },
   {
@@ -39,7 +46,7 @@ export const FOOTER_GROUPS: { title: string; links: Link[] }[] = [
     links: [
       { label: "VMyard agent runtimes", href: "https://www.vmyard.com/" },
       { label: "knockstat server-log analytics", href: "https://www.knockstat.com/" },
-      { label: "ERP.AI", href: "https://www.erp.ai/" },
+      { label: "ERP•AI", href: "https://www.erp.ai/" },
     ],
   },
 ];

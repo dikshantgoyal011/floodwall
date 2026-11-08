@@ -5,8 +5,9 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 import { readCrateFacts, readCrateStats } from "./crate-stats.mjs";
+import { scopeLandingCss } from "./scope-landing-css.mjs";
 import { PAGE_TITLE, headTags } from "./structured-data.mjs";
-import { TALLY_ORIGIN, WAITLIST_FORM_URL } from "./src/content";
+import { EARLY_ACCESS_URL } from "./src/constants/links";
 
 const crateRoot = path.resolve(__dirname, "..");
 
@@ -28,32 +29,31 @@ function contentSecurityPolicy(html: string) {
     .map(([, body]) => `'sha256-${createHash("sha256").update(body).digest("base64")}'`);
   return [
     "default-src 'self'",
-    `script-src 'self' ${inline.join(" ")} ${TALLY_ORIGIN}`,
-    // theme.js, the hairline kernel and Tally's embed each insert a <style> element.
+    `script-src 'self' ${inline.join(" ")}`,
+    // theme.js and the hairline kernel each insert a <style> element.
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:",
-    `frame-src ${TALLY_ORIGIN}`,
-    `connect-src 'self' ${TALLY_ORIGIN}`,
+    "connect-src 'self'",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
   ].join("; ");
 }
 
-// Link-preview and search metadata, built from the crate's Cargo.toml facts, and the shared waitlist URL.
+// Link-preview and search metadata, built from the crate's Cargo.toml facts, and the early-access URL.
 const structuredDataPlugin = (): Plugin => ({
   name: "floodwall-structured-data",
   transformIndexHtml(html, { filename, server }) {
     if (path.basename(filename) !== "index.html") return html;
     if (!html.includes(`<title>${PAGE_TITLE}</title>`)) throw new Error("index.html <title> must match PAGE_TITLE in structured-data.mjs");
     // The noscript fallback links the same form as the waitlist section.
-    if (!html.includes("%WAITLIST_FORM_URL%")) throw new Error("index.html must link its noscript note to %WAITLIST_FORM_URL%");
+    if (!html.includes("%EARLY_ACCESS_URL%")) throw new Error("index.html must link its noscript note to %EARLY_ACCESS_URL%");
     if (!html.includes("%HAIRLINE_VERSION%")) throw new Error("index.html must version its /hairline scripts with %HAIRLINE_VERSION%");
     const tags = headTags(readCrateFacts(crateRoot));
-    // The built page allows only its own scripts, its inline scripts by hash, and Tally's embed.
+    // The built page allows only its own scripts and its inline scripts by hash, and its own styles and fonts.
     // Skipped in dev, where Vite injects inline scripts of its own.
     if (!server) tags.unshift({ tag: "meta", attrs: { "http-equiv": "Content-Security-Policy", content: contentSecurityPolicy(html) }, injectTo: "head-prepend" });
-    html = html.replaceAll("%WAITLIST_FORM_URL%", WAITLIST_FORM_URL).replaceAll("%HAIRLINE_VERSION%", HAIRLINE_VERSION);
+    html = html.replaceAll("%EARLY_ACCESS_URL%", EARLY_ACCESS_URL).replaceAll("%HAIRLINE_VERSION%", HAIRLINE_VERSION);
     return { html, tags };
   },
 });
@@ -61,6 +61,9 @@ const structuredDataPlugin = (): Plugin => ({
 export default defineConfig({
   plugins: [react(), tailwindcss(), structuredDataPlugin()],
   publicDir: "public",
+  css: {
+    postcss: { plugins: [scopeLandingCss(/[\\/]src[\\/]styles[\\/]landing[\\/]/)] },
+  },
   resolve: {
     alias: { "@": path.resolve(__dirname, "src") },
   },

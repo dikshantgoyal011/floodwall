@@ -1,19 +1,22 @@
 import { Outlet } from "react-router";
 import { useScrollToHash } from "../../hooks/useScrollToHash";
+import { useSiteDocument } from "../../hooks/useSiteDocument";
 import { SiteFooter } from "./SiteFooter";
 import { SiteHeader } from "./SiteHeader";
 
-/** The shell around the landing and pricing pages: the sticky header, the page and the footer. */
+/** The shell around /pricing: the landing page's header, deck and footer, in its light and dark themes. */
 export function SiteLayout() {
   useScrollToHash();
+  useSiteDocument();
 
   return (
     <>
-      <SiteHeader />
-      <main className="bg-[linear-gradient(180deg,var(--color-paper)_0%,#fff_48%,#f1f7fb_100%)]">
+      <a className="skip-link" href="#main-content">Skip to content</a>
+      <SiteHeader onLanding={false} />
+      <main id="main-content" tabIndex={-1}>
         <Outlet />
       </main>
-      <SiteFooter />
+      <SiteFooter onLanding={false} />
     </>
   );
 }

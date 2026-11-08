@@ -1,29 +1,9 @@
-// Copy and links for the landing page, kept apart from the markup.
+// Copy for the landing page, kept apart from the markup. Its links are in links.ts.
 
-export const REPO_URL = "https://github.com/erphq/floodwall";
-
-export const TALLY_ORIGIN = "https://tally.so";
-export const WAITLIST_FORM_URL = `${TALLY_ORIGIN}/r/6DJeoP`;
-export const WAITLIST_EMBED_URL =
-  `${TALLY_ORIGIN}/embed/6DJeoP?alignLeft=1&hideTitle=1&transparentBackground=1&dynamicHeight=1`;
+import type { Verdict } from "../types";
 
 /** Encoded widths of public/footer-water*.webp; the largest is footer-water.webp itself. */
 export const FOOTER_PRINT_WIDTHS = [720, 1082, 1600, 2164] as const;
-
-export type Link = { label: string; href: string };
-
-/** In-page sections the primary nav links to, in page order. */
-export const NAV_SECTIONS = [
-  { id: "home", label: "Home" },
-  { id: "line", label: "Line" },
-  { id: "model", label: "Model" },
-  { id: "gate", label: "Gate" },
-  { id: "ledger", label: "Ledger" },
-  { id: "roadmap", label: "Roadmap" },
-  { id: "waitlist", label: "Waitlist" },
-] as const;
-
-export const NAV_SECTION_IDS = NAV_SECTIONS.map((section) => section.id);
 
 export const MODEL_STAGES = [
   {
@@ -43,8 +23,6 @@ export const MODEL_STAGES = [
     copy: "Every verdict is appended to a hash chain so retroactive edits break verification.",
   },
 ];
-
-export type Verdict = "admit" | "defer" | "reject";
 
 /** The reference policies in src/policy.rs and the verdict each one hands down. */
 export const GATE_POLICIES: { name: string; rule: string; verdict: Verdict }[] = [
@@ -105,36 +83,3 @@ export const ROADMAP = [
     copy: "Durable append-only state that rebuilds the plane after restart.",
   },
 ];
-
-export const FOOTER_GROUPS: { title: string; links: Link[] }[] = [
-  {
-    title: "Explore",
-    links: [
-      { label: "Line", href: "#line" },
-      { label: "Model", href: "#model" },
-      { label: "Gate", href: "#gate" },
-      { label: "Ledger", href: "#ledger" },
-      { label: "Waitlist", href: "#waitlist" },
-    ],
-  },
-  {
-    title: "Crate",
-    links: [
-      { label: "Roadmap", href: "#roadmap" },
-      { label: "Repository", href: REPO_URL },
-      { label: "Goals", href: `${REPO_URL}/blob/main/GOALS.md` },
-      { label: "Status", href: `${REPO_URL}/blob/main/STATUS.md` },
-    ],
-  },
-  {
-    title: "Related projects",
-    links: [
-      { label: "VMyard agent runtimes", href: "https://www.vmyard.com/" },
-      { label: "knockstat server-log analytics", href: "https://www.knockstat.com/" },
-      { label: "ERP•AI", href: "https://www.erp.ai/" },
-    ],
-  },
-];
-
-// A subdomain: www.proto.erp.ai only redirects back here.
-export const PROTO_URL = "https://proto.erp.ai/";

@@ -9,6 +9,16 @@
 /* Build-time helpers, not markup: keep their words out of the class scan. */
 @source not "../crate-stats.mjs";
 @source not "../crate-stats.test.mjs";
+@source not "../structured-data.mjs";
+@source not "../structured-data.test.mjs";
+@source not "../scope-landing-css.mjs";
+@source not "../scope-landing-css.test.mjs";
+/* Design sources, the Tally form's own CSS, build scripts and the static files
+ * (the diagram scripts among them): no utilities. */
+@source not "../artwork";
+@source not "../tally";
+@source not "../scripts";
+@source not "../public";
 /* Browser hooks and helpers, no markup: words like "resize" would emit stray utilities. */
 @source not "./hooks";
 @source not "./helpers";
@@ -30,42 +40,38 @@
 /* -------------------------------------------------------------- Tokens */
 
 @theme {
-  --color-paper: #f7fbff;
-  --color-ink: #080b0d;
-  --color-ink-soft: #4e5961;
-  --color-muted: #667078;
-  --color-quiet: #6f6f6f;
-  --color-line: rgba(8, 11, 13, 0.12);
-  --color-bay-deep: #2f6e89;
-  --color-bridge: #e86d4e;
-  --color-signal: #a8d884;
-  --color-gold: #e0a93b;
+  /* DESIGN.md's palette, as on the landing page's light theme: a neutral gray
+   * plane, white sheets, near-black ink and fine gray rules. */
+  --color-paper: #f2f2f2;
+  --color-ink: #171717;
+  --color-ink-soft: #404040;
+  --color-muted: #606060;
+  --color-quiet: #606060;
+  --color-line: #e5e5e5;
+  /* Near black: links, focus outlines and the active console page, as on the landing page. */
+  --color-bay-deep: #171717;
+  --color-bridge: #b8392e;
   /* One tint scale for interactive surfaces on light backgrounds. */
-  --color-tint-hover: rgba(8, 11, 13, 0.05);
-  --color-tint-active: rgba(8, 11, 13, 0.08);
-  /* Text and rules on the dark Gate and Ledger panels. */
-  --color-panel-text: rgba(255, 255, 255, 0.76);
-  --color-panel-dim: rgba(255, 255, 255, 0.64);
-  --color-panel-line: rgba(255, 255, 255, 0.12);
-  /* Gate verdicts. */
-  --color-admit: var(--color-signal);
-  --color-defer: #e0c36c;
-  --color-reject: #ff8b72;
-  /* The console's surfaces and status tones. */
+  --color-tint-hover: rgba(23, 23, 23, 0.04);
+  --color-tint-active: rgba(23, 23, 23, 0.08);
+  /* The console's surfaces and status tones. Green, amber and wine red are the
+   * landing page's verdict colours and mark real outcomes only; info is neutral. */
   --color-surface: #fff;
-  --color-subtle: #f2f6f9;
-  --color-good: #2f7a3e;
-  --color-good-soft: #e6f4e3;
-  --color-warn: #8a5a0b;
-  --color-warn-soft: #fbf0d9;
-  --color-bad: #b23c22;
-  --color-bad-soft: #fbe6df;
-  --color-info: var(--color-bay-deep);
-  --color-info-soft: #e1f1f8;
+  --color-subtle: #f5f5f5;
+  --color-good: #287247;
+  --color-good-soft: #e4efe8;
+  --color-warn: #85600f;
+  --color-warn-soft: #f4ecda;
+  --color-bad: #8a2533;
+  --color-bad-soft: #f3e3e6;
+  --color-info: var(--color-ink);
+  --color-info-soft: var(--color-subtle);
 
-  --font-display: "Instrument Serif", Georgia, serif;
-  --font-body: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  /* Geist for every heading, prose, control and label; Geist Mono for code
+   * and data. Both are self-hosted (@font-face in styles/landing/theme.css). */
+  --font-display: Geist, ui-sans-serif, sans-serif;
+  --font-body: Geist, ui-sans-serif, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   /* The site's type scale. Sizes set font-size only: line height is set
    * where it is meant to change. */
@@ -77,139 +83,27 @@
   --text-title: 20px;
   --text-xl: 24px;
   --text-2xl: 30px;
-  --text-display-md: clamp(32px, 3.6vw, 48px);
-  --text-display-lg: clamp(40px, 5.5vw, 72px);
-  --text-display-xl: clamp(52px, 7vw, 112px);
-  --leading-body: 1.65;
+  --text-display-md: clamp(32px, 3.3vw, 48px);
+  --leading-body: 1.55;
 
   /* The site is sized in px, so spacing and radii stay put when a visitor
    * changes the browser's default font size; Tailwind's own are in rem. */
   --spacing: 4px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
+  /* Square corners everywhere, as DESIGN.md asks; no shadows. */
+  --radius-lg: 0px;
+  --radius-xl: 0px;
 
   --container-content: 1160px;
   --spacing-gutter: clamp(16px, 4vw, 32px);
   --spacing-header: 72px;
   --spacing-section: clamp(56px, 7vw, 88px);
-  --spacing-card: 28px;
-  --spacing-card-lg: 40px;
+  --spacing-card: 24px;
+  --spacing-card-lg: 32px;
 
-  --radius-control: 10px;
-  --radius-row: 16px;
-  --radius-card: 24px;
-  --radius-pill: 999px;
-  --shadow-card: 0 24px 80px rgba(47, 110, 137, 0.12);
-
-  /* Layered backgrounds, used with bg-(image:--image-*) or [background:...]. */
-  --image-hero:
-    linear-gradient(180deg, rgba(247, 251, 255, 0.96), rgba(247, 251, 255, 0.62) 46%, var(--color-paper) 100%),
-    radial-gradient(ellipse at 24% 16%, rgba(184, 227, 244, 0.64), transparent 34%);
-  --image-hero-veil:
-    linear-gradient(
-      180deg,
-      var(--color-paper) 0%,
-      rgba(247, 251, 255, 0.98) 34%,
-      rgba(247, 251, 255, 0.72) 50%,
-      rgba(247, 251, 255, 0.16) 70%,
-      rgba(247, 251, 255, 0.32) 100%
-    ),
-    linear-gradient(90deg, rgba(247, 251, 255, 0.94), rgba(247, 251, 255, 0.62) 42%, rgba(247, 251, 255, 0.12));
-  --image-hero-fog:
-    radial-gradient(ellipse at 22% 50%, rgba(255, 255, 255, 0.86), transparent 42%),
-    radial-gradient(ellipse at 62% 54%, rgba(184, 227, 244, 0.42), transparent 46%),
-    radial-gradient(ellipse at 84% 44%, rgba(232, 109, 78, 0.14), transparent 34%);
-  --image-bay-lights:
-    radial-gradient(circle, rgba(224, 169, 59, 0.82) 0 1.4px, transparent 1.9px),
-    radial-gradient(circle, rgba(115, 169, 66, 0.5) 0 1px, transparent 1.6px),
-    radial-gradient(circle, rgba(47, 110, 137, 0.38) 0 1.2px, transparent 1.8px);
-  --image-panel:
-    linear-gradient(180deg, rgba(8, 11, 13, 0.9), rgba(18, 38, 48, 0.92));
-  --image-panel-grid:
-    linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
-  /* The footer's whole background, poster photo placed and sized within it. */
-  --background-footer:
-    radial-gradient(ellipse at 72% 72%, rgba(232, 109, 78, 0.2), transparent 34%),
-    linear-gradient(180deg, rgba(247, 251, 255, 0.94) 0%, rgba(215, 232, 241, 0.68) 30%, rgba(127, 185, 207, 0.34) 100%),
-    url("/footer-sf-poster.jpg") center 58% / cover no-repeat,
-    linear-gradient(180deg, var(--color-paper) 0%, #d7e8f1 30%, #7fb9cf 100%);
-  --image-footer-wash:
-    linear-gradient(0deg, rgba(247, 251, 255, 0.86) 0, rgba(247, 251, 255, 0.5) 64px, transparent 160px),
-    linear-gradient(
-      180deg,
-      rgba(247, 251, 255, 0.96) 0%,
-      rgba(247, 251, 255, 0.7) 30%,
-      rgba(247, 251, 255, 0.18) 58%,
-      rgba(31, 82, 96, 0.32) 100%
-    ),
-    linear-gradient(
-      90deg,
-      rgba(247, 251, 255, 0.94),
-      rgba(247, 251, 255, 0.52) 42%,
-      rgba(247, 251, 255, 0.08) 68%,
-      rgba(12, 52, 67, 0.28)
-    );
-  --image-footer-grid:
-    linear-gradient(rgba(8, 11, 13, 0.12) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(8, 11, 13, 0.1) 1px, transparent 1px);
-  --image-footer-fog:
-    radial-gradient(ellipse at 20% 48%, rgba(255, 255, 255, 0.8), transparent 44%),
-    radial-gradient(ellipse at 56% 58%, rgba(255, 255, 255, 0.54), transparent 48%),
-    radial-gradient(ellipse at 84% 46%, rgba(184, 227, 244, 0.5), transparent 38%);
-
-  /* Motion. Headline lines rise in turn; the bay scenes drift and glow. */
-  --animate-fade-rise: fade-rise 0.8s ease-out both;
-  --animate-fade-rise-2: fade-rise 0.8s 0.2s ease-out both;
-  --animate-fade-rise-3: fade-rise 0.8s 0.4s ease-out both;
-  --animate-fog-drift: fog-drift 34s ease-in-out infinite alternate;
-  --animate-fog-drift-slow: fog-drift 46s ease-in-out infinite alternate-reverse;
-  --animate-footer-fog: fog-drift 44s ease-in-out infinite alternate;
-  --animate-bridge-glow: bridge-glow 8s ease-in-out infinite;
-  --animate-bridge-glow-slow: bridge-glow 9s ease-in-out infinite;
-  --animate-twinkle: twinkle 5.5s steps(3, end) infinite;
-
-  @keyframes fade-rise {
-    from {
-      opacity: 0;
-      transform: translateY(20px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  @keyframes fog-drift {
-    from {
-      transform: translate3d(-5%, -3px, 0) scaleX(1.02);
-    }
-    to {
-      transform: translate3d(5%, 5px, 0) scaleX(1.08);
-    }
-  }
-
-  @keyframes twinkle {
-    0%,
-    100% {
-      opacity: 0.18;
-    }
-    50% {
-      opacity: 0.42;
-    }
-  }
-
-  @keyframes bridge-glow {
-    0%,
-    100% {
-      opacity: 0.18;
-      transform: translate3d(0, 0, 0);
-    }
-    50% {
-      opacity: 0.34;
-      transform: translate3d(8px, -3px, 0);
-    }
-  }
+  --radius-control: 0px;
+  --radius-row: 0px;
+  --radius-card: 0px;
+  --radius-pill: 0px;
 }
 
 /* ---------------------------------------------------------------- Base */
@@ -221,7 +115,7 @@
   }
 
   :focus-visible {
-    outline: 2px solid var(--color-bay-deep);
+    outline: 2px solid var(--color-ink);
     outline-offset: 3px;
   }
 
@@ -231,7 +125,7 @@
   }
 
   ::selection {
-    background: var(--color-bridge);
+    background: var(--color-ink);
     color: #fff;
   }
 
@@ -295,7 +189,7 @@
   --border: var(--color-line);
   --input: var(--color-line);
   --ring: var(--color-bay-deep);
-  --radius: 8px;
+  --radius: 0px;
 }
 
 @theme inline {

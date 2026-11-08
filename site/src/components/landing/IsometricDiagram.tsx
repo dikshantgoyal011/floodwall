@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { PauseIcon, PlayIcon } from "@hugeicons/core-free-icons";
-import { Icon } from "./Icon";
+import { Icon } from "../shared/Icon";
 import { StageBreadcrumb } from "./StageBreadcrumb";
 import { CountUp } from "./CountUp";
 

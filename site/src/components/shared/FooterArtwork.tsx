@@ -1,5 +1,5 @@
 import { useEffect, useState, type RefObject } from "react";
-import { FOOTER_PRINT_WIDTHS } from "../content";
+import { FOOTER_PRINT_WIDTHS } from "../../constants/landing";
 
 /** How far ahead of the viewport the fog and boat sprites start loading. */
 const SPRITE_LOAD_MARGIN = "600px";

@@ -234,28 +234,19 @@
 .roadmap-copy h3 { margin: 0 0 12px; font-size: var(--text-xl); font-weight: 550; letter-spacing: -.025em; line-height: 1.2; }
 .roadmap-copy .card-copy { align-self: start; }
 
-/* The Tally form draws dark text on a transparent page, so its cell keeps the light tokens in both themes. */
+/* The request link beside the copy; the form itself opens on Tally. */
 .waitlist-card {
-  --paper: var(--light-paper);
-  --ink: var(--light-ink);
-  --muted: var(--light-muted);
-  --line: var(--light-line);
-  --accent: var(--light-ink);
   display: flex;
   min-width: 0;
   flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 16px;
   padding: 24px;
-  background: var(--paper);
-  color: var(--ink);
-  color-scheme: light;
 }
 
-.waitlist-card iframe { display: block; width: 100%; border: 0; }
-
 .waitlist-fallback {
-  margin: 16px 0 0;
-  padding-top: 16px;
-  border-top: 1px solid var(--line);
+  margin: 0;
   color: var(--muted);
   font-size: var(--text-sm);
 }

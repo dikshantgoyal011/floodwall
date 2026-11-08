@@ -1,15 +1,23 @@
 import { INCLUDED_EVERYWHERE } from "../../constants/pricing";
-import { pricingSection } from "../../styles/classes";
-import { CardRail } from "../shared/CardRail";
-import { SectionHeading } from "../shared/SectionHeading";
+import { LandingSectionHeading } from "../landing/LandingSectionHeading";
 
+/** What every plan gets from the crate itself, as four ruled stages like the landing page's model. */
 export function PricingIncludedSection() {
   return (
-    <section className={pricingSection} aria-labelledby="included-title">
-      <SectionHeading id="included-title" kicker="Every plan">
-        The wall is the same everywhere.
-      </SectionHeading>
-      <CardRail items={INCLUDED_EVERYWHERE} className="grid-cols-4 tablet:grid-cols-2 mobile:grid-cols-[1fr]" />
+    <section className="section" aria-labelledby="included-title">
+      <div className="section-drawing">
+        <LandingSectionHeading id="included-title" kicker="Every plan">
+          The wall is <strong>the same everywhere.</strong>
+        </LandingSectionHeading>
+        <div className="model-rail">
+          {INCLUDED_EVERYWHERE.map(({ title, copy }) => (
+            <article className="model-stage" key={title}>
+              <h3 className="tag">{title}</h3>
+              <p className="card-copy">{copy}</p>
+            </article>
+          ))}
+        </div>
+      </div>
     </section>
   );
 }

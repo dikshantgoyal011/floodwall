@@ -9,7 +9,7 @@ export function ConsoleStat({ label, value, hint }: ConsoleStatProps) {
     <Card>
       <CardContent className="flex flex-col gap-1.5">
         <span className={consoleLabel}>{label}</span>
-        <strong className="text-2xl leading-[1.1] font-bold tracking-[-0.02em]">{value}</strong>
+        <strong className="font-mono text-[28px] leading-[1.1] font-[450] tracking-[-0.03em] tabular-nums slashed-zero">{value}</strong>
         {hint && <span className="text-muted">{hint}</span>}
       </CardContent>
     </Card>

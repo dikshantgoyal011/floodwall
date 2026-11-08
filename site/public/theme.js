@@ -3,6 +3,11 @@
   const key = "floodwall-theme";
   const media = matchMedia("(prefers-color-scheme: dark)");
   const root = document.documentElement;
+  // Only the landing page and /pricing have the site's styles and a dark theme; useSiteDocument keeps
+  // the mark when the app moves between routes. Elsewhere the theme is still tracked, but the page
+  // stays light.
+  const landing = location.pathname === "/" || location.pathname === "/pricing";
+  root.classList.toggle("fw-site", landing);
   const meta = document.querySelector('meta[name="theme-color"]');
   const valid = value => value === "dark" || value === "light" ? value : null;
   let preference = null;
@@ -16,10 +21,12 @@
     still.textContent = "*, *::before, *::after { transition: none !important; }";
     document.head.append(still);
     root.dataset.theme = theme;
-    root.style.colorScheme = theme;
+    // Off the landing page <html>'s scheme-light class keeps native controls light.
+    if (landing) root.style.colorScheme = theme;
     // CSS is authoritative once loaded; the fallback also colors the initial tab.
     const canvas = getComputedStyle(root).getPropertyValue("--canvas").trim();
-    if (meta) meta.content = canvas || (theme === "dark" ? "#111111" : "#f2f2f2");
+    const fallback = !landing ? "#f7fbff" : theme === "dark" ? "#111111" : "#f2f2f2";
+    if (meta) meta.content = canvas || fallback;
     // The computed-style read above has applied the new colours; transitions return next frame.
     requestAnimationFrame(() => still.remove());
     window.dispatchEvent(new Event("floodwall:theme-change"));
