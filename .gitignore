@@ -11,3 +11,8 @@ npm-debug.log*
 /api/dist
 /api/.wrangler
 /api/.dev.vars
+
+# Local Claude Code session config
+/.claude/
+/site/.ssr
+*.tsbuildinfo

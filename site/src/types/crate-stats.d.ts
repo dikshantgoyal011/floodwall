@@ -4,3 +4,6 @@ declare const __CRATE_STATS__: {
   dependencies: number;
   tests: number;
 };
+
+/** A content hash of public/hairline, appended to the diagram script URLs; see vite.config.ts. */
+declare const __HAIRLINE_VERSION__: string;

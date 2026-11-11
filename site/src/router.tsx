@@ -19,22 +19,20 @@ import { PricingPage } from "./pages/PricingPage";
 import { SignupPage } from "./pages/SignupPage";
 import { WaitlistPage } from "./pages/WaitlistPage";
 
-// "/" is the landing page and /pricing a draft of the plans, both inside the
-// site's header and footer. The console under /app is a dummy-data preview.
-// /pricing and /app are reachable by URL only (nothing on the landing page
-// links to them) and kept out of search. /login, /signup, /account and
-// /waitlist stand alone, without the header or footer, and sign in with a
-// one-time code: emailed by the sign-in service in api/, or shown on the page
-// by the demo when the build has no service (helpers/auth.ts);
-// /app sends anyone signed out to /login first, and an account still on the
-// waitlist to /waitlist. /app/admin is where admins approve the waitlist.
+// "/" is the landing page, with its own header and footer; /pricing, a draft of
+// the plans, borrows them through SiteLayout and is linked from the header. The
+// console under /app is a dummy-data preview, reachable by URL only. Both are
+// kept out of search. /login, /signup, /account and /waitlist stand alone,
+// without the header or footer, and sign in with a one-time code: emailed by
+// the sign-in service in api/, or shown on the page by the demo when the build
+// has no service (helpers/auth.ts); /app sends anyone signed out to /login
+// first, and an account still on the waitlist to /waitlist. /app/admin is where
+// admins approve the waitlist.
 export const router = createBrowserRouter([
+  { path: "/", element: <App /> },
   {
     element: <SiteLayout />,
-    children: [
-      { path: "/", element: <App /> },
-      { path: PRICING_PATH, element: <PricingPage /> },
-    ],
+    children: [{ path: PRICING_PATH, element: <PricingPage /> }],
   },
   { path: AUTH_PATHS.login, element: <LoginPage /> },
   { path: AUTH_PATHS.signup, element: <SignupPage /> },

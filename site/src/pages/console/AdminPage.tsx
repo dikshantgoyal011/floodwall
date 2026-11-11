@@ -1,17 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
+import { ConsoleBadge } from "../../components/console/ConsoleBadge";
 import { ConsoleButton } from "../../components/console/ConsoleButton";
 import { ConsoleEmpty } from "../../components/console/ConsoleEmpty";
 import { ConsolePageHeader } from "../../components/console/ConsolePageHeader";
+import { ConsolePanel } from "../../components/console/ConsolePanel";
 import { ConsoleTable } from "../../components/console/ConsoleTable";
-import { Badge } from "../../components/ui/badge";
-import { Card } from "../../components/ui/card";
 import { TableCell, TableRow } from "../../components/ui/table";
 import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { ADMIN_COLUMNS, ADMIN_COPY, ADMIN_FILTERS, adminDate } from "../../constants/admin";
 import { adminClient } from "../../helpers/admin";
-import { cx } from "../../helpers/cx";
-import { consoleSub, consoleTone } from "../../styles/classes";
+import { consoleSub, consoleWideOnly } from "../../styles/classes";
 import type { AdminAccount, SignupMode } from "../../types/auth";
 
 type Listing = { signup: SignupMode; users: AdminAccount[] };
@@ -75,33 +74,36 @@ export function AdminPage() {
         description={listing ? ADMIN_COPY.mode[listing.signup] : ADMIN_COPY.description}
       />
 
-      <Tabs value={filter.key} onValueChange={(key) => setParams(key === ADMIN_FILTERS[0].key ? {} : { status: key })}>
-        <TabsList className="group-data-horizontal/tabs:h-9">
-          {ADMIN_FILTERS.map((f) => (
-            <TabsTrigger key={f.key} value={f.key} className="px-3">
-              {f.label}
-              {f.key === "waiting" && waiting > 0 && ` (${waiting})`}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
-
       <p role="status" aria-live="polite" className="text-muted empty:hidden">
         {status}
       </p>
 
-      <Card className="gap-0 py-0">
+      <ConsolePanel flush>
+        <div className="border-b border-line px-5 py-3 console-narrow:px-4">
+          <Tabs value={filter.key} onValueChange={(key) => setParams(key === ADMIN_FILTERS[0].key ? {} : { status: key })}>
+            <TabsList className="scroll-fade-x max-w-full overflow-x-auto group-data-horizontal/tabs:h-9">
+              {ADMIN_FILTERS.map((f) => (
+                <TabsTrigger key={f.key} value={f.key} className="px-3">
+                  {f.label}
+                  {f.key === "waiting" && waiting > 0 && ` (${waiting})`}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+        </div>
         {loadError ? (
-          <div className="flex flex-col items-center gap-3 p-6 text-center">
-            <p className="text-muted">{loadError}</p>
-            <ConsoleButton variant="secondary" onClick={() => void load()}>
-              {ADMIN_COPY.retry}
-            </ConsoleButton>
-          </div>
+          <ConsoleEmpty
+            title={loadError}
+            action={
+              <ConsoleButton variant="secondary" onClick={() => void load()}>
+                {ADMIN_COPY.retry}
+              </ConsoleButton>
+            }
+          />
         ) : !listing ? (
-          <ConsoleEmpty>{ADMIN_COPY.loading}</ConsoleEmpty>
+          <ConsoleEmpty title={ADMIN_COPY.loading} />
         ) : users.length === 0 ? (
-          <ConsoleEmpty>{ADMIN_COPY.empty[filter.key]}</ConsoleEmpty>
+          <ConsoleEmpty title={ADMIN_COPY.empty[filter.key]} />
         ) : (
           <ConsoleTable columns={ADMIN_COLUMNS}>
             {users.map((user) => {
@@ -109,18 +111,16 @@ export function AdminPage() {
               return (
                 <TableRow key={user.email}>
                   <TableCell>
-                    <span className="font-semibold">{user.email}</span>
-                    {user.admin && (
-                      <Badge variant="outline" className="ml-2">
-                        {ADMIN_COPY.admin}
-                      </Badge>
-                    )}
-                    {user.approvedBy && <span className={cx(consoleSub, "text-xs")}>{ADMIN_COPY.approvedBy(user.approvedBy)}</span>}
+                    <span className="flex items-center gap-2">
+                      <span className="font-medium">{user.email}</span>
+                      {user.admin && <ConsoleBadge value={ADMIN_COPY.admin} tone="neutral" />}
+                    </span>
+                    {user.approvedBy && <span className={consoleSub}>{ADMIN_COPY.approvedBy(user.approvedBy)}</span>}
                   </TableCell>
-                  <TableCell>{adminDate(user.createdAt)}</TableCell>
-                  <TableCell>{adminDate(user.lastSignInAt)}</TableCell>
+                  <TableCell className={consoleWideOnly}>{adminDate(user.createdAt)}</TableCell>
+                  <TableCell className={consoleWideOnly}>{adminDate(user.lastSignInAt)}</TableCell>
                   <TableCell>
-                    <Badge className={cx("h-6 px-2.5", consoleTone[STATUS_TONE[user.status]])}>{user.status}</Badge>
+                    <ConsoleBadge value={user.status} tone={STATUS_TONE[user.status]} />
                   </TableCell>
                   {/* w-0: the column shrinks to its buttons. */}
                   <TableCell className="w-0">
@@ -146,7 +146,7 @@ export function AdminPage() {
             })}
           </ConsoleTable>
         )}
-      </Card>
+      </ConsolePanel>
     </>
   );
 }

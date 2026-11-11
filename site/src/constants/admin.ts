@@ -2,7 +2,13 @@
 
 import type { SignupMode } from "../types/auth";
 
-export const ADMIN_COLUMNS = ["Email", "Joined", "Last sign-in", "Status", ""];
+export const ADMIN_COLUMNS = [
+  { label: "Email" },
+  { label: "Joined", wideOnly: true },
+  { label: "Last sign-in", wideOnly: true },
+  { label: "Status" },
+  { label: "" },
+];
 
 export const ADMIN_FILTERS = [
   { key: "waiting", label: "Waiting" },

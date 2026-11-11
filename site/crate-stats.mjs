@@ -60,6 +60,26 @@ export function parseCrateVersion(toml) {
 }
 
 /**
+ * Read a quoted string, or an array of quoted strings, from `[package]`. Only
+ * the single-line forms Cargo.toml uses here; anything else throws.
+ * @param {string} toml
+ * @param {string} key
+ * @returns {string | string[]}
+ */
+export function packageField(toml, key) {
+  const pkg = tables(toml).get("package");
+  if (!pkg) throw new Error("Cargo.toml has no [package] table");
+  const entry = pkg.find((line) => new RegExp(`^${key}\\s*[.=]`).test(line));
+  if (!entry) throw new Error(`Cargo.toml [package] has no ${key}`);
+  const value = entry.slice(entry.indexOf("=") + 1).trim();
+  const string = value.match(/^"([^"\\]*)"$/);
+  if (string) return string[1];
+  const list = value.match(/^\[\s*((?:"[^"\\]*"\s*,\s*)*"[^"\\]*")\s*,?\s*\]$/);
+  if (list) return [...list[1].matchAll(/"([^"\\]*)"/g)].map((m) => m[1]);
+  throw new Error(`unsupported Cargo.toml ${key} entry: ${entry}`);
+}
+
+/**
  * How the hero shows a version: `0.1` for a release, the full version for a
  * prerelease (so a beta is never presented as the shipped release). Build
  * metadata is dropped, as SemVer says it carries no precedence.
@@ -109,6 +129,31 @@ function rustFiles(dir) {
     if (entry.isDirectory()) return rustFiles(full);
     return entry.name.endsWith(".rs") ? [full] : [];
   });
+}
+
+/**
+ * The crate facts the share card and structured data state, beside the hero's stats.
+ * @param {string} crateRoot
+ */
+export function readCrateFacts(crateRoot) {
+  const toml = fs.readFileSync(path.join(crateRoot, "Cargo.toml"), "utf8");
+  const text = (key) => {
+    const value = packageField(toml, key);
+    if (typeof value !== "string" || !value) throw new Error(`Cargo.toml [package] ${key} must be a non-empty string`);
+    return value;
+  };
+  const keywords = packageField(toml, "keywords");
+  if (!Array.isArray(keywords)) throw new Error("Cargo.toml [package] keywords must be an array");
+  return {
+    ...readCrateStats(crateRoot),
+    name: text("name"),
+    release: text("version"),
+    license: text("license"),
+    description: text("description"),
+    repository: text("repository"),
+    rustVersion: text("rust-version"),
+    keywords,
+  };
 }
 
 /**
