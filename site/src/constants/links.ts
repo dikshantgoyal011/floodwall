@@ -4,8 +4,17 @@ export const REPO_URL = "https://github.com/erphq/floodwall";
 
 export const PRICING_PATH = "/pricing";
 
-/** Hosted plans open by invitation: requests go to the team's waitlist form. */
-export const EARLY_ACCESS_URL = "https://tally.so/r/6DJeoP";
+/**
+ * Hosted plans open by invitation: signing up at /signup (AUTH_PATHS.signup) puts a new account on
+ * the site's own waitlist until an admin approves it. A plain path, not a router link: the landing
+ * page is prerendered without the router.
+ */
+export const EARLY_ACCESS_URL = "/signup";
+
+// Requests went to the team's form on Tally before the site had its own waitlist. To go back to it,
+// restore this URL, and in index.html link the noscript note to it again (%EARLY_ACCESS_URL%, which
+// vite.config.ts checks for and fills in).
+// export const EARLY_ACCESS_URL = "https://tally.so/r/6DJeoP";
 
 // A subdomain: www.proto.erp.ai only redirects back here.
 export const PROTO_URL = "https://proto.erp.ai/";

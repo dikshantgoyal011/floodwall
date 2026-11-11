@@ -7,7 +7,6 @@ import { defineConfig, loadEnv, type Plugin } from "vite";
 import { readCrateFacts, readCrateStats } from "./crate-stats.mjs";
 import { scopeLandingCss } from "./scope-landing-css.mjs";
 import { PAGE_TITLE, headTags } from "./structured-data.mjs";
-import { EARLY_ACCESS_URL } from "./src/constants/links";
 
 const crateRoot = path.resolve(__dirname, "..");
 
@@ -54,20 +53,18 @@ function authApiOrigin(mode: string) {
   return url ? new URL(url).origin : undefined;
 }
 
-// Link-preview and search metadata, built from the crate's Cargo.toml facts, and the early-access URL.
+// Link-preview and search metadata, built from the crate's Cargo.toml facts.
 const structuredDataPlugin = (api: string | undefined): Plugin => ({
   name: "floodwall-structured-data",
   transformIndexHtml(html, { filename, server }) {
     if (path.basename(filename) !== "index.html") return html;
     if (!html.includes(`<title>${PAGE_TITLE}</title>`)) throw new Error("index.html <title> must match PAGE_TITLE in structured-data.mjs");
-    // The noscript fallback links the same form as the waitlist section.
-    if (!html.includes("%EARLY_ACCESS_URL%")) throw new Error("index.html must link its noscript note to %EARLY_ACCESS_URL%");
     if (!html.includes("%HAIRLINE_VERSION%")) throw new Error("index.html must version its /hairline scripts with %HAIRLINE_VERSION%");
     const tags = headTags(readCrateFacts(crateRoot));
     // The built page allows only its own scripts and its inline scripts by hash, and its own styles and fonts.
     // Skipped in dev, where Vite injects inline scripts of its own.
     if (!server) tags.unshift({ tag: "meta", attrs: { "http-equiv": "Content-Security-Policy", content: contentSecurityPolicy(html, api) }, injectTo: "head-prepend" });
-    html = html.replaceAll("%EARLY_ACCESS_URL%", EARLY_ACCESS_URL).replaceAll("%HAIRLINE_VERSION%", HAIRLINE_VERSION);
+    html = html.replaceAll("%HAIRLINE_VERSION%", HAIRLINE_VERSION);
     return { html, tags };
   },
 });

@@ -1,9 +1,10 @@
-import { ArrowUpRight01Icon } from "@hugeicons/core-free-icons";
+import { ArrowRight02Icon } from "@hugeicons/core-free-icons";
+import { AUTH_PATHS } from "../../constants/auth";
 import { EARLY_ACCESS_URL } from "../../constants/links";
 import { Icon } from "../shared/Icon";
 import { LandingSectionHeading } from "./LandingSectionHeading";
 
-/** Early access, as /pricing offers it: a request through the team's form on Tally. */
+/** Early access, as /pricing offers it: signing up puts an account on the site's own waitlist. */
 export function LandingWaitlistSection() {
   return (
     <section className="section" id="waitlist" aria-labelledby="waitlist-title">
@@ -14,15 +15,16 @@ export function LandingWaitlistSection() {
         <div className="section-body">
           <div className="card feature-card">
             <p className="feature-copy">
-              Tell us which agent-driven changes you would gate, and we will reach out as early access
-              opens.
+              Sign up with your email, and we will let you in as early access opens.
             </p>
           </div>
           <div className="card waitlist-card">
             <a className="button button-lg" href={EARLY_ACCESS_URL}>
-              Request early access <Icon icon={ArrowUpRight01Icon} className="button-arrow" />
+              Join the waitlist <Icon icon={ArrowRight02Icon} className="button-arrow" />
             </a>
-            <p className="waitlist-fallback">The request form opens on Tally.</p>
+            <p className="waitlist-fallback">
+              Already have an account? <a href={AUTH_PATHS.login}>Sign in</a>.
+            </p>
           </div>
         </div>
       </div>
