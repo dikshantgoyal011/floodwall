@@ -5,17 +5,18 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "vite build",
-    "typecheck": "tsc --noEmit",
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "check": "npm run typecheck && npm run test && npm run build",
-    "test": "node --test crate-stats.test.mjs"
+    "test": "node --test crate-stats.test.mjs structured-data.test.mjs scope-landing-css.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
-    "@vitejs/plugin-react": "^5.1.1",
+    "@hugeicons/core-free-icons": "^4.4.0",
+    "@hugeicons/react": "^1.1.10",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.5.0",
-    "lucide-react": "^1.61.0",
+    "motion": "^14.10.1",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-router": "^7.18.4",
@@ -24,8 +25,10 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",
+    "@types/node": "^22.20.5",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.2.0",
     "tailwindcss": "^4.1.18",
     "typescript": "^5.9.3",
     "vite": "^7.3.0"

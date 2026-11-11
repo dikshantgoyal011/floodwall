@@ -1,14 +1,15 @@
 import { Link } from "react-router";
 import { ConsoleBadge } from "../../components/console/ConsoleBadge";
 import { ConsoleButton } from "../../components/console/ConsoleButton";
+import { ConsoleEmpty } from "../../components/console/ConsoleEmpty";
 import { ConsoleOpenIntent } from "../../components/console/ConsoleOpenIntent";
 import { ConsolePageHeader } from "../../components/console/ConsolePageHeader";
-import { ConsoleStat } from "../../components/console/ConsoleStat";
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
+import { ConsolePanel } from "../../components/console/ConsolePanel";
+import { ConsoleStats } from "../../components/console/ConsoleStats";
 import { CONSOLE_PATHS, OVERVIEW_STATS } from "../../constants/console";
 import { usePlane } from "../../hooks/usePlane";
 import { cx } from "../../helpers/cx";
-import { consoleGrow, consoleList, consoleMono, consoleRow } from "../../styles/classes";
+import { consoleGrow, consoleLink, consoleList, consoleMono, consoleRow } from "../../styles/classes";
 
 export function OverviewPage() {
   const { state, dispatch } = usePlane();
@@ -32,34 +33,35 @@ export function OverviewPage() {
         }
       />
 
-      <section className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-4">
-        {OVERVIEW_STATS.map(({ label, hint, value }) => (
-          <ConsoleStat key={label} label={label} value={value(state)} hint={hint} />
-        ))}
-      </section>
+      <ConsoleStats
+        label="Plane state"
+        stats={OVERVIEW_STATS.map(({ label, hint, value }) => ({ label, hint, value: value(state) }))}
+      />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent decisions</CardTitle>
-          <CardAction>
-            <Link className="font-semibold text-bay-deep" to={CONSOLE_PATHS.ledger}>
-              Open ledger
-            </Link>
-          </CardAction>
-        </CardHeader>
-        <CardContent>
+      <ConsolePanel
+        title="Recent decisions"
+        flush
+        action={
+          <Link className={consoleLink} to={CONSOLE_PATHS.ledger}>
+            Open ledger
+          </Link>
+        }
+      >
+        {recent.length === 0 ? (
+          <ConsoleEmpty title="Nothing recorded yet">Decisions appear here as the gate rules on intents.</ConsoleEmpty>
+        ) : (
           <ul className={consoleList}>
             {recent.map((record) => (
               <li key={record.seq} className={consoleRow}>
-                <span className={cx(consoleMono, "text-muted")}>#{record.seq}</span>
+                <span className={cx(consoleMono, "w-8 shrink-0 text-muted")}>#{record.seq}</span>
                 <span className={consoleGrow}>
-                  <strong>{record.agent}</strong>
+                  <span className="font-medium text-ink">{record.agent}</span>
                   <span className="text-muted"> · {record.summary}</span>
                 </span>
                 {record.verdict ? (
                   <ConsoleBadge value={record.verdict} />
                 ) : (
-                  <span className="text-muted">{record.kind}</span>
+                  <span className="font-mono text-[11px] text-muted">{record.kind}</span>
                 )}
                 {/* The decision's intent as a chip: the way into it from here. */}
                 <ConsoleOpenIntent id={record.intentId}>
@@ -68,8 +70,8 @@ export function OverviewPage() {
               </li>
             ))}
           </ul>
-        </CardContent>
-      </Card>
+        )}
+      </ConsolePanel>
     </>
   );
 }

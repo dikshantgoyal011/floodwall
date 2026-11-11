@@ -17,7 +17,7 @@ export function SignupPage() {
     <AuthPage kicker={COPY.kicker} title={COPY.title} lead={COPY.lead}>
       <p>{COPY.note}</p>
       <AuthCodeForm page="signup" />
-      <p className="text-sm text-muted">{COPY.terms}</p>
+      <p>{COPY.terms}</p>
       <p>
         {COPY.switchPrompt} <Link to={{ pathname: AUTH_PATHS.login, search: params.toString() }}>{COPY.switchLink}</Link>.
       </p>

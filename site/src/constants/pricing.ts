@@ -1,12 +1,9 @@
 // Plans, prices and copy for the /pricing page. The prices are the working
 // proposal for Floodwall Cloud; they live here so they change in one place.
 
-import { REPO_URL } from "./links";
+import { EARLY_ACCESS_URL, PRICING_PATH, REPO_URL } from "./links";
 
-export const PRICING_PATH = "/pricing";
-
-/** Hosted plans open by invitation: requests go to the team's waitlist form. */
-export const EARLY_ACCESS_URL = "https://tally.so/r/6DJeoP";
+export { PRICING_PATH };
 
 export type PricingPlan = {
   name: string;

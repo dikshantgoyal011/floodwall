@@ -1,0 +1,87 @@
+<!doctype html>
+<!--
+  The 1200×630 share card. scripts/generate-og-image.sh opens it on the dev server with the crate
+  facts in the query string and a fresh still of the hero diagram beside it, then captures it to
+  public/og/floodwall.png. It uses the site's own tokens and fonts, so it stays in step with the page.
+-->
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Floodwall share card</title>
+    <link rel="stylesheet" href="/src/styles/theme.css" />
+    <style>
+      html, body { width: 1200px; height: 630px; margin: 0; overflow: hidden; }
+      body { padding: 24px; box-sizing: border-box; background: var(--canvas); }
+      .sheet {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        height: 100%;
+        border: 1px solid var(--line);
+        background: var(--paper);
+      }
+      .band { display: flex; align-items: stretch; justify-content: space-between; border-bottom: 1px solid var(--line); }
+      .brand { display: flex; align-items: center; gap: 12px; padding: 18px 28px; color: var(--ink); font-size: 28px; font-weight: 600; letter-spacing: -.02em; }
+      .brand sup { margin-left: 3px; font-size: 10px; }
+      .brand .brand-mark { width: 38px; height: 38px; }
+      .kicker {
+        display: flex; align-items: center; padding: 0 28px;
+        border-left: 1px solid var(--line);
+        color: var(--muted); font: 500 14px/1.5 var(--mono); letter-spacing: var(--label-tracking); text-transform: uppercase;
+      }
+      .body { display: grid; grid-template-columns: 468px minmax(0, 1fr); min-height: 0; }
+      .copy { display: flex; flex-direction: column; justify-content: center; gap: 22px; padding: 0 0 0 28px; }
+      h1 { margin: 0; color: var(--ink); font-size: 54px; line-height: 1.02; letter-spacing: -.035em; text-wrap: balance; }
+      .lead { margin: 0; max-width: 400px; color: var(--muted); font-size: 18px; line-height: 1.45; }
+      .figure { display: flex; align-items: center; justify-content: center; min-width: 0; padding: 12px 20px 8px 0; }
+      .figure img { display: block; width: 100%; height: 100%; object-fit: contain; }
+      .facts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) 1.4fr; gap: 1px; border-top: 1px solid var(--line); background: var(--line); }
+      .facts > div { padding: 12px 20px 14px; background: var(--paper); }
+      .facts dt { color: var(--muted); font: 500 12px/1.4 var(--mono); letter-spacing: var(--label-tracking); text-transform: uppercase; }
+      .facts dd { margin: 4px 0 0; color: var(--ink); font: 500 20px/1.2 var(--mono); letter-spacing: -.02em; font-variant-numeric: tabular-nums slashed-zero; }
+      .facts .url dd { font-family: var(--body); font-weight: 550; letter-spacing: -.01em; }
+    </style>
+  </head>
+  <body>
+    <div class="sheet">
+      <div class="band">
+        <div class="brand">
+          <svg class="brand-mark" aria-hidden="true" viewBox="0 0 64 64">
+            <rect x="7" y="7" width="50" height="50" rx="13" />
+            <path d="M32 11v42" />
+            <path d="M14 32h17M33 32h17" />
+            <path d="M19 48c6-12 6-20 0-32M45 16c-6 12-6 20 0 32" />
+          </svg>
+          <span>Floodwall<sup>&reg;</sup></span>
+        </div>
+        <p class="kicker">Policy gates for agent-driven DevOps</p>
+      </div>
+      <div class="body">
+        <div class="copy">
+          <h1 class="staccato-heading">When agents flood production, <strong>hold the line.</strong></h1>
+          <p class="lead">Admission control, a policy gate, and a tamper-evident decision ledger, in one Rust crate.</p>
+        </div>
+        <div class="figure"><img id="diagram" alt="" /></div>
+      </div>
+      <dl class="facts">
+        <div><dt>Language</dt><dd>Rust</dd></div>
+        <div><dt>License</dt><dd id="license"></dd></div>
+        <div><dt>Shipped</dt><dd id="version"></dd></div>
+        <div><dt>Dependencies</dt><dd id="dependencies"></dd></div>
+        <div><dt>Tests</dt><dd id="tests"></dd></div>
+        <div class="url"><dt>Site</dt><dd>floodwall.ai</dd></div>
+      </dl>
+    </div>
+    <script>
+      // Every fact is required: a missing one leaves the card unfinished rather than guessed.
+      const params = new URLSearchParams(location.search);
+      for (const key of ["license", "version", "dependencies", "tests"]) {
+        const value = params.get(key);
+        if (!value) throw new Error(`card.html: missing ${key}`);
+        document.getElementById(key).textContent = value;
+      }
+      const diagram = document.getElementById("diagram");
+      diagram.src = params.get("diagram") ?? "";
+      Promise.all([document.fonts.ready, diagram.decode()]).then(() => { document.body.dataset.ready = "true"; });
+    </script>
+  </body>
+</html>

@@ -4,7 +4,7 @@ import { ConsoleBackLink } from "../../components/console/ConsoleBackLink";
 import { ConsoleButton } from "../../components/console/ConsoleButton";
 import { ConsolePageHeader } from "../../components/console/ConsolePageHeader";
 import { ConsoleSelect } from "../../components/console/ConsoleSelect";
-import { Card, CardContent } from "../../components/ui/card";
+import { ConsolePanel } from "../../components/console/ConsolePanel";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { ACTION_KINDS, BLAST_RADII, CONSOLE_PATHS, PRIORITIES } from "../../constants/console";
@@ -45,9 +45,8 @@ export function NewIntentPage() {
       <ConsoleBackLink to={CONSOLE_PATHS.intents}>Intents</ConsoleBackLink>
       <ConsolePageHeader title="Submit intent" description="Propose a change as an agent would. It joins the queue." />
 
-      <Card className="max-w-160 py-7">
-        <CardContent className="px-7">
-          <form className="flex flex-col gap-5" onSubmit={onSubmit}>
+      <ConsolePanel title="New intent" className="max-w-180">
+          <form className="flex flex-col gap-5 py-1" onSubmit={onSubmit}>
             <ConsoleSelect label="Agent" value={agent} options={MOCK_AGENTS} onChange={setAgent} />
 
             <div className="flex flex-wrap gap-4 *:min-w-40">
@@ -92,15 +91,14 @@ export function NewIntentPage() {
               <ConsoleSelect label="Blast radius" value={blast} options={BLAST_RADII} onChange={setBlast} />
             </div>
 
-            <div className={cx(consoleActions, "justify-end pt-1")}>
+            <div className={cx(consoleActions, "justify-end border-t border-line pt-4")}>
               <ConsoleButton variant="secondary" to={CONSOLE_PATHS.intents}>
                 Cancel
               </ConsoleButton>
               <ConsoleButton type="submit">Submit to the queue</ConsoleButton>
             </div>
           </form>
-        </CardContent>
-      </Card>
+      </ConsolePanel>
     </>
   );
 }

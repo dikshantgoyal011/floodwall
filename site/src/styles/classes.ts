@@ -1,95 +1,57 @@
 // Tailwind class lists shared by more than one component. Each one styles a
 // kind of element completely; components add their own layout around it.
 
-/* ------------------------------------------------------------- Landing */
-
-/** The centred content column, as wide as the content or the gutters allow. */
-export const pageWidth = "mx-auto w-[min(var(--container-content),100%-2*var(--spacing-gutter))]";
-
-/**
- * A landing section fills the space below the header and centres its
- * content, so a nav jump (which lands it under the header via the scroll
- * padding) leaves it in the middle of the view. Taller content just starts
- * at the top.
- */
-export const landingSection = `${pageWidth} grid min-h-[calc(100svh-var(--spacing-header))] content-center py-section`;
-
-/** The serif heading that opens a section or the footer. */
-export const displayHeading = "font-display text-display-lg leading-none font-normal text-ink";
-
-/** A bold text link that darkens on hover or focus. */
-export const textLink =
-  "font-bold text-ink-soft transition-[color] duration-180 ease-[ease] hover:text-black focus-visible:text-black";
-
-// The landing page builds on shadcn's parts (components/ui) but keeps its own
-// look, so each use undoes the shadcn defaults it does not share. Radii and
-// card padding are written as var() classes: shadcn's class merge does not
-// know the site's custom names (rounded-card, p-card) and would keep its own
-// value beside them instead of replacing it.
-
-/** Takes shadcn's Card back to a bare flex column: no gap, ring, clipping, padding or small text. */
-export const cardReset = "gap-0 overflow-visible py-0 text-base ring-0";
-
-/** The light bordered card, on shadcn's Card. */
-export const card = `${cardReset} rounded-(--radius-card) border border-line bg-[rgba(255,255,255,0.78)]`;
-
-export const cardTitle = "text-title leading-tight font-semibold text-ink";
-export const cardCopy = "text-base leading-body text-muted";
-
-/** A list item set off by a small bridge-red dot. */
-export const bulletItem =
-  "relative pl-5 text-base leading-body text-ink-soft before:absolute before:top-[0.62em] before:left-0 before:size-2 before:rounded-pill before:bg-bridge";
-
-/** The list of rows on a dark panel, and each row's skin. */
-export const panelRows = "mt-3 mb-4 grid gap-3";
-export const panelRow = "rounded-row border border-[rgba(255,255,255,0.1)] bg-[rgba(255,255,255,0.07)] text-panel-text";
-
-/** Line art in the bay scenes: unfilled, with round ends and joins. */
-export const scenePath = "fill-none [stroke-linecap:round] [stroke-linejoin:round]";
-
-/** The twinkling city lights along the bottom of the hero and footer scenes. */
-export const bayLights =
-  "absolute inset-x-[-4%] bottom-0 animate-twinkle bg-(image:--image-bay-lights) bg-size-[64px_34px,91px_42px,128px_50px] bg-position-[0_0,26px_13px,54px_22px] mask-[linear-gradient(180deg,transparent,#000_36%,transparent_100%)]";
-
-/* ------------------------------------------------------------- Pricing */
-
-/** A pricing section: the content column, spaced from the one above. */
-export const pricingSection = `${pageWidth} pt-section`;
-
 /* ------------------------------------------------------------- Sign-in */
 
-// Passed straight to shadcn's Button. Like ButtonLink, they undo its fixed
-// height, border and pressed nudge, and use the site's focus outline.
-const pillBase =
-  "h-auto min-h-10 shrink gap-0 rounded-(--radius-pill) px-5 text-sm transition-[transform,background,border-color] duration-180 ease-[ease] active:not-aria-[haspopup]:translate-y-0 focus-visible:ring-0 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-bay-deep disabled:opacity-55";
+/** The centred column the sign-in, sign-up and account sheets sit in. */
+export const pageWidth = "mx-auto w-[min(var(--container-content),100%-2*var(--spacing-gutter))]";
 
-/** The solid black pill, as a form button. */
-export const pillSolid = `${pillBase} border-0 bg-black font-bold text-white hover:bg-[#151515]`;
+/** A white sheet with the landing page's 1px rule and square corners, on shadcn's Card. */
+export const card = "gap-0 overflow-visible rounded-none border border-line bg-surface py-0 text-base ring-0";
 
-/** The outlined pill beside it, for the quieter actions. */
-export const pillOutline = `${pillBase} border border-line bg-white font-semibold text-ink hover:border-[rgba(8,11,13,0.24)] hover:bg-tint-hover`;
+// Passed straight to shadcn's Button: the landing page's square buttons. They undo
+// its fixed height, border and pressed nudge, and use the site's focus outline.
+const buttonBase =
+  "h-auto min-h-11 shrink gap-3 rounded-none px-5 text-sm font-medium transition-[background,border-color] duration-160 ease-[cubic-bezier(.25,1,.5,1)] active:not-aria-[haspopup]:translate-y-0 focus-visible:ring-0 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-ink disabled:opacity-55";
 
-/** The card the sign-in forms and account details sit on. */
-export const authCard = `${card} gap-5 p-8 mobile:p-6`;
+/** The solid near-black button, as a form button. */
+export const pillSolid = `${buttonBase} border border-transparent bg-action text-action-text hover:bg-action-hover`;
 
-/** The blue note that says the code is a demo. */
-export const authNote = "rounded-control bg-info-soft px-3.5 py-2.5 text-sm text-info";
+/** The outlined button beside it, for the quieter actions. */
+export const pillOutline = `${buttonBase} border border-line-strong bg-surface text-ink hover:border-ink`;
+
+/** The sign-in form or account details: one row of the sign-in sheet, so it adds no frame of its own. */
+export const authCard = "gap-5 rounded-none border-0 bg-transparent py-0 text-base text-ink ring-0";
+
+/** The note that says the code is a demo: a ruled band, neutral, since it is not an outcome. */
+export const authNote = "border border-line bg-subtle px-4 py-3 font-mono text-xs leading-normal text-ink";
+
+/** The landing page's mono label: section tabs, panel headers and field captions. */
+export const monoLabel = "font-mono text-[11px] font-medium tracking-[0.08em] text-muted uppercase";
 
 /* ------------------------------------------------------------- Console */
 
 // Cards, buttons, inputs, selects, tables and tabs are shadcn's, in
 // components/ui; these are the console's own pieces around them.
 
-export const consoleLabel = "text-xs font-bold tracking-[0.04em] text-muted uppercase";
-export const consoleMono = "font-mono text-[13px]";
+export const consoleLabel = monoLabel;
+export const consoleMono = "font-mono text-[13px] tabular-nums";
 export const consoleActions = "flex flex-wrap gap-2";
 
-/** A divided list, its rows (plain or padded to the card's edges), and their parts. */
+/**
+ * A divided list in a flush ConsolePanel, its rows running edge to edge with the panel's inset, and
+ * their parts. A row with a second line (consoleSub) keeps the same rhythm.
+ */
 export const consoleList = "[&>li+li]:border-t [&>li+li]:border-t-line";
-export const consoleRow = "flex items-center gap-4 py-3";
-export const consoleRowPadded = "flex items-center gap-4 px-6 py-4";
-export const consoleGrow = "min-w-0 flex-1";
-export const consoleSub = "mt-1 block text-muted";
+export const consoleRow = "flex min-h-12 items-center gap-4 px-5 py-3 console-narrow:gap-3 console-narrow:px-4";
+export const consoleGrow = "min-w-0 flex-1 leading-normal";
+export const consoleSub = "mt-0.5 block text-[13px] leading-normal text-muted";
+
+/** A link inside console content: ink, underlined on hover, the landing page's link treatment. */
+export const consoleLink = "font-medium text-ink underline-offset-4 decoration-line-strong hover:underline";
+
+/** A table column (header and cells) that only wide screens show; the intent's page has its value. */
+export const consoleWideOnly = "console-narrow:hidden";
 
 /** A labelled form field: the label above its input or select. */
 export const consoleField = "flex flex-1 flex-col gap-2";

@@ -9,6 +9,16 @@
 /* Build-time helpers, not markup: keep their words out of the class scan. */
 @source not "../crate-stats.mjs";
 @source not "../crate-stats.test.mjs";
+@source not "../structured-data.mjs";
+@source not "../structured-data.test.mjs";
+@source not "../scope-landing-css.mjs";
+@source not "../scope-landing-css.test.mjs";
+/* Design sources, the Tally form's own CSS, build scripts and the static files
+ * (the diagram scripts among them): no utilities. */
+@source not "../artwork";
+@source not "../tally";
+@source not "../scripts";
+@source not "../public";
 /* Browser hooks and helpers, no markup: words like "resize" would emit stray utilities. */
 @source not "./hooks";
 @source not "./helpers";
@@ -30,42 +40,44 @@
 /* -------------------------------------------------------------- Tokens */
 
 @theme {
-  --color-paper: #f7fbff;
-  --color-ink: #080b0d;
-  --color-ink-soft: #4e5961;
-  --color-muted: #667078;
-  --color-quiet: #6f6f6f;
-  --color-line: rgba(8, 11, 13, 0.12);
-  --color-bay-deep: #2f6e89;
-  --color-bridge: #e86d4e;
-  --color-signal: #a8d884;
-  --color-gold: #e0a93b;
+  /* DESIGN.md's palette, as on the landing page's light theme: a neutral gray
+   * plane, white sheets, near-black ink and fine gray rules. */
+  --color-paper: #f2f2f2;
+  --color-ink: #171717;
+  --color-ink-soft: #404040;
+  --color-muted: #606060;
+  --color-quiet: #606060;
+  --color-line: #e5e5e5;
+  /* The edge of a field or select: 3:1 against the sheet and the plane, which a rule need not reach. */
+  --color-line-strong: #8a8a8a;
+  /* The one filled action per view: near-black in light, pale in dark, as on the landing page. */
+  --color-action: #171717;
+  --color-action-text: #ffffff;
+  --color-action-hover: #353535;
+  /* Near black: links, focus outlines and the active console page, as on the landing page. */
+  --color-bay-deep: #171717;
+  --color-bridge: #b8392e;
   /* One tint scale for interactive surfaces on light backgrounds. */
-  --color-tint-hover: rgba(8, 11, 13, 0.05);
-  --color-tint-active: rgba(8, 11, 13, 0.08);
-  /* Text and rules on the dark Gate and Ledger panels. */
-  --color-panel-text: rgba(255, 255, 255, 0.76);
-  --color-panel-dim: rgba(255, 255, 255, 0.64);
-  --color-panel-line: rgba(255, 255, 255, 0.12);
-  /* Gate verdicts. */
-  --color-admit: var(--color-signal);
-  --color-defer: #e0c36c;
-  --color-reject: #ff8b72;
-  /* The console's surfaces and status tones. */
+  --color-tint-hover: rgba(23, 23, 23, 0.04);
+  --color-tint-active: rgba(23, 23, 23, 0.08);
+  /* The console's surfaces and status tones. Green, amber and wine red are the
+   * landing page's verdict colours and mark real outcomes only; info is neutral. */
   --color-surface: #fff;
-  --color-subtle: #f2f6f9;
-  --color-good: #2f7a3e;
-  --color-good-soft: #e6f4e3;
-  --color-warn: #8a5a0b;
-  --color-warn-soft: #fbf0d9;
-  --color-bad: #b23c22;
-  --color-bad-soft: #fbe6df;
-  --color-info: var(--color-bay-deep);
-  --color-info-soft: #e1f1f8;
+  --color-subtle: #f5f5f5;
+  --color-good: #287247;
+  --color-good-soft: #e4efe8;
+  --color-warn: #85600f;
+  --color-warn-soft: #f4ecda;
+  --color-bad: #8a2533;
+  --color-bad-soft: #f3e3e6;
+  --color-info: var(--color-ink);
+  --color-info-soft: var(--color-subtle);
 
-  --font-display: "Instrument Serif", Georgia, serif;
-  --font-body: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  /* Geist for every heading, prose, control and label; Geist Mono for code
+   * and data. Both are self-hosted (@font-face in styles/landing/theme.css). */
+  --font-display: Geist, ui-sans-serif, sans-serif;
+  --font-body: Geist, ui-sans-serif, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   /* The site's type scale. Sizes set font-size only: line height is set
    * where it is meant to change. */
@@ -77,139 +89,27 @@
   --text-title: 20px;
   --text-xl: 24px;
   --text-2xl: 30px;
-  --text-display-md: clamp(32px, 3.6vw, 48px);
-  --text-display-lg: clamp(40px, 5.5vw, 72px);
-  --text-display-xl: clamp(52px, 7vw, 112px);
-  --leading-body: 1.65;
+  --text-display-md: clamp(32px, 3.3vw, 48px);
+  --leading-body: 1.55;
 
   /* The site is sized in px, so spacing and radii stay put when a visitor
    * changes the browser's default font size; Tailwind's own are in rem. */
   --spacing: 4px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
+  /* Square corners everywhere, as DESIGN.md asks; no shadows. */
+  --radius-lg: 0px;
+  --radius-xl: 0px;
 
   --container-content: 1160px;
   --spacing-gutter: clamp(16px, 4vw, 32px);
   --spacing-header: 72px;
   --spacing-section: clamp(56px, 7vw, 88px);
-  --spacing-card: 28px;
-  --spacing-card-lg: 40px;
+  --spacing-card: 24px;
+  --spacing-card-lg: 32px;
 
-  --radius-control: 10px;
-  --radius-row: 16px;
-  --radius-card: 24px;
-  --radius-pill: 999px;
-  --shadow-card: 0 24px 80px rgba(47, 110, 137, 0.12);
-
-  /* Layered backgrounds, used with bg-(image:--image-*) or [background:...]. */
-  --image-hero:
-    linear-gradient(180deg, rgba(247, 251, 255, 0.96), rgba(247, 251, 255, 0.62) 46%, var(--color-paper) 100%),
-    radial-gradient(ellipse at 24% 16%, rgba(184, 227, 244, 0.64), transparent 34%);
-  --image-hero-veil:
-    linear-gradient(
-      180deg,
-      var(--color-paper) 0%,
-      rgba(247, 251, 255, 0.98) 34%,
-      rgba(247, 251, 255, 0.72) 50%,
-      rgba(247, 251, 255, 0.16) 70%,
-      rgba(247, 251, 255, 0.32) 100%
-    ),
-    linear-gradient(90deg, rgba(247, 251, 255, 0.94), rgba(247, 251, 255, 0.62) 42%, rgba(247, 251, 255, 0.12));
-  --image-hero-fog:
-    radial-gradient(ellipse at 22% 50%, rgba(255, 255, 255, 0.86), transparent 42%),
-    radial-gradient(ellipse at 62% 54%, rgba(184, 227, 244, 0.42), transparent 46%),
-    radial-gradient(ellipse at 84% 44%, rgba(232, 109, 78, 0.14), transparent 34%);
-  --image-bay-lights:
-    radial-gradient(circle, rgba(224, 169, 59, 0.82) 0 1.4px, transparent 1.9px),
-    radial-gradient(circle, rgba(115, 169, 66, 0.5) 0 1px, transparent 1.6px),
-    radial-gradient(circle, rgba(47, 110, 137, 0.38) 0 1.2px, transparent 1.8px);
-  --image-panel:
-    linear-gradient(180deg, rgba(8, 11, 13, 0.9), rgba(18, 38, 48, 0.92));
-  --image-panel-grid:
-    linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
-  /* The footer's whole background, poster photo placed and sized within it. */
-  --background-footer:
-    radial-gradient(ellipse at 72% 72%, rgba(232, 109, 78, 0.2), transparent 34%),
-    linear-gradient(180deg, rgba(247, 251, 255, 0.94) 0%, rgba(215, 232, 241, 0.68) 30%, rgba(127, 185, 207, 0.34) 100%),
-    url("/footer-sf-poster.jpg") center 58% / cover no-repeat,
-    linear-gradient(180deg, var(--color-paper) 0%, #d7e8f1 30%, #7fb9cf 100%);
-  --image-footer-wash:
-    linear-gradient(0deg, rgba(247, 251, 255, 0.86) 0, rgba(247, 251, 255, 0.5) 64px, transparent 160px),
-    linear-gradient(
-      180deg,
-      rgba(247, 251, 255, 0.96) 0%,
-      rgba(247, 251, 255, 0.7) 30%,
-      rgba(247, 251, 255, 0.18) 58%,
-      rgba(31, 82, 96, 0.32) 100%
-    ),
-    linear-gradient(
-      90deg,
-      rgba(247, 251, 255, 0.94),
-      rgba(247, 251, 255, 0.52) 42%,
-      rgba(247, 251, 255, 0.08) 68%,
-      rgba(12, 52, 67, 0.28)
-    );
-  --image-footer-grid:
-    linear-gradient(rgba(8, 11, 13, 0.12) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(8, 11, 13, 0.1) 1px, transparent 1px);
-  --image-footer-fog:
-    radial-gradient(ellipse at 20% 48%, rgba(255, 255, 255, 0.8), transparent 44%),
-    radial-gradient(ellipse at 56% 58%, rgba(255, 255, 255, 0.54), transparent 48%),
-    radial-gradient(ellipse at 84% 46%, rgba(184, 227, 244, 0.5), transparent 38%);
-
-  /* Motion. Headline lines rise in turn; the bay scenes drift and glow. */
-  --animate-fade-rise: fade-rise 0.8s ease-out both;
-  --animate-fade-rise-2: fade-rise 0.8s 0.2s ease-out both;
-  --animate-fade-rise-3: fade-rise 0.8s 0.4s ease-out both;
-  --animate-fog-drift: fog-drift 34s ease-in-out infinite alternate;
-  --animate-fog-drift-slow: fog-drift 46s ease-in-out infinite alternate-reverse;
-  --animate-footer-fog: fog-drift 44s ease-in-out infinite alternate;
-  --animate-bridge-glow: bridge-glow 8s ease-in-out infinite;
-  --animate-bridge-glow-slow: bridge-glow 9s ease-in-out infinite;
-  --animate-twinkle: twinkle 5.5s steps(3, end) infinite;
-
-  @keyframes fade-rise {
-    from {
-      opacity: 0;
-      transform: translateY(20px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  @keyframes fog-drift {
-    from {
-      transform: translate3d(-5%, -3px, 0) scaleX(1.02);
-    }
-    to {
-      transform: translate3d(5%, 5px, 0) scaleX(1.08);
-    }
-  }
-
-  @keyframes twinkle {
-    0%,
-    100% {
-      opacity: 0.18;
-    }
-    50% {
-      opacity: 0.42;
-    }
-  }
-
-  @keyframes bridge-glow {
-    0%,
-    100% {
-      opacity: 0.18;
-      transform: translate3d(0, 0, 0);
-    }
-    50% {
-      opacity: 0.34;
-      transform: translate3d(8px, -3px, 0);
-    }
-  }
+  --radius-control: 0px;
+  --radius-row: 0px;
+  --radius-card: 0px;
+  --radius-pill: 0px;
 }
 
 /* ---------------------------------------------------------------- Base */
@@ -221,7 +121,7 @@
   }
 
   :focus-visible {
-    outline: 2px solid var(--color-bay-deep);
+    outline: 2px solid var(--color-ink);
     outline-offset: 3px;
   }
 
@@ -231,8 +131,8 @@
   }
 
   ::selection {
-    background: var(--color-bridge);
-    color: #fff;
+    background: var(--color-ink);
+    color: var(--color-surface);
   }
 
   /* Phones get a shorter header and tighter cards. */
@@ -272,9 +172,9 @@
  * semantic names below, each pointing at one of the site's tokens, so the
  * console's shadcn parts share the landing page's palette. */
 
-/* The site has no dark theme; this keeps shadcn's dark: styles off unless a
- * .dark ancestor asks for them, instead of following the OS setting. */
-@custom-variant dark (&:is(.dark *));
+/* dark: follows the theme theme.js sets on <html> (data-theme), the same switch
+ * the landing page reads, rather than the OS setting directly. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 :root {
   --background: var(--color-surface);
@@ -283,8 +183,8 @@
   --card-foreground: var(--color-ink);
   --popover: var(--color-surface);
   --popover-foreground: var(--color-ink);
-  --primary: var(--color-ink);
-  --primary-foreground: #fff;
+  --primary: var(--color-action);
+  --primary-foreground: var(--color-action-text);
   --secondary: var(--color-subtle);
   --secondary-foreground: var(--color-ink);
   --muted: var(--color-tint-hover);
@@ -293,9 +193,38 @@
   --accent-foreground: var(--color-ink);
   --destructive: var(--color-bad);
   --border: var(--color-line);
-  --input: var(--color-line);
-  --ring: var(--color-bay-deep);
-  --radius: 8px;
+  --input: var(--color-line-strong);
+  --ring: var(--color-ink);
+  --radius: 0px;
+}
+
+/* The dark theme for sign-in and the console: DESIGN.md's dark surfaces and the
+ * landing page's dark verdict colours. Every text pair measures at least 4.5:1
+ * and every control edge 3:1 against the surfaces it sits on. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-paper: #111111;
+  --color-surface: #1b1b1b;
+  --color-subtle: #242424;
+  --color-ink: #f2f2f2;
+  --color-ink-soft: #d4d4d4;
+  --color-muted: #b2b2b2;
+  --color-quiet: #b2b2b2;
+  --color-line: #393939;
+  --color-line-strong: #737373;
+  --color-action: #ededed;
+  --color-action-text: #171717;
+  --color-action-hover: #d2d2d2;
+  --color-bay-deep: #f2f2f2;
+  --color-bridge: #ec7a68;
+  --color-tint-hover: rgba(242, 242, 242, 0.06);
+  --color-tint-active: rgba(242, 242, 242, 0.1);
+  --color-good: #8cc69e;
+  --color-good-soft: #1e3125;
+  --color-warn: #d7ba79;
+  --color-warn-soft: #372d18;
+  --color-bad: #e8a0ab;
+  --color-bad-soft: #3c2127;
 }
 
 @theme inline {
@@ -327,4 +256,100 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* -------------------------------------------------------------- Console */
+
+/* Sideways scrollers fade only the edge that still has content behind it (shadcn's scroll-fade-x,
+ * driven by scroll position), at Craft's sizes: a 2.5rem fade, reached over the first and last 3rem
+ * of scroll. The fade is the cue, so the scrollbar hides. Where scroll-driven animation is missing,
+ * shadcn would fade both ends whether or not the row overflows; the edges stay hard instead. */
+.scroll-fade-x,
+.console-table > [data-slot="table-container"] {
+  --scroll-fade-size: 2.5rem;
+  --scroll-fade-reveal: 3rem;
+  scrollbar-width: none;
+
+  @supports not (animation-timeline: scroll()) {
+    --scroll-fade-s: 0px;
+    --scroll-fade-e: 0px;
+  }
+}
+
+/* The page's title bar publishes its height; anything scrolled into view, a focused control or a
+ * jump target, lands below it and below a pinned table header row (44px) rather than under them. */
+html:has(#console-main) {
+  scroll-padding-top: calc(var(--console-bar-h, 0px) + 3rem);
+}
+
+/* 1 once the table's header row is pinned, 0 before: the row's top rule and fade follow it. */
+@property --console-head-pinned {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 0;
+}
+
+@keyframes console-head-pin {
+  from {
+    --console-head-pinned: 0;
+  }
+  to {
+    --console-head-pinned: 1;
+  }
+}
+
+/* Narrow: the table scrolls sideways inside its panel. */
+@media (max-width: 860px) {
+  .console-table > [data-slot="table-container"] {
+    @apply scroll-fade-x;
+  }
+}
+
+/* Wide: the table fits, so its container drops the overflow that would trap a sticky row, and the
+ * header row pins under the title bar. The row sits above the bar's fade (z-30 over z-20) and draws
+ * its own: the rows fade under the column labels, not the labels under the bar. A collapsed table
+ * leaves a pinned cell's border behind, so each cell draws its rules as inset shadows instead. */
+@media (min-width: 861px) {
+  .console-table > [data-slot="table-container"] {
+    overflow: visible;
+  }
+
+  .console-table table {
+    view-timeline: --console-table block;
+    view-timeline-inset: var(--console-bar-h, 0px) 0px;
+  }
+
+  .console-table thead tr {
+    border-bottom-width: 0;
+  }
+
+  .console-table th {
+    position: sticky;
+    top: var(--console-bar-h, 0px);
+    z-index: 30;
+    background: var(--color-surface);
+    box-shadow:
+      inset 0 -1px 0 var(--color-line),
+      0 -1px 0 color-mix(in oklab, var(--color-line) calc(var(--console-head-pinned) * 100%), transparent);
+
+    &::after {
+      content: "";
+      position: absolute;
+      inset-inline: 0;
+      top: 100%;
+      height: 2.5rem;
+      pointer-events: none;
+      background: linear-gradient(to bottom, var(--color-surface), transparent);
+      opacity: var(--console-head-pinned);
+    }
+  }
+
+  /* The table's top edge reaching the bar's lower edge is the moment the row pins. */
+  @supports (animation-timeline: view()) {
+    .console-table th {
+      animation: console-head-pin 1ms linear both;
+      animation-timeline: --console-table;
+      animation-range: exit-crossing 0px exit-crossing 1px;
+    }
+  }
 }

@@ -64,8 +64,23 @@ export const INTENT_FILTERS: { key: string; label: string; statuses?: IntentStat
   { key: "done", label: "Done", statuses: ["succeeded", "failed", "rejected", "expired"] },
 ];
 
-export const INTENT_COLUMNS = ["ID", "Agent", "Action", "Priority", "Blast", "Status"];
-export const LEDGER_COLUMNS = ["Seq", "Tick", "Intent", "Kind", "Summary", "Digest"];
+/** Table columns; `wideOnly` ones drop out on narrow screens, where an intent's page still shows them. */
+export const INTENT_COLUMNS = [
+  { label: "ID" },
+  { label: "Agent" },
+  { label: "Action" },
+  { label: "Priority", wideOnly: true },
+  { label: "Blast", wideOnly: true },
+  { label: "Status" },
+];
+export const LEDGER_COLUMNS = [
+  { label: "Seq" },
+  { label: "Tick", wideOnly: true },
+  { label: "Intent" },
+  { label: "Kind" },
+  { label: "Summary" },
+  { label: "Digest" },
+];
 
 /** What a person can do next, by where the intent is in the flow. */
 export const INTENT_STEPS: Partial<Record<IntentStatus, IntentStep[]>> = {
