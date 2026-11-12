@@ -10,9 +10,7 @@
     {
       "binding": "DB",
       "database_name": "floodwall-auth",
-      // Replace with the id `wrangler d1 create floodwall-auth` prints.
-      // Local development and the tests don't need a real one.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "74c2d549-2222-4222-9eaf-4ce337d4ea98",
       "migrations_dir": "migrations"
     }
   ],
