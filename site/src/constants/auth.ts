@@ -84,6 +84,13 @@ export const AUTH_COPY = {
     checking: "Checking…",
     stillWaiting: "Still waiting for approval. We'll email you when it's done.",
   },
+  /** On a signed-in page, when the service couldn't say who is signed in. */
+  unavailable: {
+    title: "We couldn't check your sign-in.",
+    lead: "The sign-in service didn't answer, so we can't tell yet whether you're signed in. Check your connection and try again.",
+    retry: "Try again",
+    retrying: "Checking…",
+  },
   /** When the sign-in service can't be asked, or gives no reason of its own. */
   service: {
     unreachable: "We could not reach the sign-in service. Check your connection and try again.",

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Navigate, useNavigate } from "react-router";
 import { AuthPage } from "../components/auth/AuthPage";
+import { SessionUnavailable } from "../components/auth/SessionUnavailable";
 import { ButtonLink } from "../components/shared/ButtonLink";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
@@ -13,12 +14,13 @@ import { authCard, pillOutline } from "../styles/classes";
 const COPY = AUTH_COPY.account;
 
 export function AccountPage() {
-  const { session, signOut } = useSession();
+  const { session, refresh, signOut } = useSession();
   const navigate = useNavigate();
   const [leaving, setLeaving] = useState(false);
   const [status, setStatus] = useState("");
 
   if (session.status === "loading") return null;
+  if (session.status === "unavailable") return <SessionUnavailable onRetry={refresh} />;
   if (session.status === "signedOut" && !leaving) return <Navigate to={loginPath(AUTH_PATHS.account)} replace />;
   if (session.status === "signedIn" && session.user.waiting) return <Navigate to={AUTH_PATHS.waitlist} replace />;
 

@@ -17,6 +17,7 @@ import { cx } from "../../helpers/cx";
 import { useFluidHover, useRegisterFluidHoverItem } from "../../hooks/use-fluid-hover";
 import { usePlane } from "../../hooks/usePlane";
 import { useSession } from "../../hooks/useSession";
+import { SessionUnavailable } from "../auth/SessionUnavailable";
 import { FluidHoverHighlight } from "../fluid-hover-highlight";
 import { BrandMark } from "../shared/BrandMark";
 import { Icon } from "../shared/Icon";
@@ -105,7 +106,7 @@ function ConsoleNav({ items }: { items: NavEntry[] }) {
  * as a full page load would.
  */
 export function ConsoleLayout() {
-  const { session, signOut } = useSession();
+  const { session, refresh, signOut } = useSession();
   const location = useLocation();
   const mainRef = useRef<HTMLElement>(null);
   const firstPath = useRef(true);
@@ -120,6 +121,7 @@ export function ConsoleLayout() {
   }, [location.pathname]);
 
   if (session.status === "loading") return null;
+  if (session.status === "unavailable") return <SessionUnavailable onRetry={refresh} />;
   if (session.status === "signedOut") return <Navigate to={loginPath(location.pathname + location.search)} replace />;
   if (session.user.waiting) return <Navigate to={AUTH_PATHS.waitlist} replace />;
   const nav = session.user.admin ? [...CONSOLE_NAV, ADMIN_NAV] : CONSOLE_NAV;
