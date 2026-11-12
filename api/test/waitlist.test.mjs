@@ -130,7 +130,8 @@ describe("while sign-up is on the waitlist", () => {
     w.outbox.length = 0;
     await w.call("/admin/approve", { body: { email: "ada@example.com" }, cookie: admin });
     const again = await w.call("/admin/approve", { body: { email: "ada@example.com" }, cookie: admin });
-    assert.deepEqual(again.body, { approved: true, emailed: false });
+    // Not a failed email: there was nothing to send.
+    assert.deepEqual(again.body, { approved: true, emailed: false, alreadyApproved: true });
     assert.equal(w.outbox.length, 1);
   });
 
@@ -215,7 +216,13 @@ describe("the SIGNUP_MODE flag", () => {
       assert.equal(await status(w, "ada@example.com"), "approved");
 
       const admin = await w.signIn(GRACE);
-      assert.equal((await w.call("/admin/users", { method: "GET", cookie: admin })).body.signup, "open");
+      const listed = (await w.call("/admin/users", { method: "GET", cookie: admin })).body;
+      assert.equal(listed.signup, "open");
+      // The list shows nobody waiting, as the console lets them all in.
+      assert.equal(listed.users.find((u) => u.email === "old@example.com").status, "approved");
+      assert.ok(listed.users.every((u) => u.status === "approved"));
+      // Stored as waiting still, so the waitlist would hold them again if it came back.
+      assert.equal(await status(w, "old@example.com"), "waiting");
     } finally {
       await w.stop();
     }

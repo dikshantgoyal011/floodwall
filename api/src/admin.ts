@@ -45,10 +45,13 @@ export async function listUsers(request: Request, env: Env, now: number) {
   )
     .bind(LIST_LIMIT)
     .all<AccountRow>();
+  const open = isOpen(env);
   const users = results.map((row) => ({
     email: row.email,
-    // An admin never waits, even one added to ADMIN_EMAILS after joining the waitlist.
-    status: admins.has(row.email) ? "approved" : row.status,
+    // The status the account has now: an admin never waits, even one added to
+    // ADMIN_EMAILS after joining the waitlist, and nobody waits while sign-up
+    // is open. A row stored as waiting waits again if the waitlist comes back.
+    status: open || admins.has(row.email) ? "approved" : row.status,
     admin: admins.has(row.email),
     createdAt: row.created_at,
     lastSignInAt: row.last_sign_in_at,
@@ -57,7 +60,7 @@ export async function listUsers(request: Request, env: Env, now: number) {
   }));
   // Sorting is stable, so each group stays newest first.
   users.sort((a, b) => Number(b.status === "waiting") - Number(a.status === "waiting"));
-  return json({ signup: isOpen(env) ? "open" : "waitlist", users });
+  return json({ signup: open ? "open" : "waitlist", users });
 }
 
 /** Approves a waiting account and tells its owner. `origin` is the site the admin is on. */
@@ -73,8 +76,9 @@ export async function approveUser(request: Request, env: Env, now: number, origi
   if (!approved) {
     const exists = await env.DB.prepare("SELECT 1 FROM users WHERE email = ?").bind(email).first();
     if (!exists) throw new HttpError(404, MESSAGES.noSuchUser);
-    // Already approved, by another admin or an earlier click: nothing to send.
-    return json({ approved: true, emailed: false });
+    // Already approved, by another admin or an earlier click: nothing to send,
+    // and nothing failed.
+    return json({ approved: true, emailed: false, alreadyApproved: true });
   }
   // The approval stands even if the email doesn't go: the account works the
   // next time its owner opens the site, and the admin is told.

@@ -50,8 +50,14 @@ export function AdminPage() {
     setStatus("");
     try {
       if (action === "approve") {
-        const { emailed } = await adminClient.approve(email);
-        setStatus(emailed ? ADMIN_COPY.approved(email) : ADMIN_COPY.approvedNoEmail(email));
+        const { emailed, alreadyApproved } = await adminClient.approve(email);
+        setStatus(
+          alreadyApproved
+            ? ADMIN_COPY.alreadyApproved(email)
+            : emailed
+              ? ADMIN_COPY.approved(email)
+              : ADMIN_COPY.approvedNoEmail(email),
+        );
       } else {
         await adminClient.remove(email);
         setStatus(ADMIN_COPY.removed(email));

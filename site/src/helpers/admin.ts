@@ -6,6 +6,7 @@ import { callService } from "./auth";
 
 export const adminClient = {
   list: () => callService<{ signup: SignupMode; users: AdminAccount[] }>("/admin/users"),
-  approve: (email: string) => callService<{ approved: true; emailed: boolean }>("/admin/approve", { email }),
+  approve: (email: string) =>
+    callService<{ approved: true; emailed: boolean; alreadyApproved?: true }>("/admin/approve", { email }),
   remove: (email: string) => callService<{ removed: true }>("/admin/remove", { email }),
 };

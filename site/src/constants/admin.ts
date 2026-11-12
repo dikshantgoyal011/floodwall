@@ -35,6 +35,7 @@ export const ADMIN_COPY = {
   approved: (email: string) => `Approved ${email}. We emailed them.`,
   approvedNoEmail: (email: string) =>
     `Approved ${email}, but the email to them could not be sent. They can sign in now.`,
+  alreadyApproved: (email: string) => `${email} was already approved, so no email was sent.`,
   removed: (email: string) => `Removed ${email}.`,
   admin: "admin",
   /** Under an approved account: who approved it. */
