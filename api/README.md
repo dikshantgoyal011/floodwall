@@ -127,6 +127,10 @@ echo VITE_AUTH_API_URL=http://127.0.0.1:8787 > site/.env.development.local
 npm --prefix site run dev        # http://127.0.0.1:5173/login
 ```
 
+Open the site at `127.0.0.1`, not `localhost`. The session cookie is
+`SameSite=Strict` on the service's host, `127.0.0.1`, and browsers count
+`localhost` as another site, so the cookie would never be sent back.
+
 The codes are real emails, so use an address you can read. Resend only
 sends from a domain that's verified in the account the key belongs to.
 
