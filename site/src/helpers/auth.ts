@@ -1,9 +1,13 @@
-// Sign-in by one-time code, as a demo that runs in the browser: the code is
-// shown on the page instead of emailed. It keeps a real service's rules (one
+// Sign-in by one-time code. With AUTH_API_URL set, the sign-in service (api/
+// in this repository) emails the code and keeps the session in a cookie the
+// page can't read. Without it, a demo runs in the browser: the code is shown
+// on the page instead of emailed. The demo keeps the service's rules (one
 // code a minute, ten minutes to use it, five tries, single use) so the flow
-// behaves the same once a code service replaces `authClient`.
+// behaves the same either way.
 
 import {
+  AUTH_API_URL,
+  AUTH_COPY,
   AUTH_PATHS,
   CODE_LENGTH,
   CODE_MAX_ATTEMPTS,
@@ -69,7 +73,7 @@ function randomCode() {
   return String(n % 10 ** CODE_LENGTH).padStart(CODE_LENGTH, "0");
 }
 
-export const authClient: AuthClient = {
+const demoClient: AuthClient = {
   async sendCode(email) {
     const last = read<Challenge>(session, CHALLENGE_KEY);
     const wait = last && last.email === email ? last.sentAt + RESEND_COOLDOWN_MS - Date.now() : 0;
@@ -94,9 +98,59 @@ export const authClient: AuthClient = {
   },
   async getUser() {
     const stored = read<StoredSession>(local, SESSION_KEY);
-    return stored && stored.expiresAt > Date.now() ? { email: stored.email } : null;
+    // The demo has no waitlist and no admins.
+    return stored && stored.expiresAt > Date.now() ? { email: stored.email, waiting: false, admin: false } : null;
   },
   async signOut() {
     write(local, SESSION_KEY, null);
   },
 };
+
+/**
+ * Calls the sign-in service: a GET, or a POST of `body` as JSON. The service
+ * answers in JSON; a refusal carries a sentence for the reader in `error`,
+ * which is thrown as it is.
+ */
+export async function callService<T>(path: string, body?: object): Promise<T> {
+  if (!AUTH_API_URL) throw new Error(AUTH_COPY.service.failed);
+  let response: Response;
+  try {
+    response = await fetch(`${AUTH_API_URL}${path}`, {
+      method: body ? "POST" : "GET",
+      // The session cookie belongs to the service's host: send it along.
+      credentials: "include",
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new Error(AUTH_COPY.service.unreachable);
+  }
+  const answer = (await response.json().catch(() => null)) as (T & { error?: string }) | null;
+  if (!response.ok || !answer) throw new Error(answer?.error ?? AUTH_COPY.service.failed);
+  return answer;
+}
+
+/** The client for the sign-in service (callService). */
+function serviceClient(): AuthClient {
+  return {
+    async sendCode(email) {
+      await callService("/auth/code", { email });
+      return {};
+    },
+    async verifyCode(email, code) {
+      await callService("/auth/verify", { email, code });
+    },
+    async getUser() {
+      try {
+        return (await callService<{ user: AuthUser | null }>("/auth/session")).user;
+      } catch {
+        return null;
+      }
+    },
+    async signOut() {
+      await callService("/auth/signout", {});
+    },
+  };
+}
+
+export const authClient = AUTH_API_URL ? serviceClient() : demoClient;

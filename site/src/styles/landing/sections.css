@@ -234,7 +234,7 @@
 .roadmap-copy h3 { margin: 0 0 12px; font-size: var(--text-xl); font-weight: 550; letter-spacing: -.025em; line-height: 1.2; }
 .roadmap-copy .card-copy { align-self: start; }
 
-/* The request link beside the copy; the form itself opens on Tally. */
+/* The sign-up link beside the copy; /signup puts a new account on the waitlist. */
 .waitlist-card {
   display: flex;
   min-width: 0;

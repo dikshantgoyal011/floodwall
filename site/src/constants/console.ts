@@ -13,6 +13,7 @@ export const CONSOLE_PATHS = {
   hold: "/app/hold",
   ledger: "/app/ledger",
   policies: "/app/policies",
+  admin: "/app/admin",
 } as const;
 
 export const CONSOLE_NAV = [
@@ -22,6 +23,9 @@ export const CONSOLE_NAV = [
   { to: CONSOLE_PATHS.ledger, label: "Ledger", end: false },
   { to: CONSOLE_PATHS.policies, label: "Policies", end: false },
 ];
+
+/** Shown after the rest of the nav, to admins only. */
+export const ADMIN_NAV = { to: CONSOLE_PATHS.admin, label: "Admin", end: false };
 
 /** The operator name recorded on releases and expiries until there is auth. */
 export const OPERATOR = "you";

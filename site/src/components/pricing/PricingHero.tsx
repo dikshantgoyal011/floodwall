@@ -1,4 +1,4 @@
-import { ArrowRight02Icon, ArrowUpRight01Icon, GithubIcon } from "@hugeicons/core-free-icons";
+import { ArrowRight02Icon, GithubIcon } from "@hugeicons/core-free-icons";
 import { EARLY_ACCESS_URL, REPO_URL } from "../../constants/links";
 import { ENTERPRISE_PLAN, PRICING_PLANS } from "../../constants/pricing";
 import { LandingSectionHeading } from "../landing/LandingSectionHeading";
@@ -22,7 +22,7 @@ export function PricingHero() {
             <p className="pricing-note">Hosted plans by invitation during early access</p>
             <div className="pricing-buttons">
               <a className="button button-lg" href={EARLY_ACCESS_URL}>
-                Request early access <Icon icon={ArrowUpRight01Icon} className="button-arrow" />
+                Request early access <Icon icon={ArrowRight02Icon} className="button-arrow" />
               </a>
               <a className="hero-link" href={REPO_URL}>
                 <Icon icon={GithubIcon} /> View the Crate <Icon icon={ArrowRight02Icon} />

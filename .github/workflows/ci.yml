@@ -69,3 +69,19 @@ jobs:
             git status --short -- docs
             exit 1
           fi
+  # The sign-in service (api/): typecheck, bundle it as a deploy would, and
+  # run its tests against the bundle in the Workers runtime, with a local D1
+  # database and a stand-in for Resend.
+  api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+      - name: install
+        run: npm --prefix api ci
+      - name: check
+        run: npm --prefix api run check

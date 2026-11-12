@@ -5,6 +5,12 @@
 Cargo.lock
 .DS_Store
 npm-debug.log*
+/preview-dist
+/site/.env*.local
+/api/node_modules
+/api/dist
+/api/.wrangler
+/api/.dev.vars
 
 # Local Claude Code session config
 /.claude/

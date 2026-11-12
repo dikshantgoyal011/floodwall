@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router";
 import {
   DashboardSquare02Icon,
@@ -7,10 +7,11 @@ import {
   Link04Icon,
   Logout03Icon,
   SecurityCheckIcon,
+  UserCheck01Icon,
 } from "@hugeicons/core-free-icons";
 import type { IconSvgElement } from "@hugeicons/react";
 import { AUTH_COPY, AUTH_PATHS } from "../../constants/auth";
-import { CONSOLE_NAV, CONSOLE_PATHS } from "../../constants/console";
+import { ADMIN_NAV, CONSOLE_NAV, CONSOLE_PATHS } from "../../constants/console";
 import { loginPath } from "../../helpers/auth";
 import { cx } from "../../helpers/cx";
 import { useFluidHover, useRegisterFluidHoverItem } from "../../hooks/use-fluid-hover";
@@ -29,6 +30,7 @@ const NAV_ICONS: Record<string, IconSvgElement> = {
   [CONSOLE_PATHS.hold]: HourglassIcon,
   [CONSOLE_PATHS.ledger]: Link04Icon,
   [CONSOLE_PATHS.policies]: SecurityCheckIcon,
+  [CONSOLE_PATHS.admin]: UserCheck01Icon,
 };
 
 // The rows touch, so the hover highlight glides from one to the next. The current page is a white
@@ -52,7 +54,9 @@ function HoldCount() {
   ) : null;
 }
 
-type NavItemProps = { index: number; registerItem: (index: number, element: HTMLElement | null) => void } & (typeof CONSOLE_NAV)[number];
+type NavEntry = (typeof CONSOLE_NAV)[number] | typeof ADMIN_NAV;
+
+type NavItemProps = { index: number; registerItem: (index: number, element: HTMLElement | null) => void } & NavEntry;
 
 function NavItem({ index, registerItem, to, label, end }: NavItemProps) {
   const ref = useRef<HTMLAnchorElement>(null);
@@ -75,7 +79,7 @@ function NavItem({ index, registerItem, to, label, end }: NavItemProps) {
   );
 }
 
-function ConsoleNav() {
+function ConsoleNav({ items }: { items: NavEntry[] }) {
   const listRef = useRef<HTMLUListElement>(null);
   const hover = useFluidHover(listRef, { axis: "y" });
   return (
@@ -86,7 +90,7 @@ function ConsoleNav() {
         className="relative flex flex-col console-narrow:flex-row console-narrow:flex-wrap"
       >
         <FluidHoverHighlight hover={hover} className="bg-tint-hover" />
-        {CONSOLE_NAV.map((item, index) => (
+        {items.map((item, index) => (
           <NavItem key={item.to} index={index} registerItem={hover.registerItem} {...item} />
         ))}
       </ul>
@@ -96,14 +100,16 @@ function ConsoleNav() {
 
 /**
  * The console shell under /app: a sidebar on the gray plane (a top bar on narrow screens) and the
- * page. Signed-out visitors go to sign in first and come back here. Moving between pages hands
- * keyboard focus to the new page, as a full page load would.
+ * page. Signed-out visitors go to sign in first and come back here; an account on the waitlist goes
+ * to /waitlist. Admins also see Admin. Moving between pages hands keyboard focus to the new page,
+ * as a full page load would.
  */
 export function ConsoleLayout() {
   const { session, signOut } = useSession();
   const location = useLocation();
   const mainRef = useRef<HTMLElement>(null);
   const firstPath = useRef(true);
+  const [signOutFailed, setSignOutFailed] = useState(false);
 
   useEffect(() => {
     if (firstPath.current) {
@@ -115,6 +121,8 @@ export function ConsoleLayout() {
 
   if (session.status === "loading") return null;
   if (session.status === "signedOut") return <Navigate to={loginPath(location.pathname + location.search)} replace />;
+  if (session.user.waiting) return <Navigate to={AUTH_PATHS.waitlist} replace />;
+  const nav = session.user.admin ? [...CONSOLE_NAV, ADMIN_NAV] : CONSOLE_NAV;
 
   return (
     <PlaneProvider>
@@ -138,7 +146,7 @@ export function ConsoleLayout() {
             <BrandMark className="size-6" />
             <span>Floodwall</span>
           </Link>
-          <ConsoleNav />
+          <ConsoleNav items={nav} />
           <div className="mt-auto flex flex-col gap-4 console-narrow:mt-0 console-narrow:ml-auto">
             <p className="px-3 text-xs leading-normal text-muted console-narrow:hidden">
               Dummy data. Nothing here touches a real plane.
@@ -152,10 +160,22 @@ export function ConsoleLayout() {
                 {session.user.email}
               </Link>
               <ConsoleThemeToggle />
-              <button type="button" className={FOOTER_BUTTON} aria-label={AUTH_COPY.signOut} title={AUTH_COPY.signOut} onClick={() => void signOut()}>
+              <button
+                type="button"
+                className={FOOTER_BUTTON}
+                aria-label={AUTH_COPY.signOut}
+                title={AUTH_COPY.signOut}
+                onClick={() => {
+                  setSignOutFailed(false);
+                  signOut().catch(() => setSignOutFailed(true));
+                }}
+              >
                 <Icon icon={Logout03Icon} size={16} />
               </button>
             </div>
+            <p role="status" aria-live="polite" className="px-3 text-xs leading-normal text-muted empty:hidden">
+              {signOutFailed ? AUTH_COPY.signOutFailed : ""}
+            </p>
           </div>
         </aside>
         <main

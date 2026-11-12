@@ -47,7 +47,7 @@ export function AuthCodeForm({ page }: { page: "login" | "signup" }) {
     try {
       await work();
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Something went wrong. Please try again.");
+      setStatus(error instanceof Error ? error.message : AUTH_COPY.service.failed);
     } finally {
       setBusy(null);
     }
@@ -55,7 +55,7 @@ export function AuthCodeForm({ page }: { page: "login" | "signup" }) {
 
   async function send(to: string) {
     const { code } = await authClient.sendCode(to);
-    setDemoCode(code);
+    setDemoCode(code ?? "");
     setSentTo(to);
     setSentAt(Date.now());
   }
@@ -100,7 +100,7 @@ export function AuthCodeForm({ page }: { page: "login" | "signup" }) {
             <strong className="text-ink">{sentTo}</strong>
             {COPY.sentTo[1]}
           </p>
-          <p className={authNote}>{COPY.demo(demoCode)}</p>
+          {demoCode && <p className={authNote}>{COPY.demo(demoCode)}</p>}
           <div className={FIELD}>
             <Label className={LABEL} htmlFor="code">
               {COPY.codeLabel}

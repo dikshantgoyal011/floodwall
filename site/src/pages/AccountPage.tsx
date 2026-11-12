@@ -16,13 +16,21 @@ export function AccountPage() {
   const { session, signOut } = useSession();
   const navigate = useNavigate();
   const [leaving, setLeaving] = useState(false);
+  const [status, setStatus] = useState("");
 
   if (session.status === "loading") return null;
   if (session.status === "signedOut" && !leaving) return <Navigate to={loginPath(AUTH_PATHS.account)} replace />;
+  if (session.status === "signedIn" && session.user.waiting) return <Navigate to={AUTH_PATHS.waitlist} replace />;
 
   async function onSignOut() {
     setLeaving(true);
-    await signOut();
+    setStatus("");
+    try {
+      await signOut();
+    } catch {
+      setLeaving(false);
+      return setStatus(AUTH_COPY.signOutFailed);
+    }
     navigate(AUTH_PATHS.login, { replace: true });
   }
 
@@ -42,6 +50,9 @@ export function AccountPage() {
             {leaving ? COPY.signingOut : COPY.signOut}
           </Button>
         </div>
+        <p role="status" aria-live="polite" className="text-sm text-muted empty:hidden">
+          {status}
+        </p>
       </Card>
     </AuthPage>
   );

@@ -1,0 +1,30 @@
+// The sign-in service: a Cloudflare Worker at api.floodwall.ai, with its
+// accounts, codes and sessions in a D1 database. Deploying is in README.md.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "floodwall-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-15",
+  "routes": [{ "pattern": "api.floodwall.ai", "custom_domain": true }],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "floodwall-auth",
+      // Replace with the id `wrangler d1 create floodwall-auth` prints.
+      // Local development and the tests don't need a real one.
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "MAIL_FROM": "Floodwall <notifications@floodwall.ai>",
+    "ALLOWED_ORIGINS": "https://floodwall.ai,https://preview.floodwall.ai",
+    // "waitlist": new accounts wait for an admin to approve them at /app/admin.
+    // "open": anyone can sign up and use the console, the waitlist included.
+    "SIGNUP_MODE": "waitlist"
+  },
+  // Clears out expired codes, sessions and rate-limit counts once a day.
+  "triggers": { "crons": ["17 3 * * *"] },
+  "observability": { "enabled": true },
+  "dev": { "ip": "127.0.0.1", "port": 8787 }
+}
