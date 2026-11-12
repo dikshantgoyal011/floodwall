@@ -16,6 +16,16 @@ export const SITE = "https://preview.floodwall.ai";
 export const SECRET = "test-secret-that-is-at-least-32-characters";
 export const KEY = "re_test_key";
 
+/**
+ * The service counts requests in fixed windows on the real clock (limits.ts). A test that makes
+ * many requests calls this first: if the current window ends within `marginMs`, it waits for the
+ * next one, so the test's requests all land in one window.
+ */
+export async function clearOfWindowEnd(windowMs, marginMs = 30_000) {
+  const left = windowMs - (Date.now() % windowMs);
+  if (left < marginMs) await new Promise((resolve) => setTimeout(resolve, left + 1_000));
+}
+
 /** Starts the Worker. `resend(request)` can stand in for Resend's answer. */
 export async function start({ bindings = {}, resend } = {}) {
   const outbox = [];

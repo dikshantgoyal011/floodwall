@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, test } from "node:test";
-import { API, KEY, SECRET, SITE, start } from "./harness.mjs";
+import { API, KEY, SECRET, SITE, clearOfWindowEnd, start } from "./harness.mjs";
 
 const WRONG = "That code is wrong or has expired. Check the newest code, or ask for a new one.";
 const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
 // A new account, as the service describes it while sign-up is on the waitlist.
 const ADA = { user: { email: "ada@example.com", waiting: true, admin: false } };
 
@@ -13,6 +15,16 @@ before(async () => {
 });
 after(() => w.stop());
 beforeEach(() => w.reset());
+
+/** How many requests are counted under `key` in the current `windowMs` window. */
+async function counted(key, windowMs) {
+  const now = Date.now();
+  const row = await w.db
+    .prepare("SELECT count FROM rate_limits WHERE key = ? AND window_start = ?")
+    .bind(key, now - (now % windowMs))
+    .first();
+  return row?.count ?? 0;
+}
 
 /** The other of two six-digit codes. */
 const other = (code) => String((Number(code) + 1) % 1_000_000).padStart(6, "0");
@@ -235,6 +247,7 @@ describe("asking for codes", () => {
   });
 
   test("of several asks at once, one sends a code", async () => {
+    await clearOfWindowEnd(HOUR);
     const asks = await Promise.all(
       Array.from({ length: 5 }, () => w.call("/auth/code", { body: { email: "ada@example.com" } })),
     );
@@ -243,9 +256,13 @@ describe("asking for codes", () => {
     // The one code saved is the one emailed.
     const code = w.lastCode("ada@example.com");
     assert.equal((await w.call("/auth/verify", { body: { email: "ada@example.com", code } })).status, 200);
+    // Only the code sent counts against the address.
+    assert.equal(await counted("code:address:ada@example.com", HOUR), 1);
+    assert.equal(await counted("code:address-day:ada@example.com", DAY), 1);
   });
 
   test("five codes an hour per address", async () => {
+    await clearOfWindowEnd(HOUR);
     for (let i = 0; i < 5; i++) {
       await w.codeFor("ada@example.com");
       await w.age("ada@example.com", MINUTE);
@@ -259,6 +276,7 @@ describe("asking for codes", () => {
   });
 
   test("twenty codes a day per address", async () => {
+    await clearOfWindowEnd(DAY);
     const day = 24 * 60 * MINUTE;
     const start = Date.now() - (Date.now() % day);
     await w.db
@@ -272,6 +290,7 @@ describe("asking for codes", () => {
   });
 
   test("thirty codes an hour per network", async () => {
+    await clearOfWindowEnd(HOUR);
     for (let i = 0; i < 30; i++) await w.codeFor(`user${i}@example.com`);
     const asked = await w.call("/auth/code", { body: { email: "ada@example.com" } });
     assert.equal(asked.status, 429);
@@ -281,7 +300,21 @@ describe("asking for codes", () => {
     await w.codeFor("ada@example.com", { ip: "198.51.100.1" });
   });
 
+  test("an IPv6 network is its /64, however its addresses are written", async () => {
+    await clearOfWindowEnd(HOUR);
+    for (let i = 0; i < 30; i++) await w.codeFor(`user${i}@example.com`, { ip: `2001:db8:1:2::${(i + 1).toString(16)}` });
+    for (const ip of ["2001:db8:1:2:ffff:ffff:ffff:ffff", "2001:0db8:0001:0002::1", "2001:db8:1:2:0:0:0:abc"]) {
+      const asked = await w.call("/auth/code", { body: { email: "ada@example.com" }, ip });
+      assert.equal(asked.status, 429, ip);
+      assert.match(asked.body.error, /^Too many sign-in attempts from this network./);
+    }
+    // The next /64, and IPv4, are other networks.
+    await w.codeFor("ada@example.com", { ip: "2001:db8:1:3::1" });
+    await w.codeFor("bob@example.com", { ip: "198.51.100.1" });
+  });
+
   test("sixty checks an hour per network", async () => {
+    await clearOfWindowEnd(HOUR);
     const code = await w.codeFor("ada@example.com");
     const wrong = other(code);
     for (let i = 0; i < 60; i++) await w.call("/auth/verify", { body: { email: `user${i}@example.com`, code: wrong } });
@@ -302,6 +335,13 @@ describe("asking for codes", () => {
       assert.equal(sent.status, 502);
       assert.deepEqual(sent.body, { error: "We could not send the email. Please try again in a moment." });
       assert.equal((await failing.db.prepare("SELECT COUNT(*) AS n FROM sign_in_codes").first()).n, 0);
+      // No code went out, so none counts against the address.
+      const now = Date.now();
+      const left = await failing.db
+        .prepare("SELECT COALESCE(SUM(count), 0) AS n FROM rate_limits WHERE key LIKE 'code:address%' AND window_start >= ?")
+        .bind(now - (now % DAY))
+        .first();
+      assert.equal(left.n, 0);
 
       refuse = false;
       const code = await failing.codeFor("ada@example.com");

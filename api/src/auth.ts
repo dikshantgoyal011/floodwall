@@ -10,7 +10,7 @@
 
 import type { Env } from "./env";
 import { HttpError, json, readJson, readSessionCookie, sessionCookie } from "./http";
-import { countRequest } from "./limits";
+import { countRequest, uncountRequests } from "./limits";
 import { sendCodeEmail } from "./mail";
 import {
   CODE_LENGTH,
@@ -52,9 +52,24 @@ export function normalizeEmail(value: unknown) {
   return email.length <= 254 && /^[^\s@\x00-\x1f]+@[^\s@\x00-\x1f]+\.[^\s@\x00-\x1f]+$/.test(email) ? email : null;
 }
 
-// Cloudflare sets this from the connection, so callers can't choose it.
+// Cloudflare sets this from the connection, so callers can't choose it. An
+// IPv6 host is usually given a whole /64, so the limits per network count an
+// IPv6 address by its /64: otherwise each new address would get fresh limits.
 function network(request: Request) {
-  return request.headers.get("CF-Connecting-IP") ?? "unknown";
+  const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+  return ip.includes(":") ? ipv6Network(ip) : ip;
+}
+
+/** "2001:db8:1:2::/64" for any address in that /64; the address itself if it can't be read. */
+function ipv6Network(ip: string) {
+  // An IPv4 address written as IPv6 (::ffff:192.0.2.1) is its own network.
+  if (ip.includes(".")) return ip;
+  const halves = ip.split("::");
+  if (halves.length > 2) return ip;
+  const [head, tail] = halves.map((half) => (half ? half.split(":") : []));
+  const groups = tail ? [...head, ...Array<string>(8 - head.length - tail.length).fill("0"), ...tail] : head;
+  if (groups.length !== 8 || !groups.every((g) => /^[0-9a-f]{1,4}$/i.test(g))) return ip;
+  return `${groups.slice(0, 4).map((g) => parseInt(g, 16).toString(16)).join(":")}::/64`;
 }
 
 function cooldown(waitMs: number) {
@@ -82,6 +97,17 @@ export async function sendCode(request: Request, env: Env, now: number) {
   if (last && now < last.sent_at + RESEND_COOLDOWN_MS) throw cooldown(last.sent_at + RESEND_COOLDOWN_MS - now);
   await countRequest(db, `code:address:${email}`, LIMITS.codesPerAddressHour, now, MESSAGES.tooManyForAddress);
   await countRequest(db, `code:address-day:${email}`, LIMITS.codesPerAddressDay, now, MESSAGES.tooManyForAddress);
+  // The address's limits count codes sent, so a request that ends up sending
+  // none (another one won the minute, or the email failed) gives its count back.
+  const uncount = () =>
+    uncountRequests(
+      db,
+      [
+        [`code:address:${email}`, LIMITS.codesPerAddressHour],
+        [`code:address-day:${email}`, LIMITS.codesPerAddressDay],
+      ],
+      now,
+    );
 
   // The new code replaces the last one, unless another request sent one in
   // the last minute: the condition makes that check and the write one step.
@@ -97,13 +123,17 @@ export async function sendCode(request: Request, env: Env, now: number) {
     )
     .bind(email, hash, now, now + CODE_TTL_MS, now - RESEND_COOLDOWN_MS)
     .first();
-  if (!saved) throw cooldown(RESEND_COOLDOWN_MS);
+  if (!saved) {
+    await uncount();
+    throw cooldown(RESEND_COOLDOWN_MS);
+  }
 
   try {
     await sendCodeEmail(env, email, code);
   } catch (error) {
     // A code nobody received shouldn't hold the address to the minute's wait.
     await db.prepare("DELETE FROM sign_in_codes WHERE email = ? AND code_hash = ?").bind(email, hash).run();
+    await uncount();
     throw error;
   }
   return json({ sent: true });
