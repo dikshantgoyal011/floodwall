@@ -130,6 +130,82 @@ independent model).
   every decision made with it records the name, the revision and the
   file's SHA-256, covered by the record's digest (record encoding v4).
 
+## Accounts, sign-in and billing *(new)*
+
+The site has email sign-in, a waitlist and a pricing page (on
+preview.floodwall.ai). These tasks make sign-in visible across the site,
+open sign-up, and start taking payments. Each task gives its size (S, M, L)
+and when to pick it up (now, next, later).
+
+- **FW-601** Show sign-in state in the site header *(M, now)*. Signed out,
+  the landing and pricing pages show **Sign in** and **Get started**.
+  Signed in, they show the person's name and initials, with a menu
+  (Account, Console, Sign out). The landing page is prerendered, so the
+  header asks for the session after the page loads, holding its space so
+  nothing jumps and never briefly showing the wrong state.
+- **FW-602** A profile name *(S–M, now)*. Accounts store only an email. Add
+  a name (and optionally a company), ask for it at sign-up or first sign-in,
+  and let people edit it on `/account`. The header shows it (FW-601),
+  falling back to the email.
+- **FW-603** Open sign-up, skipping the waitlist *(S, now)*. Set
+  `SIGNUP_MODE` to `"open"` and redeploy the Worker. Change "Join the
+  waitlist" to "Get started free", the header's Waitlist link to Sign up,
+  and the `/signup` copy back from the waitlist wording. The admin page
+  stays as a list of users.
+- **FW-604** Bot protection on sign-up *(S, now, with FW-603)*. Cloudflare
+  Turnstile on the sign-up and sign-in forms, so open sign-up can't be
+  scripted to use up the Resend email quota. Needs a CSP update.
+- **FW-605** Terms, Privacy and Refund pages *(S, now)*. `/signup` already
+  says signing up accepts the terms, but the pages don't exist, and payment
+  providers require them. The wording comes from legal.
+- **FW-606** Choose a payment provider *(decision, now)*. Stripe, or a
+  merchant of record (Paddle, Lemon Squeezy) that handles VAT and GST
+  worldwide. Depends on the company's entity and country.
+- **FW-607** Plans and checkout *(M–L, next; needs FW-605 and FW-606)*.
+  Every account starts on Free. Upgrading on `/pricing` opens checkout for
+  Launch or Scale; the provider's webhooks tell the Worker, which stores the
+  plan in D1. `/account` gets a Billing section: plan, invoices, and the
+  provider's portal to change the card or cancel.
+- **FW-608** Account controls *(M, next)*. See signed-in devices, sign out
+  everywhere, change email, and delete the account (needed for privacy
+  law).
+- **FW-609** Sign in with GitHub and Google *(M, next)*.
+- **FW-610** A welcome email on first sign-up *(S, next)*.
+
+## Floodwall Cloud *(new)*
+
+The console runs an example plane in the browser, so nothing real makes
+decisions yet. Pricing charges per 1,000 decisions, so usage billing needs
+a hosted plane.
+
+- **FW-701** A hosted plane per account *(L, later)*. Run the crate itself
+  on Cloudflare, compiled to WebAssembly (it has no dependencies), with one
+  plane per account, and back the console with it instead of example data.
+- **FW-702** API keys *(M, later, with FW-701)*. Create and revoke keys so
+  agents can send intents to their hosted plane.
+- **FW-703** Usage dashboard *(S–M, later, after FW-701)*. Decisions this
+  month, by agent, from the plane's stats (FW-904).
+- **FW-704** Usage-based billing *(L, later; needs FW-607 and FW-701)*.
+  Report decisions to the payment provider, show them on `/account`, and
+  enforce the Free plan's limits.
+- **FW-705** Teams and roles *(M–L, later)*. Invite teammates as owner,
+  operator or viewer. Releases and expiries are then recorded under the
+  signed-in operator (FW-907).
+- **FW-706** Alerts for held intents *(M, later)*. Email or Slack when an
+  intent is waiting for a human to release it.
+
+## Site and operations *(new)*
+
+- **FW-801** Error alerts for the Worker and site *(S, next)*. Today a
+  failure shows up only in the Worker's logs.
+- **FW-802** Privacy-friendly analytics *(S, next)*. Cloudflare Web
+  Analytics for sign-ups and pricing-page conversion. Needs a CSP update.
+- **FW-803** Docs and a quickstart *(M, next)*. How to run the crate and
+  connect an agent.
+- **FW-804** Plan the release from preview to floodwall.ai *(decision,
+  now)*. floodwall.ai has no sign-in yet, so none of the above reaches the
+  public site until preview is merged to `main`.
+
 ## Later
 
 - **FW-901** Backpressure signalling back to agents (a credit/quota
