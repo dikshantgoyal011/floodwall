@@ -30,14 +30,35 @@ export function json(body: unknown, status = 200, headers: Record<string, string
 // An email address and a code fit many times over.
 const MAX_BODY_LENGTH = 4096;
 
+/**
+ * The body as text, refused with a 413 once it passes MAX_BODY_LENGTH bytes. It's read a chunk at
+ * a time, so a body sent without a Content-Length is stopped there rather than read in full.
+ */
+async function readBody(request: Request) {
+  if (Number(request.headers.get("Content-Length")) > MAX_BODY_LENGTH) throw new HttpError(413, MESSAGES.badRequest);
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const bytes = new Uint8Array(MAX_BODY_LENGTH);
+  let length = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (length + value.byteLength > MAX_BODY_LENGTH) {
+      await reader.cancel();
+      throw new HttpError(413, MESSAGES.badRequest);
+    }
+    bytes.set(value, length);
+    length += value.byteLength;
+  }
+  return new TextDecoder().decode(bytes.subarray(0, length));
+}
+
 /** The request's JSON object. Anything else is refused. */
 export async function readJson(request: Request): Promise<Record<string, unknown>> {
   if (!request.headers.get("Content-Type")?.startsWith("application/json")) {
     throw new HttpError(415, MESSAGES.badRequest);
   }
-  if (Number(request.headers.get("Content-Length")) > MAX_BODY_LENGTH) throw new HttpError(413, MESSAGES.badRequest);
-  const text = await request.text();
-  if (text.length > MAX_BODY_LENGTH) throw new HttpError(413, MESSAGES.badRequest);
+  const text = await readBody(request);
   try {
     const body: unknown = JSON.parse(text);
     if (body && typeof body === "object" && !Array.isArray(body)) return body as Record<string, unknown>;

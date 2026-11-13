@@ -25,7 +25,9 @@ export type SignupMode = "waitlist" | "open";
 export type AuthSession =
   | { status: "loading" }
   | { status: "signedOut" }
-  | { status: "signedIn"; user: AuthUser };
+  | { status: "signedIn"; user: AuthUser }
+  /** The sign-in service couldn't be asked, so it isn't known whether anyone is signed in. */
+  | { status: "unavailable" };
 
 export type AuthClient = {
   /**
@@ -35,7 +37,7 @@ export type AuthClient = {
   sendCode: (email: string) => Promise<{ code?: string }>;
   /** Checks the code and starts a session. Signing in with a new address creates the account. */
   verifyCode: (email: string, code: string) => Promise<void>;
-  /** Who is signed in; null when no one is, or the service can't be asked. */
+  /** Who is signed in, or null when no one is. Throws when the service can't be asked. */
   getUser: () => Promise<AuthUser | null>;
   /** Ends the session, or throws if it couldn't. */
   signOut: () => Promise<void>;

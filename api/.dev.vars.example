@@ -6,8 +6,11 @@ RESEND_API_KEY=re_...
 # At least 32 random characters, e.g. from `openssl rand -base64 32`.
 AUTH_SECRET=
 
-# The site's dev server, so it can call the local service.
-ALLOWED_ORIGINS=http://127.0.0.1:5173,http://localhost:5173
+# The site's dev server, so it can call the local service. Open it at
+# 127.0.0.1, not localhost: the session cookie is SameSite=Strict on the
+# service's host, 127.0.0.1, and a page on localhost is another site to it,
+# so the cookie would never come back and sign-in would seem to fail.
+ALLOWED_ORIGINS=http://127.0.0.1:5173
 
 # Who can approve the waitlist at /app/admin, comma-separated.
 ADMIN_EMAILS=you@example.com

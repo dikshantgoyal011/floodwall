@@ -4,21 +4,26 @@ import type { AuthSession, AuthUser } from "../types/auth";
 
 const toSession = (user: AuthUser | null): AuthSession => (user ? { status: "signedIn", user } : { status: "signedOut" });
 
-/** Who is signed in, read when the page opens and again on `refresh`. */
+/**
+ * Who is signed in, read when the page opens and again on `refresh`. When the service can't be
+ * asked, the session is "unavailable", not signed out: the cookie may still be good.
+ */
 export function useSession() {
   const [session, setSession] = useState<AuthSession>({ status: "loading" });
 
   useEffect(() => {
     let live = true;
-    void authClient.getUser().then((user) => {
-      if (live) setSession(toSession(user));
-    });
+    authClient.getUser().then(
+      (user) => live && setSession(toSession(user)),
+      () => live && setSession({ status: "unavailable" }),
+    );
     return () => {
       live = false;
     };
   }, []);
 
-  // Asks again, e.g. whether a waiting account has been approved.
+  // Asks again, e.g. whether a waiting account has been approved. If the
+  // service can't be asked, it throws and the session stays as it was.
   const refresh = useCallback(async () => {
     const user = await authClient.getUser();
     setSession(toSession(user));

@@ -29,3 +29,14 @@ export async function countRequest(
     throw new HttpError(429, message(waitText(wait)), { "Retry-After": String(Math.ceil(wait / 1000)) });
   }
 }
+
+/** Takes back requests countRequest counted at `now`, one under each key, in its limit's window. */
+export async function uncountRequests(db: D1Database, keys: [string, Limit][], now: number) {
+  await db.batch(
+    keys.map(([key, { windowMs }]) =>
+      db
+        .prepare("UPDATE rate_limits SET count = count - 1 WHERE key = ? AND window_start = ? AND count > 0")
+        .bind(key, now - (now % windowMs)),
+    ),
+  );
+}

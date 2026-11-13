@@ -141,11 +141,7 @@ function serviceClient(): AuthClient {
       await callService("/auth/verify", { email, code });
     },
     async getUser() {
-      try {
-        return (await callService<{ user: AuthUser | null }>("/auth/session")).user;
-      } catch {
-        return null;
-      }
+      return (await callService<{ user: AuthUser | null }>("/auth/session")).user;
     },
     async signOut() {
       await callService("/auth/signout", {});

@@ -12,8 +12,8 @@ export const PRICING_PATH = "/pricing";
 export const EARLY_ACCESS_URL = "/signup";
 
 // Requests went to the team's form on Tally before the site had its own waitlist. To go back to it,
-// restore this URL, and in index.html link the noscript note to it again (%EARLY_ACCESS_URL%, which
-// vite.config.ts checks for and fills in).
+// restore this URL, link index.html's noscript note to %EARLY_ACCESS_URL% again, and put back the
+// check and fill-in for it in vite.config.ts's structured-data plugin (removed in c5ea719).
 // export const EARLY_ACCESS_URL = "https://tally.so/r/6DJeoP";
 
 // A subdomain: www.proto.erp.ai only redirects back here.
