@@ -3,8 +3,9 @@
 A Cloudflare Worker, at `api.floodwall.ai`, behind the site's `/login`,
 `/signup`, `/account`, `/waitlist` and `/app` pages. You sign in with a
 six-digit code emailed through [Resend](https://resend.com). There is no
-password, and the first sign-in with an address makes the account. During the
-beta, new accounts wait for an admin to approve them.
+password, and the first sign-in with an address makes the account. Sign-up is
+open, so a new account goes straight to the console; the service can instead
+hold new accounts on a waitlist for an admin to approve.
 
 The site uses the service when it is built with `VITE_AUTH_API_URL` set
 (`site/.env.production`). Without it, the site runs the same flow as an
@@ -20,7 +21,7 @@ in-browser demo that shows the code on the page instead of emailing it.
    starts a session.
 3. **Stay signed in.** The session is a random token in a cookie that page
    scripts can't read. The service keeps only the token's SHA-256.
-4. **Wait, during the beta.** While `SIGNUP_MODE` is `waitlist`, a new account
+4. **Wait, if the waitlist is on.** While `SIGNUP_MODE` is `waitlist`, a new account
    is signed in but waiting: the site shows it `/waitlist` instead of the
    console. An admin approves it at `/app/admin`, which emails its owner
    "You're in", and the console opens for them from then on.
@@ -31,13 +32,13 @@ in-browser demo that shows the code on the page instead of emailing it.
 
 | `SIGNUP_MODE` | A new account | Accounts already waiting |
 |---|---|---|
-| `waitlist` (deployed) | waits for an admin | wait for an admin |
-| `open` | goes straight to the console | go straight to the console too |
+| `waitlist` | waits for an admin | wait for an admin |
+| `open` (deployed) | goes straight to the console | go straight to the console too |
 
-Any value but `open` keeps the waitlist, so a typo can't open sign-up. To open
-it once the beta is over, set `"SIGNUP_MODE": "open"` and deploy. Setting it
-back to `waitlist` closes it again: approved accounts keep their access, and
-accounts that joined while it was open stay approved.
+Any value but `open` keeps the waitlist, so a typo can't open sign-up. To put
+the waitlist back, set `"SIGNUP_MODE": "waitlist"` and deploy: approved
+accounts keep their access, and accounts that joined while it was open stay
+approved. Accounts that were waiting when sign-up opened wait again.
 
 The admins are the addresses in the `ADMIN_EMAILS` secret, comma-separated
 (kept out of the repository). They never wait, and only they can use
@@ -47,7 +48,8 @@ The admins are the addresses in the `ADMIN_EMAILS` secret, comma-separated
   console on the site the admin approved from. If that email can't be sent,
   the approval still stands and the page says so.
 - **Remove** an account. It is deleted and signed out everywhere; signing in
-  again puts it back on the waitlist. Admins can't be removed there.
+  again makes a new account, which waits if the waitlist is on. Admins can't be
+  removed there.
 
 | Rule | |
 |---|---|
@@ -198,8 +200,9 @@ Once, by someone with access to the Cloudflare account that has the
 
 6. **Try it.** Sign in at `https://preview.floodwall.ai/login` with an
    admin's address: the console opens, with Admin in the menu. Sign up with
-   another address you can read: it lands on the waitlist and shows up at
-   `/app/admin` to approve.
+   another address you can read: the console opens for it too, and it shows
+   up at `/app/admin`. (With the waitlist on, it lands on `/waitlist`
+   instead, and waits there to be approved.)
 
 Later deploys are `npm run deploy`. To change who is an admin, run
 `npx wrangler secret put ADMIN_EMAILS` again; it takes effect at once. To

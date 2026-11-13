@@ -10,10 +10,13 @@ const session = async (w, cookie) => (await w.call("/auth/session", { method: "G
 const status = async (w, email) =>
   (await w.db.prepare("SELECT status FROM users WHERE email = ?").bind(email).first())?.status;
 
+// The waitlist is off as deployed (wrangler.jsonc), so these turn it on.
+const WAITLIST = { ADMIN_EMAILS: ADMINS, SIGNUP_MODE: "waitlist" };
+
 describe("while sign-up is on the waitlist", () => {
   let w;
   before(async () => {
-    w = await start({ bindings: { ADMIN_EMAILS: ADMINS } });
+    w = await start({ bindings: WAITLIST });
   });
   after(() => w.stop());
   beforeEach(() => w.reset());
@@ -146,7 +149,7 @@ describe("while sign-up is on the waitlist", () => {
 
   test("an approval stands when its email can't be sent", async () => {
     const failing = await start({
-      bindings: { ADMIN_EMAILS: ADMINS },
+      bindings: WAITLIST,
       resend: ({ body }) => (body.subject.startsWith("You're in") ? new Response("down", { status: 500 }) : null),
     });
     try {
@@ -240,9 +243,9 @@ describe("the SIGNUP_MODE flag", () => {
     }
   });
 
-  test("the deployed setting is the waitlist", async () => {
+  test("the deployed setting is open sign-up", async () => {
     const { readFileSync } = await import("node:fs");
     const config = readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8");
-    assert.match(config, /"SIGNUP_MODE": "waitlist"/);
+    assert.match(config, /"SIGNUP_MODE": "open"/);
   });
 });

@@ -19,7 +19,8 @@ export type PricingPlan = {
   featured?: boolean;
 };
 
-const EARLY_ACCESS = { label: "Request early access", href: EARLY_ACCESS_URL };
+/** Every hosted plan starts as a free account; paid plans aren't billed yet. */
+const GET_STARTED = { label: "Get started", href: EARLY_ACCESS_URL };
 
 export const PRICING_PLANS: PricingPlan[] = [
   {
@@ -41,7 +42,7 @@ export const PRICING_PLANS: PricingPlan[] = [
     priceNote: "per month",
     summary: "Floodwall Cloud for a team's first agents.",
     features: ["1 plane", "25,000 decisions a month", "7-day hosted ledger", "Up to 3 approvers", "Community support"],
-    cta: EARLY_ACCESS,
+    cta: GET_STARTED,
   },
   {
     name: "Launch",
@@ -56,7 +57,7 @@ export const PRICING_PLANS: PricingPlan[] = [
       "Approvals and alerts in Slack",
       "Email support",
     ],
-    cta: EARLY_ACCESS,
+    cta: GET_STARTED,
     featured: true,
   },
   {
@@ -72,7 +73,7 @@ export const PRICING_PLANS: PricingPlan[] = [
       "Signed checkpoints, verified for you",
       "99.9% uptime SLA and priority support",
     ],
-    cta: EARLY_ACCESS,
+    cta: GET_STARTED,
   },
 ];
 
@@ -156,6 +157,6 @@ export const PRICING_FAQ = [
   {
     question: "When can I sign up?",
     answer:
-      "Hosted plans open by invitation during early access. The prices here are for planning and may change before general availability.",
+      "Now: create a free account with your email and open the console. Paid plans aren't billed yet, and the prices here are for planning and may change before general availability.",
   },
 ];

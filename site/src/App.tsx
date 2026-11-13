@@ -1,10 +1,10 @@
 import { LandingGateSection } from "./components/landing/LandingGateSection";
+import { LandingGetStartedSection } from "./components/landing/LandingGetStartedSection";
 import { LandingHero } from "./components/landing/LandingHero";
 import { LandingLedgerSection } from "./components/landing/LandingLedgerSection";
 import { LandingLineSection } from "./components/landing/LandingLineSection";
 import { LandingModelSection } from "./components/landing/LandingModelSection";
 import { LandingRoadmapSection } from "./components/landing/LandingRoadmapSection";
-import { LandingWaitlistSection } from "./components/landing/LandingWaitlistSection";
 import { SiteFooter } from "./components/shared/SiteFooter";
 import { SiteHeader } from "./components/shared/SiteHeader";
 import { useSectionLinks } from "./hooks/useSectionLinks";
@@ -28,7 +28,7 @@ export default function App() {
         <LandingGateSection />
         <LandingLedgerSection />
         <LandingRoadmapSection />
-        <LandingWaitlistSection />
+        <LandingGetStartedSection />
       </main>
       <SiteFooter />
     </>

@@ -20,12 +20,14 @@ const STATUS_TONE: Record<AdminAccount["status"], string> = { waiting: "warn", a
 /**
  * The waitlist for admins: every account, the waiting ones first, with
  * Approve and Remove. The service refuses anyone who isn't an admin, and the
- * page shows its answer.
+ * page shows its answer. While sign-up is open nobody waits, so the page
+ * opens on All instead of Waiting.
  */
 export function AdminPage() {
   const [params, setParams] = useSearchParams();
-  const filter = ADMIN_FILTERS.find((f) => f.key === params.get("status")) ?? ADMIN_FILTERS[0];
   const [listing, setListing] = useState<Listing | null>(null);
+  const defaultFilter = ADMIN_FILTERS.find((f) => f.key === (listing?.signup === "open" ? "all" : "waiting"))!;
+  const filter = ADMIN_FILTERS.find((f) => f.key === params.get("status")) ?? defaultFilter;
   const [loadError, setLoadError] = useState("");
   const [busy, setBusy] = useState<{ email: string; action: "approve" | "remove" } | null>(null);
   const [status, setStatus] = useState("");
@@ -45,7 +47,7 @@ export function AdminPage() {
 
   async function act(email: string, action: "approve" | "remove") {
     if (busy) return;
-    if (action === "remove" && !window.confirm(ADMIN_COPY.confirmRemove(email))) return;
+    if (action === "remove" && !window.confirm(ADMIN_COPY.confirmRemove(email, listing?.signup ?? "waitlist"))) return;
     setBusy({ email, action });
     setStatus("");
     try {
@@ -86,7 +88,7 @@ export function AdminPage() {
 
       <ConsolePanel flush>
         <div className="border-b border-line px-5 py-3 console-narrow:px-4">
-          <Tabs value={filter.key} onValueChange={(key) => setParams(key === ADMIN_FILTERS[0].key ? {} : { status: key })}>
+          <Tabs value={filter.key} onValueChange={(key) => setParams(key === defaultFilter.key ? {} : { status: key })}>
             <TabsList className="scroll-fade-x max-w-full overflow-x-auto group-data-horizontal/tabs:h-9">
               {ADMIN_FILTERS.map((f) => (
                 <TabsTrigger key={f.key} value={f.key} className="px-3">

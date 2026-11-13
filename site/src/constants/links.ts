@@ -5,9 +5,10 @@ export const REPO_URL = "https://github.com/erphq/floodwall";
 export const PRICING_PATH = "/pricing";
 
 /**
- * Hosted plans open by invitation: signing up at /signup (AUTH_PATHS.signup) puts a new account on
- * the site's own waitlist until an admin approves it. A plain path, not a router link: the landing
- * page is prerendered without the router.
+ * Where every "Get started" goes: /signup (AUTH_PATHS.signup) makes a free account that opens the
+ * console. Sign-up is open; were the service's SIGNUP_MODE set back to "waitlist", a new account
+ * would wait for an admin instead. A plain path, not a router link: the landing page is prerendered
+ * without the router.
  */
 export const EARLY_ACCESS_URL = "/signup";
 
@@ -34,11 +35,11 @@ export const NAV_EXPLAINERS = [
 export const NAV_LINKS = [
   { id: "roadmap", label: "Roadmap", href: "#roadmap" },
   { id: "pricing", label: "Pricing", href: PRICING_PATH },
-  { id: "waitlist", label: "Waitlist", href: "#waitlist" },
+  { id: "get-started", label: "Sign up", href: "#get-started" },
 ] as const;
 
 /** Every landing section the header tracks, in page order; Home is the logo's. */
-export const NAV_SECTION_IDS = ["home", "line", "model", "gate", "ledger", "roadmap", "waitlist"] as const;
+export const NAV_SECTION_IDS = ["home", "line", "model", "gate", "ledger", "roadmap", "get-started"] as const;
 
 export const FOOTER_GROUPS: { title: string; links: Link[] }[] = [
   {
@@ -48,7 +49,7 @@ export const FOOTER_GROUPS: { title: string; links: Link[] }[] = [
       { label: "Model", href: "#model" },
       { label: "Gate", href: "#gate" },
       { label: "Ledger", href: "#ledger" },
-      { label: "Waitlist", href: "#waitlist" },
+      { label: "Get started", href: "#get-started" },
     ],
   },
   {

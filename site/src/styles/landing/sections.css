@@ -234,8 +234,8 @@
 .roadmap-copy h3 { margin: 0 0 12px; font-size: var(--text-xl); font-weight: 550; letter-spacing: -.025em; line-height: 1.2; }
 .roadmap-copy .card-copy { align-self: start; }
 
-/* The sign-up link beside the copy; /signup puts a new account on the waitlist. */
-.waitlist-card {
+/* The sign-up link beside the copy; /signup makes a free account. */
+.get-started-card {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -245,13 +245,13 @@
   padding: 24px;
 }
 
-.waitlist-fallback {
+.get-started-fallback {
   margin: 0;
   color: var(--muted);
   font-size: var(--text-sm);
 }
 
-.waitlist-fallback a,
+.get-started-fallback a,
 .noscript-note a {
   color: var(--ink);
   font-weight: 600;
@@ -283,7 +283,7 @@
   .roadmap-card > .tag { padding: 16px; font-size: 28px; }
   .roadmap-copy { padding: 20px 16px; }
   .feature-copy { padding: 20px 16px; }
-  .waitlist-card { padding: 16px; }
+  .get-started-card { padding: 16px; }
   .feature-points li { padding: 16px; }
   .panel-head, .panel-foot { padding: 16px; }
   .policy-row { padding: 20px 16px; gap: 12px; }

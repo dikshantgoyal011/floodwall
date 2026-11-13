@@ -30,8 +30,11 @@ export const ADMIN_COPY = {
   approving: "Approving…",
   remove: "Remove",
   removing: "Removing…",
-  confirmRemove: (email: string) =>
-    `Remove ${email}? They are signed out everywhere. Signing in again puts them back on the waitlist.`,
+  /** Signing in again makes a new account, which waits only while sign-up is on the waitlist. */
+  confirmRemove: (email: string, signup: SignupMode) =>
+    `Remove ${email}? They are signed out everywhere. ${
+      signup === "open" ? "Signing in again makes a new account." : "Signing in again puts them back on the waitlist."
+    }`,
   approved: (email: string) => `Approved ${email}. We emailed them.`,
   approvedNoEmail: (email: string) =>
     `Approved ${email}, but the email to them could not be sent. They can sign in now.`,

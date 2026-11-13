@@ -6,8 +6,8 @@ const WRONG = "That code is wrong or has expired. Check the newest code, or ask 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
-// A new account, as the service describes it while sign-up is on the waitlist.
-const ADA = { user: { email: "ada@example.com", waiting: true, admin: false } };
+// A new account, as the service describes it with sign-up open, as deployed.
+const ADA = { user: { email: "ada@example.com", waiting: false, admin: false } };
 
 let w;
 before(async () => {
