@@ -31,6 +31,11 @@ export function safeNext(page: keyof typeof DEFAULT_NEXT, next: string | null) {
   return allowed ? next! : DEFAULT_NEXT[page];
 }
 
+/** The letter on an account's avatar: its address's first letter or digit, capitalised. */
+export function accountInitials(user: AuthUser) {
+  return (user.email.match(/[a-z0-9]/i)?.[0] ?? "?").toUpperCase();
+}
+
 /** The sign-in page, coming back to `next` afterwards. */
 export function loginPath(next: string) {
   return `${AUTH_PATHS.login}?${new URLSearchParams({ [NEXT_PARAM]: next })}`;

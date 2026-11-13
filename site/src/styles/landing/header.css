@@ -149,8 +149,136 @@
 }
 .site-header .button { gap: 12px; }
 .site-header .button svg { width: 16px; height: 16px; }
+
+/* The right of the bar: the account slot, then the GitHub button. */
+.nav-actions {
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+  gap: 8px;
+}
+.nav-actions > .button { align-self: center; }
+/* The slot keeps one width whatever it holds (nothing while the session loads, Sign in, or the
+   account), so the links don't move when the service answers. */
+.nav-account {
+  --account-slot: 200px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: var(--account-slot);
+}
+.nav-sign-in,
+.nav-account-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 12px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 500;
+}
+@media (hover: hover) and (pointer: fine) {
+  .nav-sign-in:hover { text-decoration: underline; text-underline-offset: 4px; }
+  .nav-account-button:hover .nav-account-name { color: var(--ink); }
+}
+.nav-account-button {
+  gap: 8px;
+  max-width: 100%;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+/* The initials on the ink square, the system's one emphasis. */
+.nav-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+}
+.nav-account-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color var(--motion-fast) var(--ease-out);
+}
+.nav-account-button[aria-expanded="true"] .nav-account-name { color: var(--ink); }
+.nav-account-button[aria-expanded="true"] .nav-menu-chevron { transform: rotate(180deg); }
+/* The account menu: one ruled white sheet under the header, against the right edge of the slot. */
+.nav-account-panel {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 10;
+  width: min(300px, calc(100vw - 32px));
+  border: 1px solid var(--line);
+  background: var(--paper);
+  transform-origin: top right;
+}
+.nav-account-who {
+  margin: 0;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+.nav-account-who strong { display: block; margin-top: 2px; color: var(--ink); font-weight: 600; }
+.nav-account-links { margin: 0; padding: 0; list-style: none; }
+.nav-account-links li:last-child { border-top: 1px solid var(--line); }
+.nav-account-links a,
+.nav-account-links button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 20px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  text-align: start;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.nav-account-links button[aria-disabled="true"] { color: var(--muted); cursor: default; }
+@media (hover: hover) and (pointer: fine) {
+  .nav-account-links a:hover,
+  .nav-account-links button:not([aria-disabled="true"]):hover { background: var(--surface); }
+}
+.nav-account-links a:focus-visible,
+.nav-account-links button:focus-visible,
+.nav-sign-in:focus-visible,
+.nav-account-button:focus-visible { outline-offset: -4px; }
+.nav-account-status { margin: 0; padding: 0 20px 14px; color: var(--muted); font-size: var(--text-sm); }
+.nav-account-status:empty { display: none; }
+
 @media (max-width: 1100px) {
   .nav-bar { gap: 16px; }
+  /* The slot narrows to the initials, and the GitHub button to its mark (the label stays its name). */
+  .nav-account { --account-slot: 84px; }
+  .nav-account-name { display: none; }
+  .site-header .nav-crate { padding-inline: 13px; }
+  .nav-crate .button-arrow { display: none; }
+  .nav-crate .button-brand { margin: 0; }
+  .nav-crate-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }
 @media (max-width: 850px) {
   :root { --header-height: 128px; }
@@ -162,7 +290,10 @@
   /* The panel spans the links row, under the whole header. */
   .nav-menu { position: static; }
   .nav-menu-panel { right: 0; left: 0; width: auto; transform-origin: top center; }
+  /* The account menu hangs from the header's right edge, under both rows, not from the narrow slot. */
+  .nav-account { position: static; }
   .site-header .button { padding-inline: 14px; font-size: var(--text-xs); }
+  .nav-sign-in { font-size: var(--text-sm); }
 }
 @media (max-width: 600px) {
   .nav-menu-grid { grid-template-columns: minmax(0, 1fr); }

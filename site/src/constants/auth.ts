@@ -84,6 +84,18 @@ export const AUTH_COPY = {
     checking: "Checking…",
     stillWaiting: "Still waiting for approval. We'll email you when it's done.",
   },
+  /** The account slot in the header of the landing page and /pricing. */
+  header: {
+    signIn: "Sign in",
+    /** The account button's name: it shows only the initials and, on wide screens, the address. */
+    menu: (email: string) => `Your account, signed in as ${email}`,
+    signedInAs: "Signed in as",
+    account: "Account",
+    console: "Console",
+    waitlist: "Waitlist",
+    signOut: "Sign out",
+    signingOut: "Signing out…",
+  },
   /** On a signed-in page, when the service couldn't say who is signed in. */
   unavailable: {
     title: "We couldn't check your sign-in.",

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FocusEvent, type RefObject } from "react";
+import { useCallback, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowDown01Icon,
@@ -11,9 +11,11 @@ import {
 } from "@hugeicons/core-free-icons";
 import { NAV_EXPLAINERS, NAV_LINKS, NAV_SECTION_IDS, REPO_URL } from "../../constants/links";
 import { useActiveSection } from "../../hooks/useActiveSection";
+import { useDismiss } from "../../hooks/useDismiss";
 import { useFluidHover, useRegisterFluidHoverItem } from "../../hooks/use-fluid-hover";
-import { spring } from "../../lib/springs";
+import { panelMotion } from "../../lib/panel";
 import { FluidHoverHighlight } from "../fluid-hover-highlight";
+import { HeaderAccount } from "./HeaderAccount";
 import { Icon } from "./Icon";
 import { SiteBrandMark } from "./SiteBrandMark";
 
@@ -26,13 +28,6 @@ const EXPLAINER_ICONS = {
   gate: SecurityCheckIcon,
   ledger: Link04Icon,
 } as const;
-
-/**
- * The panel's entrance: it drops 4px into place and grows from 98% at its top edge. A spring, so a
- * close that interrupts an open reverses from where it is; the close is the tier's quicker tween.
- */
-const PANEL_SHOWN = { opacity: 1, y: 0, scale: 1 };
-const PANEL_HIDDEN = { opacity: 0, y: -4, scale: 0.98 };
 
 type RegisterItem = (index: number, element: HTMLElement | null) => void;
 
@@ -49,7 +44,8 @@ function NavItemBox({ index, registerItem, label }: { index: number; registerIte
 
 /**
  * The sticky header on the landing page and /pricing: the logo (which goes home), a "How it works"
- * menu over the sections that explain the wall, then Roadmap, Pricing and Waitlist. One hover
+ * menu over the sections that explain the wall, then Roadmap, Pricing and Waitlist, and at the
+ * right the account (Sign in, or who is signed in: HeaderAccount) and the GitHub button. One hover
  * highlight glides between the top-level items, and another between the panel's sections. On the
  * landing page the current item follows the section in view; /pricing (`onLanding` false) is the
  * only other page with this header, so there Pricing is current and section links lead to "/#…".
@@ -64,28 +60,9 @@ export function SiteHeader({ onLanding = true }: { onLanding?: boolean }) {
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
 
-  // An outside press or Escape closes the menu; Escape hands focus back to its button.
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setMenuOpen(false);
-      menuButtonRef.current?.focus();
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [menuOpen]);
-  // Tabbing out of the menu closes it too.
-  const onMenuBlur = (event: FocusEvent<HTMLDivElement>) => {
-    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setMenuOpen(false);
-  };
+  // An outside press, Escape or tabbing out closes the menu; Escape hands focus back to its button.
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
+  const onMenuBlur = useDismiss(menuOpen, closeMenu, menuRef, menuButtonRef);
 
   // The top-level strip: its items' hover boxes touch, so the highlight glides from one to the next.
   const linksRef = useRef<HTMLDivElement>(null);
@@ -186,14 +163,7 @@ export function SiteHeader({ onLanding = true }: { onLanding?: boolean }) {
             </button>
             <AnimatePresence>
               {menuOpen && (
-                <motion.div
-                  className="nav-menu-panel"
-                  id={menuId}
-                  initial={PANEL_HIDDEN}
-                  animate={PANEL_SHOWN}
-                  exit={{ ...PANEL_HIDDEN, transition: spring.moderate.exit }}
-                  transition={spring.moderate}
-                >
+                <motion.div className="nav-menu-panel" id={menuId} {...panelMotion}>
                   <ExplainerGrid base={base} current={current} onChoose={() => setMenuOpen(false)} />
                 </motion.div>
               )}
@@ -215,11 +185,14 @@ export function SiteHeader({ onLanding = true }: { onLanding?: boolean }) {
           })}
           <span className="nav-indicator" ref={indicatorRef} aria-hidden="true" />
         </div>
-        <a className="button button-sm" href={REPO_URL}>
-          <Icon icon={GithubIcon} size={16} className="button-brand" />
-          View the Crate
-          <Icon icon={ArrowUpRight01Icon} size={16} className="button-arrow" />
-        </a>
+        <div className="nav-actions">
+          <HeaderAccount />
+          <a className="button button-sm nav-crate" href={REPO_URL}>
+            <Icon icon={GithubIcon} size={16} className="button-brand" />
+            <span className="nav-crate-label">View the Crate</span>
+            <Icon icon={ArrowUpRight01Icon} size={16} className="button-arrow" />
+          </a>
+        </div>
       </nav>
     </header>
   );
