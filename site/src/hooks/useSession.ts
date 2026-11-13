@@ -30,11 +30,17 @@ export function useSession() {
     return user;
   }, []);
 
+  // Renames the account (an empty name clears it). Throws, with the service's
+  // reason, if it couldn't; the session stays as it was.
+  const updateProfile = useCallback(async (name: string) => {
+    setSession(toSession(await authClient.updateProfile(name)));
+  }, []);
+
   // Throws if the session could not be ended; the page stays signed in.
   const signOut = useCallback(async () => {
     await authClient.signOut();
     setSession({ status: "signedOut" });
   }, []);
 
-  return { session, refresh, signOut };
+  return { session, refresh, updateProfile, signOut };
 }

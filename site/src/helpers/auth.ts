@@ -31,8 +31,21 @@ export function safeNext(page: keyof typeof DEFAULT_NEXT, next: string | null) {
   return allowed ? next! : DEFAULT_NEXT[page];
 }
 
-/** The letter on an account's avatar: its address's first letter or digit, capitalised. */
+/** What the site calls an account: its name, or its address until it has one. */
+export function accountLabel(user: AuthUser) {
+  return user.name ?? user.email;
+}
+
+/**
+ * The letters on an account's avatar: the first letters of its name's first and last words ("AL"
+ * for Ada Lovelace), or its address's first letter or digit, capitalised.
+ */
 export function accountInitials(user: AuthUser) {
+  const words = user.name?.split(" ").filter(Boolean) ?? [];
+  if (words.length) {
+    const first = (word: string) => [...word][0];
+    return (words.length > 1 ? first(words[0]) + first(words.at(-1)!) : first(words[0])).toUpperCase();
+  }
   return (user.email.match(/[a-z0-9]/i)?.[0] ?? "?").toUpperCase();
 }
 
@@ -49,7 +62,10 @@ const CHALLENGE_KEY = "floodwall.auth.challenge";
 const SESSION_KEY = "floodwall.auth.session";
 
 type Challenge = { email: string; code: string; sentAt: number; attempts: number };
-type StoredSession = AuthUser & { expiresAt: number };
+type StoredSession = { email: string; name?: string | null; expiresAt: number };
+
+/** A name as the service keeps it: runs of spaces made one, trimmed; empty is none. */
+const tidyName = (name = "") => name.replace(/\s+/g, " ").trim() || null;
 
 // Storage can throw (private windows, blocked site data): that reads as empty.
 function read<T>(storage: () => Storage, key: string): T | null {
@@ -87,7 +103,7 @@ const demoClient: AuthClient = {
     write(session, CHALLENGE_KEY, { email, code, sentAt: Date.now(), attempts: 0 });
     return { code };
   },
-  async verifyCode(email, code) {
+  async verifyCode(email, code, name) {
     const challenge = read<Challenge>(session, CHALLENGE_KEY);
     if (!challenge || challenge.email !== email || Date.now() > challenge.sentAt + CODE_TTL_MS) {
       throw new Error(WRONG_CODE);
@@ -99,12 +115,21 @@ const demoClient: AuthClient = {
       throw new Error(WRONG_CODE);
     }
     write(session, CHALLENGE_KEY, null);
-    write(local, SESSION_KEY, { email, expiresAt: Date.now() + SESSION_TTL_MS });
+    // The demo keeps no accounts: the name lives with the session, so signing out forgets it.
+    write(local, SESSION_KEY, { email, name: tidyName(name), expiresAt: Date.now() + SESSION_TTL_MS });
   },
   async getUser() {
     const stored = read<StoredSession>(local, SESSION_KEY);
     // The demo has no waitlist and no admins.
-    return stored && stored.expiresAt > Date.now() ? { email: stored.email, waiting: false, admin: false } : null;
+    return stored && stored.expiresAt > Date.now()
+      ? { email: stored.email, name: stored.name ?? null, waiting: false, admin: false }
+      : null;
+  },
+  async updateProfile(name) {
+    const stored = read<StoredSession>(local, SESSION_KEY);
+    if (!stored || stored.expiresAt <= Date.now()) throw new Error(AUTH_COPY.service.signedOut);
+    write(local, SESSION_KEY, { ...stored, name: tidyName(name) });
+    return (await demoClient.getUser())!;
   },
   async signOut() {
     write(local, SESSION_KEY, null);
@@ -142,11 +167,14 @@ function serviceClient(): AuthClient {
       await callService("/auth/code", { email });
       return {};
     },
-    async verifyCode(email, code) {
-      await callService("/auth/verify", { email, code });
+    async verifyCode(email, code, name) {
+      await callService("/auth/verify", name ? { email, code, name } : { email, code });
     },
     async getUser() {
       return (await callService<{ user: AuthUser | null }>("/auth/session")).user;
+    },
+    async updateProfile(name) {
+      return (await callService<{ user: AuthUser }>("/auth/profile", { name })).user;
     },
     async signOut() {
       await callService("/auth/signout", {});

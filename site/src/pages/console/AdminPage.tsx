@@ -121,6 +121,7 @@ export function AdminPage() {
                       <span className="font-medium">{user.email}</span>
                       {user.admin && <ConsoleBadge value={ADMIN_COPY.admin} tone="neutral" />}
                     </span>
+                    {user.name && <span className={consoleSub}>{user.name}</span>}
                     {user.approvedBy && <span className={consoleSub}>{ADMIN_COPY.approvedBy(user.approvedBy)}</span>}
                   </TableCell>
                   <TableCell className={consoleWideOnly}>{adminDate(user.createdAt)}</TableCell>

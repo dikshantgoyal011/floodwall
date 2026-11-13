@@ -95,17 +95,26 @@ which the site shows as it is.
 | Request | Body | Answer |
 |---|---|---|
 | `POST /auth/code` | `{ "email": "ada@example.com" }` | `200 { "sent": true }`; `400` not an address; `429` too soon or too many, with `Retry-After`; `502` the email couldn't be sent |
-| `POST /auth/verify` | `{ "email": "...", "code": "123456" }` | `200 { "user": <user> }` and the session cookie; `400` or `401` wrong or expired code; `429` too many checks |
+| `POST /auth/verify` | `{ "email": "...", "code": "123456", "name"?: "..." }` | `200 { "user": <user> }` and the session cookie; `400` or `401` wrong or expired code, or `400` a name that can't be kept; `429` too many checks |
 | `GET /auth/session` | | `200 { "user": <user> }`, or `{ "user": null }` when signed out |
+| `POST /auth/profile` | `{ "name": "..." }` | `200 { "user": <user> }`; an empty name clears it; `400` a name that can't be kept; `401` signed out |
 | `POST /auth/signout` | `{}` | `200 { "signedOut": true }`, and the cookie is cleared |
 | `GET /admin/users` | | `200 { "signup": "waitlist" \| "open", "users": [...] }`, the waiting ones first; `401` signed out; `403` not an admin |
 | `POST /admin/approve` | `{ "email": "..." }` | `200 { "approved": true, "emailed": true \| false }`; `404` no such account; `401`, `403` as above |
 | `POST /admin/remove` | `{ "email": "..." }` | `200 { "removed": true }`; `400` an admin; `404` no such account; `401`, `403` as above |
 
-`<user>` is `{ "email": "...", "waiting": false, "admin": false }`. `waiting` is
-true while the account is on the waitlist; the site then shows `/waitlist`
-instead of the console. Anything added to the service later that only
-approved accounts may use should check `waiting` the same way.
+`<user>` is `{ "email": "...", "name": "..." | null, "waiting": false, "admin": false }`.
+`waiting` is true while the account is on the waitlist; the site then shows
+`/waitlist` instead of the console. Anything added to the service later that
+only approved accounts may use should check `waiting` the same way.
+
+`name` is what the account goes by, or `null` until one is given. Sign-up can
+send it with the code (`/auth/verify`): it names a new account, or one with no
+name yet, and never replaces a name the account has. `/auth/profile` changes
+it. A name is trimmed and its runs of spaces made one; it can be up to 80
+characters, and can't hold control characters or the bidirectional overrides
+that would make it display as something else. The admin listing carries each
+account's `name` too.
 
 Without `RESEND_API_KEY`, or an `AUTH_SECRET` of at least 32 characters,
 `/auth/code` and `/auth/verify` answer `503`.

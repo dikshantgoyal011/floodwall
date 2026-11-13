@@ -6,6 +6,8 @@ export const CODE_TTL_MS = 10 * 60_000;
 export const CODE_MAX_ATTEMPTS = 5;
 export const RESEND_COOLDOWN_MS = 60_000;
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
+/** The longest name an account can go by, in characters. */
+export const NAME_MAX_LENGTH = 80;
 
 const HOUR = 60 * 60_000;
 export const DAY = 24 * HOUR;
@@ -34,6 +36,7 @@ export function waitText(ms: number) {
 export const MESSAGES = {
   badRequest: "That request could not be read.",
   badEmail: "Enter a valid email address.",
+  badName: `Enter a name of up to ${NAME_MAX_LENGTH} characters, or leave it empty.`,
   wrongCode: "That code is wrong or has expired. Check the newest code, or ask for a new one.",
   wait: (seconds: number) => `You can ask for a new code in ${seconds} s.`,
   tooManyFromNetwork: (wait: string) => `Too many sign-in attempts from this network. Try again in ${wait}.`,

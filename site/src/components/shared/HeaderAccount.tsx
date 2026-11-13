@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { AUTH_COPY, AUTH_PATHS } from "../../constants/auth";
 import { CONSOLE_PATHS } from "../../constants/console";
-import { accountInitials } from "../../helpers/auth";
+import { accountInitials, accountLabel } from "../../helpers/auth";
 import { useDismiss } from "../../hooks/useDismiss";
 import { useSession } from "../../hooks/useSession";
 import { panelMotion } from "../../lib/panel";
@@ -13,7 +13,8 @@ const COPY = AUTH_COPY.header;
 
 /**
  * The header's account slot, beside the GitHub button: Sign in for a visitor, or the signed-in
- * account's initials and address, with a menu of Account, Console and Sign out. The landing page
+ * account's initials and name (its address until it has one), with a menu of Account, Console and
+ * Sign out. The landing page
  * is prerendered with no session, so until the service answers the slot holds its width and shows
  * nothing: someone signed in never sees Sign in flash by. If the service can't be asked, it offers
  * Sign in. Plain links, not router ones: the landing page renders without the router.
@@ -72,20 +73,21 @@ export function HeaderAccount() {
         ref={buttonRef}
         className="nav-account-button"
         type="button"
-        aria-label={COPY.menu(user.email)}
+        aria-label={COPY.menu(user.email, user.name)}
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
         onClick={() => setOpen((shown) => !shown)}
       >
         <span className="nav-avatar">{accountInitials(user)}</span>
-        <span className="nav-account-name">{user.email}</span>
+        <span className="nav-account-name">{accountLabel(user)}</span>
         <Icon icon={ArrowDown01Icon} size={16} className="nav-menu-chevron" />
       </button>
       <AnimatePresence>
         {open && (
           <motion.div className="nav-account-panel" id={panelId} {...panelMotion}>
             <p className="nav-account-who">
-              {COPY.signedInAs} <strong>{user.email}</strong>
+              {COPY.signedInAs} <strong>{accountLabel(user)}</strong>
+              {user.name && <span className="nav-account-email">{user.email}</span>}
             </p>
             <ul className="nav-account-links">
               <li>

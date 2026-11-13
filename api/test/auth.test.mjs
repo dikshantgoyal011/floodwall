@@ -7,7 +7,7 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 // A new account, as the service describes it while sign-up is on the waitlist.
-const ADA = { user: { email: "ada@example.com", waiting: true, admin: false } };
+const ADA = { user: { email: "ada@example.com", name: null, waiting: true, admin: false } };
 
 let w;
 before(async () => {

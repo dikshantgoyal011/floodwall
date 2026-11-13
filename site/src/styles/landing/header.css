@@ -233,6 +233,7 @@
   overflow-wrap: anywhere;
 }
 .nav-account-who strong { display: block; margin-top: 2px; color: var(--ink); font-weight: 600; }
+.nav-account-email { display: block; }
 .nav-account-links { margin: 0; padding: 0; list-style: none; }
 .nav-account-links li:last-child { border-top: 1px solid var(--line); }
 .nav-account-links a,

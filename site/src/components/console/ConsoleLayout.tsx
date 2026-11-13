@@ -12,7 +12,7 @@ import {
 import type { IconSvgElement } from "@hugeicons/react";
 import { AUTH_COPY, AUTH_PATHS } from "../../constants/auth";
 import { ADMIN_NAV, CONSOLE_NAV, CONSOLE_PATHS } from "../../constants/console";
-import { loginPath } from "../../helpers/auth";
+import { accountLabel, loginPath } from "../../helpers/auth";
 import { cx } from "../../helpers/cx";
 import { useFluidHover, useRegisterFluidHoverItem } from "../../hooks/use-fluid-hover";
 import { usePlane } from "../../hooks/usePlane";
@@ -159,7 +159,7 @@ export function ConsoleLayout() {
                 to={AUTH_PATHS.account}
                 title={session.user.email}
               >
-                {session.user.email}
+                {accountLabel(session.user)}
               </Link>
               <ConsoleThemeToggle />
               <button

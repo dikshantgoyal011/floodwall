@@ -20,13 +20,13 @@ describe("while sign-up is on the waitlist", () => {
 
   test("a new account signs in, but waits", async () => {
     const cookie = await w.signIn("ada@example.com");
-    assert.deepEqual(await session(w, cookie), { email: "ada@example.com", waiting: true, admin: false });
+    assert.deepEqual(await session(w, cookie), { email: "ada@example.com", name: null, waiting: true, admin: false });
     assert.equal(await status(w, "ada@example.com"), "waiting");
   });
 
   test("an admin never waits", async () => {
     const cookie = await w.signIn(GRACE);
-    assert.deepEqual(await session(w, cookie), { email: GRACE, waiting: false, admin: true });
+    assert.deepEqual(await session(w, cookie), { email: GRACE, name: null, waiting: false, admin: true });
     assert.equal(await status(w, GRACE), "approved");
   });
 
@@ -35,7 +35,7 @@ describe("while sign-up is on the waitlist", () => {
       .prepare("INSERT INTO users (id, email, created_at, last_sign_in_at, status) VALUES ('u1', 'ops@example.com', 1, 1, 'waiting')")
       .run();
     const ops = await w.signIn("ops@example.com");
-    assert.deepEqual(await session(w, ops), { email: "ops@example.com", waiting: false, admin: true });
+    assert.deepEqual(await session(w, ops), { email: "ops@example.com", name: null, waiting: false, admin: true });
     await w.signIn("ada@example.com");
     const listed = await w.call("/admin/users", { method: "GET", cookie: ops });
     assert.deepEqual(
@@ -101,7 +101,7 @@ describe("while sign-up is on the waitlist", () => {
     assert.equal(approved.status, 200);
     assert.deepEqual(approved.body, { approved: true, emailed: true });
 
-    assert.deepEqual(await session(w, ada), { email: "ada@example.com", waiting: false, admin: false });
+    assert.deepEqual(await session(w, ada), { email: "ada@example.com", name: null, waiting: false, admin: false });
     const row = await w.db.prepare("SELECT status, approved_at, approved_by FROM users WHERE email = 'ada@example.com'").first();
     assert.equal(row.status, "approved");
     assert.equal(row.approved_by, GRACE);
@@ -212,7 +212,7 @@ describe("the SIGNUP_MODE flag", () => {
       assert.equal((await session(w, old)).waiting, false);
 
       const ada = await w.signIn("ada@example.com");
-      assert.deepEqual(await session(w, ada), { email: "ada@example.com", waiting: false, admin: false });
+      assert.deepEqual(await session(w, ada), { email: "ada@example.com", name: null, waiting: false, admin: false });
       assert.equal(await status(w, "ada@example.com"), "approved");
 
       const admin = await w.signIn(GRACE);

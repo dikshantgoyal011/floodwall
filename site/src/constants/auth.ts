@@ -27,6 +27,8 @@ export const CODE_TTL_MS = 10 * 60_000;
 export const CODE_MAX_ATTEMPTS = 5;
 export const RESEND_COOLDOWN_MS = 60_000;
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
+/** As the service allows (api/src/rules.ts). */
+export const NAME_MAX_LENGTH = 80;
 
 /** Creating an account opens the console; signing in opens the account page. */
 export const DEFAULT_NEXT = { signup: CONSOLE_PATHS.overview, login: AUTH_PATHS.account } as const;
@@ -49,6 +51,8 @@ export const AUTH_COPY = {
     switchLink: "Sign in",
   },
   form: {
+    nameLabel: "Your name",
+    nameOptional: "Optional",
     emailLabel: "Email address",
     send: "Send code",
     sending: "Sending code…",
@@ -69,6 +73,12 @@ export const AUTH_COPY = {
     title: "Your account",
     lead: "Your account connects your sign-in to the console.",
     signedInAs: "Signed in as",
+    nameLabel: "Name",
+    nameHint: "Shown in the site's header in place of your address. Leave it empty to show the address.",
+    saveName: "Save name",
+    savingName: "Saving…",
+    nameSaved: "Saved your name.",
+    nameCleared: "Removed your name. The header shows your address.",
     session: "A session lasts up to 30 days. Signing out ends it in this browser.",
     console: "Open the console",
     signOut: "Sign out",
@@ -87,8 +97,9 @@ export const AUTH_COPY = {
   /** The account slot in the header of the landing page and /pricing. */
   header: {
     signIn: "Sign in",
-    /** The account button's name: it shows only the initials and, on wide screens, the address. */
-    menu: (email: string) => `Your account, signed in as ${email}`,
+    /** The account button's name: it shows only the initials and, on wide screens, the name or address. */
+    menu: (email: string, name: string | null) =>
+      name ? `Your account, ${name}, signed in as ${email}` : `Your account, signed in as ${email}`,
     signedInAs: "Signed in as",
     account: "Account",
     console: "Console",
@@ -107,6 +118,7 @@ export const AUTH_COPY = {
   service: {
     unreachable: "We could not reach the sign-in service. Check your connection and try again.",
     failed: "Something went wrong. Please try again.",
+    signedOut: "Sign in first.",
   },
   signOut: "Sign out",
   signOutFailed: "Could not sign out. Check your connection and try again.",

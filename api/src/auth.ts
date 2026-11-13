@@ -6,6 +6,7 @@
 //   POST /auth/code     { email }        emails a code
 //   POST /auth/verify   { email, code }  checks it and starts a session
 //   GET  /auth/session                   who the session cookie belongs to
+//   POST /auth/profile  { name }         changes the signed-in account's name
 //   POST /auth/signout                   ends the session
 
 import type { Env } from "./env";
@@ -19,15 +20,16 @@ import {
   DAY,
   LIMITS,
   MESSAGES,
+  NAME_MAX_LENGTH,
   RESEND_COOLDOWN_MS,
   SESSION_TTL_MS,
 } from "./rules";
 import { codeHash, isToken, newCode, newToken, sameHash, tokenHash } from "./tokens";
 
-/** What the site is told about the signed-in account. */
-export type PublicUser = { email: string; waiting: boolean; admin: boolean };
+/** What the site is told about the signed-in account. `name` is null until one is given. */
+export type PublicUser = { email: string; name: string | null; waiting: boolean; admin: boolean };
 
-type UserRow = { id: string; email: string; status: string };
+type UserRow = { id: string; email: string; status: string; name: string | null };
 
 /** Whether anyone who signs in may use the console; anything but "open" keeps the waitlist. */
 export function isOpen(env: Env) {
@@ -42,7 +44,23 @@ export function adminEmails(env: Env) {
 /** An account waits only while sign-up is on the waitlist, until approved; admins never wait. */
 function publicUser(row: UserRow, env: Env): PublicUser {
   const admin = adminEmails(env).has(row.email);
-  return { email: row.email, waiting: !admin && !isOpen(env) && row.status !== "approved", admin };
+  return { email: row.email, name: row.name, waiting: !admin && !isOpen(env) && row.status !== "approved", admin };
+}
+
+// Characters a name can't hold: control characters, and the bidirectional
+// overrides and isolates that would let a name display as something else.
+const NOT_IN_A_NAME = /[\p{Cc}\u202a-\u202e\u2066-\u2069]/u;
+
+/**
+ * A name as it is kept: trimmed, with runs of spaces made one, or null for none (absent or empty).
+ * Anything else, or a name longer than NAME_MAX_LENGTH characters, is refused.
+ */
+export function readName(value: unknown) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") throw new HttpError(400, MESSAGES.badName);
+  const name = value.normalize("NFC").replace(/\s+/gu, " ").trim();
+  if ([...name].length > NAME_MAX_LENGTH || NOT_IN_A_NAME.test(name)) throw new HttpError(400, MESSAGES.badName);
+  return name || null;
 }
 
 /** An address in the form accounts are kept under, or null if it isn't one. */
@@ -148,6 +166,9 @@ export async function verifyCode(request: Request, env: Env, now: number) {
   const email = normalizeEmail(body.email);
   const code = typeof body.code === "string" ? body.code.trim() : "";
   if (!email || code.length !== CODE_LENGTH || !/^\d+$/.test(code)) throw new HttpError(400, MESSAGES.wrongCode);
+  // Sign-up may send the name to start the account with; it is checked before
+  // the code, so a name that can't be kept doesn't use up a try.
+  const name = readName(body.name);
 
   // Every check uses up one of the code's tries, right or wrong.
   const live = await db
@@ -176,14 +197,16 @@ export async function verifyCode(request: Request, env: Env, now: number) {
   // A new account joins the waitlist unless sign-up is open or it is an
   // admin's; an existing one keeps its status. Either way the address is
   // proven, so the session starts: a waiting account sees the waitlist and
-  // nothing else.
+  // nothing else. A name sent along names a new account, or one without a
+  // name yet; it never replaces a name the account already has.
   const user = await db
     .prepare(
-      `INSERT INTO users (id, email, created_at, last_sign_in_at, status) VALUES (?1, ?2, ?3, ?3, ?4)
-       ON CONFLICT (email) DO UPDATE SET last_sign_in_at = excluded.last_sign_in_at
-       RETURNING id, email, status`,
+      `INSERT INTO users (id, email, created_at, last_sign_in_at, status, name) VALUES (?1, ?2, ?3, ?3, ?4, ?5)
+       ON CONFLICT (email) DO UPDATE SET
+         last_sign_in_at = excluded.last_sign_in_at, name = COALESCE(users.name, excluded.name)
+       RETURNING id, email, status, name`,
     )
-    .bind(crypto.randomUUID(), email, now, isOpen(env) || adminEmails(env).has(email) ? "approved" : "waiting")
+    .bind(crypto.randomUUID(), email, now, isOpen(env) || adminEmails(env).has(email) ? "approved" : "waiting", name)
     .first<UserRow>();
   const token = newToken();
   await db
@@ -200,7 +223,7 @@ export async function sessionUser(request: Request, env: Env, now: number) {
   const token = readSessionCookie(request);
   if (!token || !isToken(token)) return null;
   const row = await env.DB.prepare(
-    `SELECT users.id, users.email, users.status FROM sessions JOIN users ON users.id = sessions.user_id
+    `SELECT users.id, users.email, users.status, users.name FROM sessions JOIN users ON users.id = sessions.user_id
      WHERE sessions.id = ? AND sessions.expires_at > ?`,
   )
     .bind(await tokenHash(token), now)
@@ -210,6 +233,19 @@ export async function sessionUser(request: Request, env: Env, now: number) {
 
 export async function currentSession(request: Request, env: Env, now: number) {
   return json({ user: await sessionUser(request, env, now) });
+}
+
+/** Sets or clears (an empty name) the signed-in account's name, and answers with the account. */
+export async function updateProfile(request: Request, env: Env, now: number) {
+  const name = readName((await readJson(request)).name);
+  const signedIn = await sessionUser(request, env, now);
+  if (!signedIn) throw new HttpError(401, MESSAGES.signedOut);
+  const row = await env.DB.prepare("UPDATE users SET name = ? WHERE email = ? RETURNING id, email, status, name")
+    .bind(name, signedIn.email)
+    .first<UserRow>();
+  // Removed by an admin between the two steps: signed out as far as anyone knows.
+  if (!row) throw new HttpError(401, MESSAGES.signedOut);
+  return json({ user: publicUser(row, env) });
 }
 
 export async function signOut(request: Request, env: Env) {
