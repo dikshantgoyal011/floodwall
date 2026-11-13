@@ -18,7 +18,7 @@ const buttonBase =
 export const pillSolid = `${buttonBase} border border-transparent bg-action text-action-text hover:bg-action-hover`;
 
 /** The outlined button beside it, for the quieter actions. */
-export const pillOutline = `${buttonBase} border border-line-strong bg-surface text-ink hover:border-ink`;
+export const pillOutline = `${buttonBase} border border-line-strong bg-surface text-ink hover:border-ink hover:bg-surface`;
 
 /** The sign-in form or account details: one row of the sign-in sheet, so it adds no frame of its own. */
 export const authCard = "gap-5 rounded-none border-0 bg-transparent py-0 text-base text-ink ring-0";
